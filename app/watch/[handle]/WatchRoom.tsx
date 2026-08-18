@@ -19,6 +19,8 @@ import {
   HeadphonesOffIcon,
   NoiseSuppressionIcon,
   NoiseSuppressionOffIcon,
+  LinkIcon,
+  CheckIcon,
 } from "@/components/icons";
 
 const HANDLE_RE = /^[a-zA-Z0-9_-]+$/;
@@ -56,6 +58,7 @@ export function WatchRoom({ handle }: { handle: string }) {
   const [mutedPeerIds, setMutedPeerIds] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState(false);
   const [renameInput, setRenameInput] = useState("");
+  const [linkCopied, setLinkCopied] = useState(false);
   const previousNameRef = useRef(state.name);
 
   // Closes the rename popover once the name actually changes — covers both
@@ -82,6 +85,18 @@ export function WatchRoom({ handle }: { handle: string }) {
       else next.add(peerId);
       return next;
     });
+  }
+
+  async function handleCopyLink() {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      trackEvent("room_link_copied");
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch {
+      // Clipboard permission denied or unavailable — nothing sensible to do
+      // beyond leaving the button unconfirmed.
+    }
   }
 
   // A stored name means the client is still (re)connecting/registering
@@ -248,6 +263,23 @@ export function WatchRoom({ handle }: { handle: string }) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleCopyLink}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${
+              linkCopied
+                ? "border-emerald-600 text-emerald-600 dark:border-emerald-500 dark:text-emerald-500"
+                : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+            }`}
+          >
+            {linkCopied ? (
+              <CheckIcon className="h-4 w-4" />
+            ) : (
+              <LinkIcon className="h-4 w-4" />
+            )}
+            {linkCopied ? "Link copiado!" : "Compartilhar sala"}
+          </button>
+
           <button
             type="button"
             onClick={() => {
