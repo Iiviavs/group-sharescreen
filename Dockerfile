@@ -45,6 +45,11 @@ COPY --from=builder /app/next.config.ts ./next.config.ts
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/server ./server
 
+# Room chat history is persisted to server/data/rooms (see
+# server/signaling.ts) so it survives this process restarting — needs to
+# exist and be writable by the non-root user *before* dropping to it below.
+RUN mkdir -p server/data/rooms && chown -R sharescreen:nodejs server/data
+
 USER sharescreen
 
 # 3000 = Next.js (web), 4000 = Fastify (sinalização WebRTC)

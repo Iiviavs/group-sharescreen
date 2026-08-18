@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 import {
@@ -21,6 +23,18 @@ const HANDLE_RE = /^[a-zA-Z0-9_-]{1,32}$/;
 const CLIENT_ID_RE = /^[a-zA-Z0-9-]{8,64}$/;
 const HEARTBEAT_INTERVAL_MS = 25_000;
 const CHAT_MAX_LEN = 500;
+// Chat history is kept in memory for the room's lifetime (until it empties
+// out — see leaveRoom) and mirrored to disk so it also survives the
+// signaling process itself restarting (deploy, crash) while the room stays
+// populated. Capped so a long-lived room's history/file can't grow forever.
+const ROOM_CHAT_HISTORY_LIMIT = 300;
+const CHAT_DATA_DIR = path.join(process.cwd(), "server", "data", "rooms");
+try {
+  fs.mkdirSync(CHAT_DATA_DIR, { recursive: true });
+} catch {
+  // Persistence degrades gracefully (in-memory only, for the process's
+  // lifetime) if the filesystem isn't writable — e.g. a read-only container.
+}
 
 // Any handle starting with this is private: excluded from the public /rooms
 // listing. This is the only thing that makes a room private — there's no
@@ -52,15 +66,58 @@ interface ClientInfo {
   isModerator?: boolean;
 }
 
+interface ChatMessage {
+  id: string;
+  from: string;
+  name: string;
+  text: string;
+  ts: number;
+}
+
 interface RoomInfo {
   sockets: Set<WebSocket>;
   createdAt: number;
+  messages: ChatMessage[];
 }
 
 const clients = new Map<WebSocket, ClientInfo>();
 const clientsById = new Map<string, ClientInfo>();
 const namesInUse = new Map<string, WebSocket>();
 const rooms = new Map<string, RoomInfo>();
+
+// `room` is always pre-validated against HANDLE_RE (alphanumeric/-/_ only)
+// by every caller before it reaches these, so it's safe to use directly as
+// a filename with no path-traversal risk.
+function chatFilePath(room: string): string {
+  return path.join(CHAT_DATA_DIR, `${room}.json`);
+}
+
+function loadPersistedChat(room: string): ChatMessage[] {
+  try {
+    const raw = fs.readFileSync(chatFilePath(room), "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as ChatMessage[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePersistedChat(room: string, messages: ChatMessage[]) {
+  try {
+    fs.writeFileSync(chatFilePath(room), JSON.stringify(messages));
+  } catch {
+    // Best-effort — chat still works in-memory for the life of the room
+    // even if the disk write fails.
+  }
+}
+
+function deletePersistedChat(room: string) {
+  try {
+    fs.unlinkSync(chatFilePath(room));
+  } catch {
+    // Already gone (or nothing we can do about it) — fine either way.
+  }
+}
 
 // A WebRTC offer/answer/ICE candidate is only useful for a few seconds, but
 // `send()` below silently drops it if the target's socket isn't OPEN right
@@ -186,7 +243,15 @@ function leaveRoom(info: ClientInfo) {
   const roomInfo = rooms.get(room);
   if (roomInfo) {
     roomInfo.sockets.delete(info.socket);
-    if (roomInfo.sockets.size === 0) rooms.delete(room);
+    if (roomInfo.sockets.size === 0) {
+      // The room has genuinely emptied out — its chat history goes with it,
+      // both in memory and on disk. (A same-identity reconnect that briefly
+      // overlaps the old socket goes through detachSession instead, which
+      // deliberately does NOT delete the file, since that's not a real
+      // departure — see detachSession's comment.)
+      rooms.delete(room);
+      deletePersistedChat(room);
+    }
   }
   info.room = null;
   info.sharing = false;
@@ -214,6 +279,10 @@ function detachSession(info: ClientInfo) {
     const roomInfo = rooms.get(info.room);
     if (roomInfo) {
       roomInfo.sockets.delete(info.socket);
+      // Deliberately leaves the persisted chat file alone even if this was
+      // the room's last socket: the new connection taking over this
+      // identity is about to "join" the same room again, and will reload
+      // this exact history from disk when it recreates the RoomInfo.
       if (roomInfo.sockets.size === 0) rooms.delete(info.room);
     }
     info.room = null;
@@ -415,7 +484,10 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
           info.mic = false;
           let roomInfo = rooms.get(room);
           if (!roomInfo) {
-            roomInfo = { sockets: new Set(), createdAt: Date.now() };
+            // Reloads any chat history still on disk from before the room
+            // last emptied out or the process last restarted — see
+            // savePersistedChat/deletePersistedChat.
+            roomInfo = { sockets: new Set(), createdAt: Date.now(), messages: loadPersistedChat(room) };
             rooms.set(room, roomInfo);
             roomsCreatedTotal.inc({ visibility: isPrivateRoom(room) ? "private" : "public" });
           }
@@ -423,7 +495,7 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
           const peers = [...roomInfo.sockets]
             .filter((s) => s !== socket)
             .map((s) => peerSummary(clients.get(s)!));
-          send(socket, { type: "room-state", room, selfId: info.id, peers });
+          send(socket, { type: "room-state", room, selfId: info.id, peers, messages: roomInfo.messages });
           flushPendingSignals(info);
           broadcastToRoom(room, { type: "peer-joined", id: info.id, name: info.name }, socket);
           break;
@@ -469,7 +541,13 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
           const adminPeers = [...roomInfo.sockets]
             .filter((s) => s !== socket)
             .map((s) => peerSummary(clients.get(s)!));
-          send(socket, { type: "room-state", room, selfId: info.id, peers: adminPeers });
+          send(socket, {
+            type: "room-state",
+            room,
+            selfId: info.id,
+            peers: adminPeers,
+            messages: roomInfo.messages,
+          });
           flushPendingSignals(info);
           broadcastToRoom(room, { type: "peer-joined", id: info.id, name: info.name, role: "moderator" }, socket);
           break;
@@ -494,14 +572,21 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
           if (!info.room) return;
           const text = typeof msg.text === "string" ? msg.text.trim().slice(0, CHAT_MAX_LEN) : "";
           if (!isValidChatText(text)) return;
-          broadcastToRoom(info.room, {
-            type: "chat-message",
+          const roomInfo = rooms.get(info.room);
+          if (!roomInfo) return;
+          const chatMessage: ChatMessage = {
             id: genId(),
             from: info.id,
-            name: info.name,
+            name: info.name as string,
             text,
             ts: Date.now(),
-          });
+          };
+          roomInfo.messages.push(chatMessage);
+          if (roomInfo.messages.length > ROOM_CHAT_HISTORY_LIMIT) {
+            roomInfo.messages.splice(0, roomInfo.messages.length - ROOM_CHAT_HISTORY_LIMIT);
+          }
+          savePersistedChat(info.room, roomInfo.messages);
+          broadcastToRoom(info.room, { type: "chat-message", ...chatMessage });
           break;
         }
         case "signal": {

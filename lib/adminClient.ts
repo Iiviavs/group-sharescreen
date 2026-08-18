@@ -1,5 +1,7 @@
 "use client";
 
+import type { ChatMessage } from "./signalingClient";
+
 const WS_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || "ws://localhost:4000/ws";
 
 export type AdminPeerInfo = { id: string; name: string; sharing: boolean; mic: boolean };
@@ -11,6 +13,7 @@ export type AdminClientState = {
   room: string | null;
   selfId: string | null;
   peers: AdminPeerInfo[];
+  chatMessages: ChatMessage[];
   error: string | null;
 };
 
@@ -22,6 +25,7 @@ const initialState: AdminClientState = {
   room: null,
   selfId: null,
   peers: [],
+  chatMessages: [],
   error: null,
 };
 
@@ -59,7 +63,14 @@ class AdminSignalingClient {
   connect(room: string, token: string) {
     if (typeof window === "undefined") return;
     this.disconnect();
-    this.setState({ status: "connecting", room, peers: [], selfId: null, error: null });
+    this.setState({
+      status: "connecting",
+      room,
+      peers: [],
+      chatMessages: [],
+      selfId: null,
+      error: null,
+    });
 
     const ws = new WebSocket(WS_URL);
     this.ws = ws;
@@ -105,6 +116,7 @@ class AdminSignalingClient {
           room: msg.room as string,
           selfId: msg.selfId as string,
           peers: msg.peers as AdminPeerInfo[],
+          chatMessages: Array.isArray(msg.messages) ? (msg.messages as ChatMessage[]) : [],
         });
         break;
       case "peer-joined": {
@@ -149,6 +161,17 @@ class AdminSignalingClient {
       case "signal":
         this.signalListeners.forEach((l) => l(msg.from as string, msg.data as Record<string, unknown>));
         break;
+      case "chat-message": {
+        const chatMessage: ChatMessage = {
+          id: msg.id as string,
+          from: msg.from as string,
+          name: msg.name as string,
+          text: msg.text as string,
+          ts: msg.ts as number,
+        };
+        this.setState({ chatMessages: [...this.state.chatMessages, chatMessage] });
+        break;
+      }
       case "error":
         this.setState({ status: "unauthorized", error: (msg.message as string) ?? "Não autorizado." });
         this.ws?.close();

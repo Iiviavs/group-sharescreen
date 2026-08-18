@@ -9,12 +9,14 @@ import { isPrivateRoomHandle } from "@/lib/roomsApi";
 import { VideoTile } from "@/components/VideoTile";
 import { RemoteAudio } from "@/components/RemoteAudio";
 import { ParticipantRow } from "@/components/ParticipantRow";
+import { ChatPanel } from "@/components/ChatPanel";
 
 export function AdminRoomViewer({ handle }: { handle: string }) {
   const router = useRouter();
   const token = useAdminToken();
 
-  const { status, error, peers, screenStreams, micStreams } = useAdminRoomViewer(handle, token);
+  const { status, error, peers, chatMessages, selfId, screenStreams, micStreams } =
+    useAdminRoomViewer(handle, token);
 
   useEffect(() => {
     if (status !== "unauthorized") return;
@@ -128,6 +130,8 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
               <p className="text-sm text-zinc-500 dark:text-zinc-400">Ninguém na sala.</p>
             )}
           </ul>
+
+          <ChatPanel messages={chatMessages} selfId={selfId} />
         </aside>
       </div>
     </div>

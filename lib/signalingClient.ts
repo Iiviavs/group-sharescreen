@@ -234,19 +234,23 @@ class SignalingClient {
         }
         trackEvent("name_register_error");
         break;
-      case "room-state":
+      case "room-state": {
+        // The server sends the room's full retained chat history (kept for
+        // the room's lifetime — see server/signaling.ts) on every join,
+        // including a room switch, so a newcomer sees what was said before
+        // they arrived.
+        const history = Array.isArray(msg.messages) ? (msg.messages as ChatMessage[]) : [];
         this.setState({
           room: msg.room as string,
           selfId: msg.selfId as string,
           peers: msg.peers as PeerInfo[],
-          // A fresh join (including a room switch) starts with no history —
-          // chat from a previous room, or from before this client joined,
-          // doesn't apply here.
-          chatMessages: [],
+          chatMessages:
+            history.length > MAX_CHAT_MESSAGES ? history.slice(-MAX_CHAT_MESSAGES) : history,
         });
         trackEvent("room_joined");
         this.roomJoinedListeners.forEach((l) => l());
         break;
+      }
       case "peer-joined": {
         // Idempotent by id: a peer that reclaimed its identity after a
         // reconnect can legitimately "join" again while still listed (its

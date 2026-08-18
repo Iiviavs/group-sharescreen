@@ -14,7 +14,9 @@ export function ChatPanel({
 }: {
   messages: ChatMessage[];
   selfId: string | null;
-  onSend: (text: string) => void;
+  // Omitted for a read-only viewer (the admin moderation view) — hides the
+  // input form instead of sending into a room the viewer isn't a member of.
+  onSend?: (text: string) => void;
 }) {
   const [input, setInput] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
@@ -30,7 +32,7 @@ export function ChatPanel({
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!input.trim()) return;
+    if (!input.trim() || !onSend) return;
     onSend(input);
     setInput("");
   }
@@ -68,22 +70,24 @@ export function ChatPanel({
         )}
       </div>
 
-      <form onSubmit={handleSubmit} className="flex gap-2 border-t border-zinc-200 p-2 dark:border-zinc-800">
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          maxLength={500}
-          placeholder="Digite uma mensagem..."
-          className="min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-        />
-        <button
-          type="submit"
-          disabled={!input.trim()}
-          className="shrink-0 rounded-md bg-zinc-950 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
-        >
-          Enviar
-        </button>
-      </form>
+      {onSend && (
+        <form onSubmit={handleSubmit} className="flex gap-2 border-t border-zinc-200 p-2 dark:border-zinc-800">
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            maxLength={500}
+            placeholder="Digite uma mensagem..."
+            className="min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+          />
+          <button
+            type="submit"
+            disabled={!input.trim()}
+            className="shrink-0 rounded-md bg-zinc-950 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+          >
+            Enviar
+          </button>
+        </form>
+      )}
     </div>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { adminSignalingClient, type AdminPeerInfo } from "./adminClient";
+import type { ChatMessage } from "./signalingClient";
 import { ICE_CONFIG } from "./iceConfig";
 
 type Channel = "screen" | "mic";
@@ -148,6 +149,8 @@ export type AdminRoomViewerState = {
   status: "idle" | "connecting" | "open" | "closed" | "unauthorized";
   error: string | null;
   peers: AdminPeerInfo[];
+  chatMessages: ChatMessage[];
+  selfId: string | null;
   screenStreams: Record<string, MediaStream>;
   micStreams: Record<string, MediaStream>;
 };
@@ -180,6 +183,8 @@ export function useAdminRoomViewer(room: string, token: string | null): AdminRoo
     status: state.status,
     error: state.error,
     peers: state.peers,
+    chatMessages: state.chatMessages,
+    selfId: state.selfId,
     screenStreams,
     micStreams,
   };
