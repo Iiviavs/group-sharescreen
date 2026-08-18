@@ -90,7 +90,7 @@ export function VideoTile({
   return (
     <div
       ref={containerRef}
-      className="relative aspect-video overflow-hidden rounded-xl border border-white/10 bg-black"
+      className="relative h-full min-h-[160px] w-full overflow-hidden rounded-xl border border-white/10 bg-black"
     >
       <video ref={videoRef} autoPlay playsInline className="h-full w-full object-contain bg-black" />
       <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-black/85 to-transparent px-3 py-2">

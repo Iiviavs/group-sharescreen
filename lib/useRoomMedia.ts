@@ -438,6 +438,7 @@ export function useRoomMedia(room: string) {
     isMicOn: mic.active,
     toggleMic,
     micError: mic.error,
+    localMicStream: mic.localStream,
     remoteMicStreams: mic.remoteStreams,
   };
 }
