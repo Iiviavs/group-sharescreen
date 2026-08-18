@@ -183,7 +183,6 @@ export function WatchRoom({ handle }: { handle: string }) {
       <header className="relative flex flex-wrap items-center justify-between gap-3 border-b border-black/10 px-4 py-3 dark:border-white/10">
         <div className="flex items-center gap-3">
           <div>
-            <p className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Sala</p>
             <h1 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">{handle}</h1>
           </div>
           <span
