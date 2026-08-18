@@ -1,8 +1,12 @@
-# Standalone Prometheus + Grafana stack for ShareScreen — separate from
-# however you already run the app itself. Points at the signaling server's
-# /metrics endpoint (see monitoring/prometheus.yml to adjust the target).
+# Prometheus + Grafana stack for ShareScreen. Points at the signaling
+# server's /metrics endpoint (see monitoring/prometheus.yml to adjust the
+# target).
 #
-# Usage:
+# `npm start` brings this up automatically and in the background, via
+# scripts/start-monitoring.mjs — it waits until the site itself is online
+# first (so it never adds to startup time), and if Docker isn't available
+# it's skipped silently; the app is never affected either way. You can also
+# still run it by hand any time:
 #   docker compose -f docker-compose.monitoring.yml up -d
 #   Prometheus: http://localhost:9090
 #   Grafana:    http://localhost:3002  (login: admin / admin, unless
@@ -20,7 +24,13 @@ services:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     ports:
-      - "9090:9090"
+      # Bound to localhost only — Prometheus has no built-in auth, so
+      # anyone who could reach this port could read every metric with no
+      # login at all. Grafana talks to it over the internal Docker network
+      # (http://prometheus:9090) and doesn't need this published at all;
+      # this is just for your own debugging from the host, e.g. via an SSH
+      # tunnel (`ssh -L 9090:localhost:9090 user@servidor`).
+      - "127.0.0.1:9090:9090"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

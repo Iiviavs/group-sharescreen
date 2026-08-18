@@ -38,12 +38,28 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN addgroup --system --gid 1001 nodejs \
   && adduser --system --uid 1001 sharescreen
 
+# Docker CLI + compose plugin only — no daemon. Lets `npm start` (via
+# scripts/start-monitoring.mjs) best-effort bring up Prometheus/Grafana by
+# talking to the HOST's Docker daemon through its socket. That socket isn't
+# mounted by default: run this container with
+#   -v /var/run/docker.sock:/var/run/docker.sock
+# to enable it. Without the mount, the script just logs that Docker isn't
+# reachable and the app runs completely normally — this is opt-in, never
+# required. Note: the mounted socket keeps the HOST's ownership/permissions,
+# so the non-root `sharescreen` user below may need to match the host
+# docker group's GID (`--group-add <gid>` on `docker run`) to actually use
+# it — otherwise the script just logs a permission error and moves on.
+RUN apk add --no-cache docker-cli docker-cli-compose
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/next.config.ts ./next.config.ts
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/server ./server
+COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/docker-compose.monitoring.yml ./docker-compose.monitoring.yml
+COPY --from=builder /app/monitoring ./monitoring
 
 USER sharescreen
 

@@ -9,7 +9,8 @@
     "build": "next build",
     "start:web": "next start",
     "start:signaling": "tsx server/index.ts",
-    "start": "concurrently -n web,signaling -c blue,magenta \"npm:start:web\" \"npm:start:signaling\"",
+    "start:monitoring": "node scripts/start-monitoring.mjs",
+    "start": "concurrently -n web,signaling,monitoring -c blue,magenta,yellow \"npm:start:web\" \"npm:start:signaling\" \"npm:start:monitoring\"",
     "lint": "eslint"
   },
   "dependencies": {
