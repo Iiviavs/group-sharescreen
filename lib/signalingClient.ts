@@ -16,6 +16,14 @@ export type PeerInfo = {
 
 export type SignalingStatus = "idle" | "connecting" | "open" | "closed" | "superseded";
 
+export type ChatMessage = {
+  id: string;
+  from: string;
+  name: string;
+  text: string;
+  ts: number;
+};
+
 export type SignalingState = {
   status: SignalingStatus;
   selfId: string | null;
@@ -23,6 +31,7 @@ export type SignalingState = {
   nameError: string | null;
   room: string | null;
   peers: PeerInfo[];
+  chatMessages: ChatMessage[];
 };
 
 type Listener = () => void;
@@ -41,7 +50,12 @@ const initialState: SignalingState = {
   nameError: null,
   room: null,
   peers: [],
+  chatMessages: [],
 };
+
+// Cap on retained chat history per room, to keep memory bounded in a
+// long-running room instead of growing the array forever.
+const MAX_CHAT_MESSAGES = 200;
 
 export function getStoredName(): string | null {
   if (typeof window === "undefined") return null;
@@ -225,6 +239,10 @@ class SignalingClient {
           room: msg.room as string,
           selfId: msg.selfId as string,
           peers: msg.peers as PeerInfo[],
+          // A fresh join (including a room switch) starts with no history —
+          // chat from a previous room, or from before this client joined,
+          // doesn't apply here.
+          chatMessages: [],
         });
         trackEvent("room_joined");
         this.roomJoinedListeners.forEach((l) => l());
@@ -280,6 +298,20 @@ class SignalingClient {
           l(msg.from as string, msg.data as Record<string, unknown>)
         );
         break;
+      case "chat-message": {
+        const chatMessage: ChatMessage = {
+          id: msg.id as string,
+          from: msg.from as string,
+          name: msg.name as string,
+          text: msg.text as string,
+          ts: msg.ts as number,
+        };
+        const next = [...this.state.chatMessages, chatMessage];
+        this.setState({
+          chatMessages: next.length > MAX_CHAT_MESSAGES ? next.slice(-MAX_CHAT_MESSAGES) : next,
+        });
+        break;
+      }
       default:
         break;
     }
@@ -308,7 +340,7 @@ class SignalingClient {
   leaveRoom() {
     this.desiredRoom = null;
     this.rawSend({ type: "leave" });
-    this.setState({ room: null, peers: [] });
+    this.setState({ room: null, peers: [], chatMessages: [] });
   }
 
   setSharing(sharing: boolean) {
@@ -321,6 +353,12 @@ class SignalingClient {
 
   sendSignal(to: string, data: unknown) {
     this.rawSend({ type: "signal", to, data });
+  }
+
+  sendChatMessage(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    this.rawSend({ type: "chat", text: trimmed });
   }
 }
 

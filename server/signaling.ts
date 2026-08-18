@@ -20,6 +20,7 @@ import {
 const HANDLE_RE = /^[a-zA-Z0-9_-]{1,32}$/;
 const CLIENT_ID_RE = /^[a-zA-Z0-9-]{8,64}$/;
 const HEARTBEAT_INTERVAL_MS = 25_000;
+const CHAT_MAX_LEN = 500;
 
 // Any handle starting with this is private: excluded from the public /rooms
 // listing. This is the only thing that makes a room private — there's no
@@ -91,6 +92,18 @@ function isValidDisplayName(name: string): boolean {
   if (name.length < 1 || name.length > 24) return false;
   for (let i = 0; i < name.length; i += 1) {
     const code = name.charCodeAt(i);
+    if (code < 32 || code === 127) return false;
+  }
+  return true;
+}
+
+// Same control-character guard as isValidDisplayName, but newlines (10) are
+// allowed since chat text is reasonably multi-line.
+function isValidChatText(text: string): boolean {
+  if (text.length < 1 || text.length > CHAT_MAX_LEN) return false;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code === 10) continue;
     if (code < 32 || code === 127) return false;
   }
   return true;
@@ -475,6 +488,20 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
           if (!info.room) return;
           info.mic = Boolean(msg.mic);
           broadcastToRoom(info.room, { type: "peer-mic", id: info.id, mic: info.mic });
+          break;
+        }
+        case "chat": {
+          if (!info.room) return;
+          const text = typeof msg.text === "string" ? msg.text.trim().slice(0, CHAT_MAX_LEN) : "";
+          if (!isValidChatText(text)) return;
+          broadcastToRoom(info.room, {
+            type: "chat-message",
+            id: genId(),
+            from: info.id,
+            name: info.name,
+            text,
+            ts: Date.now(),
+          });
           break;
         }
         case "signal": {

@@ -11,6 +11,7 @@ import { toRoomHandle, isPrivateRoomHandle } from "@/lib/roomsApi";
 import { VideoTile } from "@/components/VideoTile";
 import { RemoteAudio } from "@/components/RemoteAudio";
 import { ParticipantRow } from "@/components/ParticipantRow";
+import { ChatPanel } from "@/components/ChatPanel";
 import { MicIcon, MicOffIcon, HeadphonesIcon, HeadphonesOffIcon } from "@/components/icons";
 
 const HANDLE_RE = /^[a-zA-Z0-9_-]+$/;
@@ -438,7 +439,7 @@ export function WatchRoom({ handle }: { handle: string }) {
           )}
         </main>
 
-        <aside className="w-full shrink-0 lg:w-64">
+        <aside className="flex w-full shrink-0 flex-col lg:h-full lg:min-h-0 lg:w-64">
           <h2 className="mb-2 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
             Participantes
           </h2>
@@ -462,6 +463,12 @@ export function WatchRoom({ handle }: { handle: string }) {
               />
             ))}
           </ul>
+
+          <ChatPanel
+            messages={state.chatMessages}
+            selfId={state.selfId}
+            onSend={(text) => signalingClient.sendChatMessage(text)}
+          />
         </aside>
       </div>
     </div>
