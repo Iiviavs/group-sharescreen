@@ -2,6 +2,9 @@
 
 import { useSyncExternalStore } from "react";
 import { getSignalingHttpBase } from "./roomsApi";
+import type { Announcement, AnnouncementButtonAction, AnnouncementColor } from "./announcement";
+
+export type { Announcement, AnnouncementButtonAction, AnnouncementColor };
 
 const TOKEN_STORAGE_KEY = "sharescreen:adminToken";
 
@@ -110,4 +113,67 @@ export async function fetchAdminRooms(signal?: AbortSignal): Promise<AdminRoom[]
   if (!res.ok) throw new Error(`Falha ao carregar salas (status ${res.status})`);
   const data = (await res.json()) as { rooms: AdminRoom[] };
   return data.rooms;
+}
+
+export async function fetchCurrentAnnouncement(signal?: AbortSignal): Promise<Announcement | null> {
+  const token = getAdminToken();
+  if (!token) throw new Error("unauthorized");
+  const res = await fetch(`${getSignalingHttpBase()}/admin/announcement`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal,
+  });
+  if (res.status === 401) {
+    setAdminToken(null);
+    throw new Error("unauthorized");
+  }
+  if (!res.ok) throw new Error(`Falha ao carregar aviso (status ${res.status})`);
+  const data = (await res.json()) as { announcement: Announcement | null };
+  return data.announcement;
+}
+
+export type SendAnnouncementInput = {
+  text: string;
+  buttonLabel: string;
+  buttonAction: AnnouncementButtonAction;
+  // Required unless buttonAction is "reload".
+  buttonUrl?: string;
+  color: AnnouncementColor;
+  dismissible: boolean;
+};
+
+export async function sendAnnouncement(input: SendAnnouncementInput): Promise<Announcement> {
+  const token = getAdminToken();
+  if (!token) throw new Error("unauthorized");
+  const res = await fetch(`${getSignalingHttpBase()}/admin/announcement`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+  if (res.status === 401) {
+    setAdminToken(null);
+    throw new Error("unauthorized");
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(
+      (data && typeof data === "object" && "error" in data && String(data.error)) ||
+        `Falha ao enviar aviso (status ${res.status})`
+    );
+  }
+  const data = (await res.json()) as { announcement: Announcement };
+  return data.announcement;
+}
+
+export async function clearAnnouncement(): Promise<void> {
+  const token = getAdminToken();
+  if (!token) throw new Error("unauthorized");
+  const res = await fetch(`${getSignalingHttpBase()}/admin/announcement`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (res.status === 401) {
+    setAdminToken(null);
+    throw new Error("unauthorized");
+  }
+  if (!res.ok) throw new Error(`Falha ao remover aviso (status ${res.status})`);
 }

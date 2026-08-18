@@ -1,6 +1,7 @@
 "use client";
 
 import { trackEvent } from "./analytics";
+import type { Announcement } from "./announcement";
 
 // `role: "moderator"` marks a moderator silently watching for moderation
 // (see server/signaling.ts's "admin-join") — present in the peer list so
@@ -32,6 +33,11 @@ export type SignalingState = {
   room: string | null;
   peers: PeerInfo[];
   chatMessages: ChatMessage[];
+  // Site-wide banner, independent of room — null when none is active. Set
+  // from the server's "announcement" push (see server/signaling.ts's
+  // broadcastToAll), which also fires once right after "welcome" for a
+  // fresh connection so a page opened while one's active still sees it.
+  announcement: Announcement | null;
 };
 
 type Listener = () => void;
@@ -51,6 +57,7 @@ const initialState: SignalingState = {
   room: null,
   peers: [],
   chatMessages: [],
+  announcement: null,
 };
 
 // Cap on retained chat history per room, to keep memory bounded in a
@@ -301,6 +308,9 @@ class SignalingClient {
         this.signalListeners.forEach((l) =>
           l(msg.from as string, msg.data as Record<string, unknown>)
         );
+        break;
+      case "announcement":
+        this.setState({ announcement: (msg.announcement as Announcement | null) ?? null });
         break;
       case "chat-message": {
         const chatMessage: ChatMessage = {

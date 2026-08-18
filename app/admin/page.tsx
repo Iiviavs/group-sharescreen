@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { adminLogin, adminLogout, fetchAdminRooms, useAdminToken, type AdminRoom } from "@/lib/adminApi";
+import { AnnouncementPanel } from "./AnnouncementPanel";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -154,11 +155,15 @@ export default function AdminPage() {
           </div>
         </div>
 
+        <div className="mt-6">
+          <AnnouncementPanel />
+        </div>
+
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Pesquisar sala por nome..."
-          className="mt-6 w-full rounded-lg border border-zinc-300 bg-white px-4 py-2.5 text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+          className="w-full rounded-lg border border-zinc-300 bg-white px-4 py-2.5 text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
         />
 
         <div className="mt-6">

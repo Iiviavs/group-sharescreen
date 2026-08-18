@@ -23,6 +23,8 @@ const HANDLE_RE = /^[a-zA-Z0-9_-]{1,32}$/;
 const CLIENT_ID_RE = /^[a-zA-Z0-9-]{8,64}$/;
 const HEARTBEAT_INTERVAL_MS = 25_000;
 const CHAT_MAX_LEN = 500;
+const ANNOUNCEMENT_TEXT_MAX_LEN = 300;
+const ANNOUNCEMENT_BUTTON_LABEL_MAX_LEN = 40;
 // Chat history is kept in memory for the room's lifetime (until it empties
 // out — see leaveRoom) and mirrored to disk so it also survives the
 // signaling process itself restarting (deploy, crash) while the room stays
@@ -80,10 +82,35 @@ interface RoomInfo {
   messages: ChatMessage[];
 }
 
+type AnnouncementButtonAction = "open-new-tab" | "open-same-tab" | "reload";
+type AnnouncementColor = "green" | "red" | "blue";
+const ANNOUNCEMENT_ACTIONS = new Set<AnnouncementButtonAction>([
+  "open-new-tab",
+  "open-same-tab",
+  "reload",
+]);
+const ANNOUNCEMENT_COLORS = new Set<AnnouncementColor>(["green", "red", "blue"]);
+
+interface Announcement {
+  id: string;
+  text: string;
+  buttonLabel: string;
+  buttonAction: AnnouncementButtonAction;
+  buttonUrl: string | null;
+  color: AnnouncementColor;
+  dismissible: boolean;
+}
+
 const clients = new Map<WebSocket, ClientInfo>();
 const clientsById = new Map<string, ClientInfo>();
 const namesInUse = new Map<string, WebSocket>();
 const rooms = new Map<string, RoomInfo>();
+// Single site-wide banner, independent of any room — broadcastToAll below
+// pushes it to every open socket regardless of what room (if any) they're
+// in, and a fresh connection gets whatever's currently active appended
+// right after "welcome" so it isn't missed by someone who (re)connects
+// while it's up.
+let currentAnnouncement: Announcement | null = null;
 
 // `room` is always pre-validated against HANDLE_RE (alphanumeric/-/_ only)
 // by every caller before it reaches these, so it's safe to use directly as
@@ -167,6 +194,31 @@ function isValidChatText(text: string): boolean {
   return true;
 }
 
+// Same control-character guard as isValidDisplayName (no newlines — the
+// banner is meant to be short), parameterized on max length since it's
+// reused for both the announcement text and its button label.
+function isValidAnnouncementField(text: string, maxLen: number): boolean {
+  if (text.length < 1 || text.length > maxLen) return false;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code < 32 || code === 127) return false;
+  }
+  return true;
+}
+
+// Restricted to http(s) so a "javascript:" (or other) URL scheme can never
+// reach the button's href/window.open target — this URL comes straight from
+// an admin-supplied form field and gets used client-side without further
+// sanitization.
+function isValidAnnouncementUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function send(socket: WebSocket, msg: unknown) {
   if (socket.readyState === socket.OPEN) {
     socket.send(JSON.stringify(msg));
@@ -179,6 +231,13 @@ function broadcastToRoom(room: string, msg: unknown, exclude?: WebSocket) {
   for (const s of roomInfo.sockets) {
     if (s !== exclude) send(s, msg);
   }
+}
+
+// Every open socket on the signaling server, regardless of room — used only
+// for the site-wide announcement banner, which is deliberately not
+// room-scoped.
+function broadcastToAll(msg: unknown) {
+  for (const s of clients.keys()) send(s, msg);
 }
 
 function queueSignal(targetId: string, from: string, data: unknown) {
@@ -412,6 +471,81 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
     return { rooms: allRooms };
   });
 
+  // Site-wide banner shown to every connected socket (see broadcastToAll),
+  // not scoped to a room. GET lets the admin panel show whether one's
+  // already active on load; POST replaces it (and re-broadcasts); DELETE
+  // ends it for everyone currently connected.
+  app.get("/admin/announcement", async (request, reply) => {
+    if (!ADMIN_ENABLED) return reply.code(404).send();
+    const header = request.headers.authorization || "";
+    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+    if (!verifyAdminToken(token)) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+    return { announcement: currentAnnouncement };
+  });
+
+  app.post("/admin/announcement", async (request, reply) => {
+    if (!ADMIN_ENABLED) return reply.code(404).send();
+    const header = request.headers.authorization || "";
+    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+    if (!verifyAdminToken(token)) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const text = typeof body.text === "string" ? body.text.trim().slice(0, ANNOUNCEMENT_TEXT_MAX_LEN) : "";
+    const buttonLabel =
+      typeof body.buttonLabel === "string"
+        ? body.buttonLabel.trim().slice(0, ANNOUNCEMENT_BUTTON_LABEL_MAX_LEN)
+        : "";
+    const buttonAction = typeof body.buttonAction === "string" ? body.buttonAction : "";
+    const color = typeof body.color === "string" ? body.color : "";
+    const dismissible = Boolean(body.dismissible);
+    const rawUrl = typeof body.buttonUrl === "string" ? body.buttonUrl.trim() : "";
+
+    if (!isValidAnnouncementField(text, ANNOUNCEMENT_TEXT_MAX_LEN)) {
+      return reply.code(400).send({ error: "Texto inválido." });
+    }
+    if (!isValidAnnouncementField(buttonLabel, ANNOUNCEMENT_BUTTON_LABEL_MAX_LEN)) {
+      return reply.code(400).send({ error: "Label do botão inválido." });
+    }
+    if (!ANNOUNCEMENT_ACTIONS.has(buttonAction as AnnouncementButtonAction)) {
+      return reply.code(400).send({ error: "Ação do botão inválida." });
+    }
+    if (!ANNOUNCEMENT_COLORS.has(color as AnnouncementColor)) {
+      return reply.code(400).send({ error: "Cor inválida." });
+    }
+    const needsUrl = buttonAction !== "reload";
+    if (needsUrl && !isValidAnnouncementUrl(rawUrl)) {
+      return reply.code(400).send({ error: "Link inválido — use uma URL http(s) completa." });
+    }
+
+    currentAnnouncement = {
+      id: genId(),
+      text,
+      buttonLabel,
+      buttonAction: buttonAction as AnnouncementButtonAction,
+      buttonUrl: needsUrl ? rawUrl : null,
+      color: color as AnnouncementColor,
+      dismissible,
+    };
+    broadcastToAll({ type: "announcement", announcement: currentAnnouncement });
+    return { announcement: currentAnnouncement };
+  });
+
+  app.delete("/admin/announcement", async (request, reply) => {
+    if (!ADMIN_ENABLED) return reply.code(404).send();
+    const header = request.headers.authorization || "";
+    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+    if (!verifyAdminToken(token)) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+    currentAnnouncement = null;
+    broadcastToAll({ type: "announcement", announcement: null });
+    return reply.code(204).send();
+  });
+
   app.get("/ws", { websocket: true }, (socket: WebSocket) => {
     const info: ClientInfo = {
       id: genId(),
@@ -425,6 +559,9 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
     clients.set(socket, info);
     wsConnectionsTotal.inc();
     send(socket, { type: "welcome", id: info.id });
+    if (currentAnnouncement) {
+      send(socket, { type: "announcement", announcement: currentAnnouncement });
+    }
 
     socket.on("pong", () => {
       info.isAlive = true;
