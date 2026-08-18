@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { signalingClient } from "./signalingClient";
 import { trackEvent } from "./analytics";
 
@@ -300,14 +300,50 @@ function useBroadcastChannel(
   return { active, start, stop, localStream, remoteStreams, error };
 }
 
+function hasDisplayCapture() {
+  return typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getDisplayMedia);
+}
+function hasCameraCapture() {
+  return typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
+}
+
+// Most mobile browsers (all of iOS Safari, most of Android Chrome) don't
+// support getDisplayMedia at all, so screen capture from a website simply
+// isn't possible there. Falling back to the device camera lets mobile users
+// still broadcast something instead of just hitting an unsupported error.
+type ScreenShareMode = "display" | "camera" | "unsupported";
+
+function getScreenShareMode(): ScreenShareMode {
+  if (hasDisplayCapture()) return "display";
+  if (hasCameraCapture()) return "camera";
+  return "unsupported";
+}
+function getScreenShareModeServer(): ScreenShareMode {
+  return "display";
+}
+function noopSubscribe() {
+  return () => {};
+}
+
+export function useScreenShareMode() {
+  return useSyncExternalStore(noopSubscribe, getScreenShareMode, getScreenShareModeServer);
+}
+
 export function useRoomMedia(room: string) {
   const screen = useBroadcastChannel(
     "screen",
     room,
-    () => navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }),
-    () => Boolean(navigator.mediaDevices?.getDisplayMedia),
-    "Seu navegador não suporta compartilhamento de tela.",
-    "Não foi possível iniciar o compartilhamento de tela."
+    () => {
+      if (hasDisplayCapture()) {
+        return navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      }
+      return navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+      });
+    },
+    () => hasDisplayCapture() || hasCameraCapture(),
+    "Seu navegador não suporta compartilhamento de tela nem câmera.",
+    "Não foi possível iniciar o compartilhamento. Verifique as permissões do navegador."
   );
 
   const mic = useBroadcastChannel(

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signalingClient } from "@/lib/signalingClient";
 import { useSignaling, useHasStoredName } from "@/lib/useSignaling";
-import { useRoomMedia } from "@/lib/useRoomMedia";
+import { useRoomMedia, useScreenShareMode } from "@/lib/useRoomMedia";
 import { trackEvent } from "@/lib/analytics";
 import { VideoTile } from "@/components/VideoTile";
 import { RemoteAudio } from "@/components/RemoteAudio";
@@ -17,6 +17,7 @@ export function WatchRoom({ handle }: { handle: string }) {
   const state = useSignaling();
   const hasStoredName = useHasStoredName();
   const validHandle = HANDLE_RE.test(handle);
+  const screenShareMode = useScreenShareMode();
 
   const {
     isSharing,
@@ -210,11 +211,16 @@ export function WatchRoom({ handle }: { handle: string }) {
           <button
             type="button"
             onClick={isSharing ? stopShare : startShare}
-            className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition ${
+            disabled={!isSharing && screenShareMode === "unsupported"}
+            className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50 ${
               isSharing ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
             }`}
           >
-            {isSharing ? "Parar compartilhamento" : "Compartilhar tela"}
+            {isSharing
+              ? "Parar compartilhamento"
+              : screenShareMode === "camera"
+                ? "Compartilhar câmera"
+                : "Compartilhar tela"}
           </button>
         </div>
       </header>
@@ -239,10 +245,12 @@ export function WatchRoom({ handle }: { handle: string }) {
           {nothingToShow ? (
             <div className="flex h-full min-h-[300px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-300 text-center dark:border-zinc-800">
               <p className="text-zinc-600 dark:text-zinc-400">
-                Ninguém está transmitindo a tela ainda.
+                Ninguém está transmitindo ainda.
               </p>
               <p className="text-sm text-zinc-500 dark:text-zinc-500">
-                Clique em &quot;Compartilhar tela&quot; para começar.
+                {screenShareMode === "camera"
+                  ? 'Clique em "Compartilhar câmera" para começar.'
+                  : 'Clique em "Compartilhar tela" para começar.'}
               </p>
             </div>
           ) : (
