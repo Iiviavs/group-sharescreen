@@ -16,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ShareScreen",
-  description: "Compartilhamento de tela em tempo real via WebRTC.",
+  title: "GoLive: AntiJanja",
+  description: "Compartilhamento de tela de grupo em tempo real via WebRTC.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
