@@ -18,22 +18,36 @@ const ICE_CONFIG: RTCConfiguration = {
   ],
 };
 
+type Channel = "screen" | "mic";
+
 type SignalData = {
+  channel?: Channel;
   role?: "broadcaster" | "viewer";
   kind?: "offer" | "answer" | "ice" | "stop" | "peer-left";
   sdp?: RTCSessionDescriptionInit;
   candidate?: RTCIceCandidateInit;
 };
 
-export function useRoomMedia(room: string) {
-  const [isSharing, setIsSharing] = useState(false);
+// Shared connection-management for a single media channel (screen share or
+// mic), broadcast from this client to every peer in the room. Each channel
+// gets its own set of peer connections and its own signaling namespace so
+// screen-share and mic negotiation never interfere with each other.
+function useBroadcastChannel(
+  channel: Channel,
+  room: string,
+  capture: () => Promise<MediaStream>,
+  isSupported: () => boolean,
+  notSupportedMessage: string,
+  failureMessage: string
+) {
+  const [active, setActive] = useState(false);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
-  const [shareError, setShareError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const sendPCs = useRef<Map<string, RTCPeerConnection>>(new Map());
   const recvPCs = useRef<Map<string, RTCPeerConnection>>(new Map());
-  const isSharingRef = useRef(false);
+  const activeRef = useRef(false);
   const pendingSendCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const pendingRecvCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
 
@@ -78,6 +92,7 @@ export function useRoomMedia(room: string) {
       pc.onicecandidate = (e) => {
         if (e.candidate) {
           signalingClient.sendSignal(peerId, {
+            channel,
             role: "broadcaster",
             kind: "ice",
             candidate: e.candidate.toJSON(),
@@ -93,6 +108,7 @@ export function useRoomMedia(room: string) {
         .then(async (offer) => {
           await pc.setLocalDescription(offer);
           signalingClient.sendSignal(peerId, {
+            channel,
             role: "broadcaster",
             kind: "offer",
             sdp: pc.localDescription,
@@ -100,46 +116,48 @@ export function useRoomMedia(room: string) {
         })
         .catch(() => closeSendPC(peerId));
     },
-    [closeSendPC]
+    [channel, closeSendPC]
   );
 
-  const stopShare = useCallback(() => {
-    if (!isSharingRef.current) return;
-    isSharingRef.current = false;
-    setIsSharing(false);
+  const stop = useCallback(() => {
+    if (!activeRef.current) return;
+    activeRef.current = false;
+    setActive(false);
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
     setLocalStream(null);
     for (const [peerId, pc] of sendPCs.current) {
-      signalingClient.sendSignal(peerId, { role: "broadcaster", kind: "stop" });
+      signalingClient.sendSignal(peerId, { channel, role: "broadcaster", kind: "stop" });
       pc.close();
     }
     sendPCs.current.clear();
-    signalingClient.setSharing(false);
-  }, []);
+    if (channel === "screen") signalingClient.setSharing(false);
+    else signalingClient.setMic(false);
+  }, [channel]);
 
-  const startShare = useCallback(async () => {
-    if (isSharingRef.current) return;
-    setShareError(null);
-    if (!navigator.mediaDevices?.getDisplayMedia) {
-      setShareError("Seu navegador não suporta compartilhamento de tela.");
+  const start = useCallback(async () => {
+    if (activeRef.current) return;
+    setError(null);
+    if (!isSupported()) {
+      setError(notSupportedMessage);
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      const stream = await capture();
       localStreamRef.current = stream;
-      isSharingRef.current = true;
+      activeRef.current = true;
       setLocalStream(stream);
-      setIsSharing(true);
-      signalingClient.setSharing(true);
-      stream.getVideoTracks()[0]?.addEventListener("ended", () => stopShare());
+      setActive(true);
+      if (channel === "screen") signalingClient.setSharing(true);
+      else signalingClient.setMic(true);
+      stream.getTracks().forEach((track) => track.addEventListener("ended", () => stop()));
       for (const peer of signalingClient.state.peers) {
         openSendPC(peer.id);
       }
     } catch {
-      setShareError("Não foi possível iniciar o compartilhamento de tela.");
+      setError(failureMessage);
     }
-  }, [openSendPC, stopShare]);
+  }, [capture, isSupported, notSupportedMessage, failureMessage, channel, openSendPC, stop]);
 
   const openRecvPC = useCallback(
     (peerId: string) => {
@@ -151,6 +169,7 @@ export function useRoomMedia(room: string) {
       pc.onicecandidate = (e) => {
         if (e.candidate) {
           signalingClient.sendSignal(peerId, {
+            channel,
             role: "viewer",
             kind: "ice",
             candidate: e.candidate.toJSON(),
@@ -164,7 +183,7 @@ export function useRoomMedia(room: string) {
       };
       return pc;
     },
-    [closeRecvPC]
+    [channel, closeRecvPC]
   );
 
   useEffect(() => {
@@ -175,6 +194,7 @@ export function useRoomMedia(room: string) {
         closeRecvPC(from);
         return;
       }
+      if (data.channel !== channel) return;
       if (data.role === "broadcaster") {
         if (data.kind === "offer" && data.sdp) {
           let pc = recvPCs.current.get(from);
@@ -193,6 +213,7 @@ export function useRoomMedia(room: string) {
             .then((answer) => pc!.setLocalDescription(answer))
             .then(() => {
               signalingClient.sendSignal(from, {
+                channel,
                 role: "viewer",
                 kind: "answer",
                 sdp: pc!.localDescription,
@@ -239,7 +260,7 @@ export function useRoomMedia(room: string) {
     });
 
     const unsubscribeState = signalingClient.subscribe(() => {
-      if (isSharingRef.current) {
+      if (activeRef.current) {
         for (const peer of signalingClient.state.peers) {
           if (!sendPCs.current.has(peer.id)) openSendPC(peer.id);
         }
@@ -250,17 +271,56 @@ export function useRoomMedia(room: string) {
       unsubscribeSignal();
       unsubscribeState();
     };
-  }, [openRecvPC, openSendPC, closeSendPC, closeRecvPC]);
+  }, [channel, openRecvPC, openSendPC, closeSendPC, closeRecvPC]);
 
   useEffect(() => {
     const pcs = recvPCs.current;
     return () => {
-      stopShare();
+      stop();
       for (const pc of pcs.values()) pc.close();
       pcs.clear();
       setRemoteStreams({});
     };
-  }, [room, stopShare]);
+  }, [room, stop]);
 
-  return { isSharing, startShare, stopShare, localStream, remoteStreams, shareError };
+  return { active, start, stop, localStream, remoteStreams, error };
+}
+
+export function useRoomMedia(room: string) {
+  const screen = useBroadcastChannel(
+    "screen",
+    room,
+    () => navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }),
+    () => Boolean(navigator.mediaDevices?.getDisplayMedia),
+    "Seu navegador não suporta compartilhamento de tela.",
+    "Não foi possível iniciar o compartilhamento de tela."
+  );
+
+  const mic = useBroadcastChannel(
+    "mic",
+    room,
+    () => navigator.mediaDevices.getUserMedia({ audio: true }),
+    () => Boolean(navigator.mediaDevices?.getUserMedia),
+    "Seu navegador não suporta microfone.",
+    "Não foi possível ativar o microfone. Verifique a permissão do navegador."
+  );
+
+  const toggleMic = useCallback(() => {
+    if (mic.active) mic.stop();
+    else mic.start();
+  }, [mic]);
+
+  return {
+    isSharing: screen.active,
+    startShare: screen.start,
+    stopShare: screen.stop,
+    localStream: screen.localStream,
+    remoteStreams: screen.remoteStreams,
+    shareError: screen.error,
+
+    isMicOn: mic.active,
+    toggleMic,
+    micError: mic.error,
+    remoteMicStreams: mic.remoteStreams,
+  };
 }

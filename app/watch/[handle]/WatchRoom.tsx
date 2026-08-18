@@ -7,6 +7,7 @@ import { signalingClient } from "@/lib/signalingClient";
 import { useSignaling, useHasStoredName } from "@/lib/useSignaling";
 import { useRoomMedia } from "@/lib/useRoomMedia";
 import { VideoTile } from "@/components/VideoTile";
+import { RemoteAudio } from "@/components/RemoteAudio";
 
 const HANDLE_RE = /^[a-zA-Z0-9_-]+$/;
 
@@ -16,8 +17,18 @@ export function WatchRoom({ handle }: { handle: string }) {
   const hasStoredName = useHasStoredName();
   const validHandle = HANDLE_RE.test(handle);
 
-  const { isSharing, startShare, stopShare, localStream, remoteStreams, shareError } =
-    useRoomMedia(handle);
+  const {
+    isSharing,
+    startShare,
+    stopShare,
+    localStream,
+    remoteStreams,
+    shareError,
+    isMicOn,
+    toggleMic,
+    micError,
+    remoteMicStreams,
+  } = useRoomMedia(handle);
 
   const [switching, setSwitching] = useState(false);
   const [switchInput, setSwitchInput] = useState("");
@@ -169,6 +180,16 @@ export function WatchRoom({ handle }: { handle: string }) {
 
           <button
             type="button"
+            onClick={toggleMic}
+            className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition ${
+              isMicOn ? "bg-red-600 hover:bg-red-700" : "bg-zinc-700 hover:bg-zinc-600"
+            }`}
+          >
+            {isMicOn ? "Desativar microfone" : "Ativar microfone"}
+          </button>
+
+          <button
+            type="button"
             onClick={isSharing ? stopShare : startShare}
             className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition ${
               isSharing ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
@@ -184,6 +205,15 @@ export function WatchRoom({ handle }: { handle: string }) {
           {shareError}
         </p>
       )}
+      {micError && (
+        <p className="bg-red-50 px-4 py-2 text-sm text-red-600 dark:bg-red-950/40 dark:text-red-400">
+          {micError}
+        </p>
+      )}
+
+      {Object.entries(remoteMicStreams).map(([peerId, stream]) => (
+        <RemoteAudio key={peerId} stream={stream} />
+      ))}
 
       <div className="flex flex-1 flex-col gap-6 p-4 lg:flex-row">
         <main className="flex-1">
@@ -232,7 +262,10 @@ export function WatchRoom({ handle }: { handle: string }) {
               <span className="font-medium text-zinc-900 dark:text-zinc-100">
                 {state.name} <span className="text-zinc-500">(você)</span>
               </span>
-              {isSharing && <span className="h-2 w-2 rounded-full bg-emerald-500" title="transmitindo" />}
+              <span className="flex items-center gap-1.5">
+                {isMicOn && <span className="h-2 w-2 rounded-full bg-sky-500" title="microfone ativo" />}
+                {isSharing && <span className="h-2 w-2 rounded-full bg-emerald-500" title="transmitindo" />}
+              </span>
             </li>
             {state.peers.map((p) => (
               <li
@@ -240,7 +273,10 @@ export function WatchRoom({ handle }: { handle: string }) {
                 className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300"
               >
                 <span>{p.name}</span>
-                {p.sharing && <span className="h-2 w-2 rounded-full bg-emerald-500" title="transmitindo" />}
+                <span className="flex items-center gap-1.5">
+                  {p.mic && <span className="h-2 w-2 rounded-full bg-sky-500" title="microfone ativo" />}
+                  {p.sharing && <span className="h-2 w-2 rounded-full bg-emerald-500" title="transmitindo" />}
+                </span>
               </li>
             ))}
           </ul>

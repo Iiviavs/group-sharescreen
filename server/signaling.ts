@@ -8,6 +8,7 @@ interface ClientInfo {
   name: string | null;
   room: string | null;
   sharing: boolean;
+  mic: boolean;
   socket: WebSocket;
 }
 
@@ -39,7 +40,7 @@ function broadcastToRoom(room: string, msg: unknown, exclude?: WebSocket) {
 }
 
 function peerSummary(info: ClientInfo) {
-  return { id: info.id, name: info.name, sharing: info.sharing };
+  return { id: info.id, name: info.name, sharing: info.sharing, mic: info.mic };
 }
 
 function leaveRoom(info: ClientInfo) {
@@ -52,6 +53,7 @@ function leaveRoom(info: ClientInfo) {
   }
   info.room = null;
   info.sharing = false;
+  info.mic = false;
   broadcastToRoom(room, { type: "peer-left", id: info.id }, info.socket);
 }
 
@@ -62,6 +64,7 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
       name: null,
       room: null,
       sharing: false,
+      mic: false,
       socket,
     };
     clients.set(socket, info);
@@ -109,6 +112,7 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
           if (info.room) leaveRoom(info);
           info.room = room;
           info.sharing = false;
+          info.mic = false;
           let set = rooms.get(room);
           if (!set) {
             set = new Set();
@@ -130,6 +134,12 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
           if (!info.room) return;
           info.sharing = Boolean(msg.sharing);
           broadcastToRoom(info.room, { type: "peer-sharing", id: info.id, sharing: info.sharing });
+          break;
+        }
+        case "mic": {
+          if (!info.room) return;
+          info.mic = Boolean(msg.mic);
+          broadcastToRoom(info.room, { type: "peer-mic", id: info.id, mic: info.mic });
           break;
         }
         case "signal": {

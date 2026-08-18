@@ -1,6 +1,6 @@
 "use client";
 
-export type PeerInfo = { id: string; name: string; sharing: boolean };
+export type PeerInfo = { id: string; name: string; sharing: boolean; mic: boolean };
 
 export type SignalingStatus = "idle" | "connecting" | "open" | "closed";
 
@@ -149,7 +149,10 @@ class SignalingClient {
         break;
       case "peer-joined":
         this.setState({
-          peers: [...this.state.peers, { id: msg.id as string, name: msg.name as string, sharing: false }],
+          peers: [
+            ...this.state.peers,
+            { id: msg.id as string, name: msg.name as string, sharing: false, mic: false },
+          ],
         });
         break;
       case "peer-left":
@@ -160,6 +163,13 @@ class SignalingClient {
         this.setState({
           peers: this.state.peers.map((p) =>
             p.id === msg.id ? { ...p, sharing: Boolean(msg.sharing) } : p
+          ),
+        });
+        break;
+      case "peer-mic":
+        this.setState({
+          peers: this.state.peers.map((p) =>
+            p.id === msg.id ? { ...p, mic: Boolean(msg.mic) } : p
           ),
         });
         break;
@@ -201,6 +211,10 @@ class SignalingClient {
 
   setSharing(sharing: boolean) {
     this.rawSend({ type: "sharing", sharing });
+  }
+
+  setMic(mic: boolean) {
+    this.rawSend({ type: "mic", mic });
   }
 
   sendSignal(to: string, data: unknown) {
