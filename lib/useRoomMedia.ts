@@ -72,6 +72,18 @@ function useBroadcastChannel(
 
   const openSendPCRef = useRef<(peerId: string) => void>(() => {});
 
+  const scheduleSendRetry = useCallback((peerId: string) => {
+    // A P2P link can die from a transient network blip (wifi/cell handoff,
+    // brief packet loss, TURN hiccup) without the peer actually leaving the
+    // room. Nothing else would ever re-offer, so without this retry the
+    // tile just stays dead forever.
+    setTimeout(() => {
+      if (activeRef.current && signalingClient.state.peers.some((p) => p.id === peerId)) {
+        openSendPCRef.current(peerId);
+      }
+    }, 2000);
+  }, []);
+
   const openSendPC = useCallback(
     (peerId: string) => {
       if (sendPCs.current.has(peerId) || !localStreamRef.current) return;
@@ -96,15 +108,19 @@ function useBroadcastChannel(
         if (sendPCs.current.get(peerId) !== pc) return;
         if (pc.connectionState === "failed") {
           closeSendPC(peerId);
-          // A P2P link can die from a transient network blip (wifi/cell
-          // handoff, brief packet loss, TURN hiccup) without the peer
-          // actually leaving the room. Nothing else would ever re-offer,
-          // so without this retry the tile just stays dead forever.
+          scheduleSendRetry(peerId);
+        } else if (pc.connectionState === "disconnected") {
+          // Some browsers (notably mobile Safari) can sit in "disconnected"
+          // for a long time instead of ever declaring "failed", even though
+          // the link is actually dead — which left the tile frozen
+          // indefinitely instead of retrying. Give it a few seconds to
+          // recover on its own from a brief blip first.
           setTimeout(() => {
-            if (activeRef.current && signalingClient.state.peers.some((p) => p.id === peerId)) {
-              openSendPCRef.current(peerId);
+            if (sendPCs.current.get(peerId) === pc && pc.connectionState === "disconnected") {
+              closeSendPC(peerId);
+              scheduleSendRetry(peerId);
             }
-          }, 2000);
+          }, 4000);
         } else if (pc.connectionState === "closed") {
           closeSendPC(peerId);
         }
@@ -125,7 +141,7 @@ function useBroadcastChannel(
           if (sendPCs.current.get(peerId) === pc) closeSendPC(peerId);
         });
     },
-    [channel, closeSendPC]
+    [channel, closeSendPC, scheduleSendRetry]
   );
 
   useEffect(() => {
@@ -205,6 +221,18 @@ function useBroadcastChannel(
         if (recvPCs.current.get(peerId) !== pc) return;
         if (pc.connectionState === "failed" || pc.connectionState === "closed") {
           closeRecvPC(peerId);
+        } else if (pc.connectionState === "disconnected") {
+          // Mirrors the sender-side grace period: don't tear down a viewer's
+          // tile over a brief blip, but don't let it sit frozen forever
+          // either if the link doesn't recover. The broadcaster's own
+          // sendPC (see openSendPC above) mirrors this same link, so once
+          // its side also gives up it sends a fresh offer that rebuilds
+          // this from scratch.
+          setTimeout(() => {
+            if (recvPCs.current.get(peerId) === pc && pc.connectionState === "disconnected") {
+              closeRecvPC(peerId);
+            }
+          }, 4000);
         }
       };
       return pc;

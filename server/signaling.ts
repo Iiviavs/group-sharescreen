@@ -61,6 +61,22 @@ const clientsById = new Map<string, ClientInfo>();
 const namesInUse = new Map<string, WebSocket>();
 const rooms = new Map<string, RoomInfo>();
 
+// A WebRTC offer/answer/ICE candidate is only useful for a few seconds, but
+// `send()` below silently drops it if the target's socket isn't OPEN right
+// then — which happens constantly on mobile (screen lock, wifi/cell
+// handoff, a brief signal drop triggering a reconnect). A dropped offer is
+// never resent by anything else, so it permanently stranded that one
+// viewer's connection (peer shows in the room, but no video ever arrives).
+// Queuing briefly and flushing once the target (re)joins closes that gap.
+interface PendingSignal {
+  from: string;
+  data: unknown;
+  queuedAt: number;
+}
+const PENDING_SIGNAL_TTL_MS = 15_000;
+const MAX_PENDING_SIGNALS_PER_TARGET = 32;
+const pendingSignals = new Map<string, PendingSignal[]>();
+
 registerStatsProvider(() => ({
   connectedSockets: clients.size,
   registeredPeers: [...clients.values()].filter((c) => c.name !== null && !c.isModerator).length,
@@ -91,6 +107,42 @@ function broadcastToRoom(room: string, msg: unknown, exclude?: WebSocket) {
   if (!roomInfo) return;
   for (const s of roomInfo.sockets) {
     if (s !== exclude) send(s, msg);
+  }
+}
+
+function queueSignal(targetId: string, from: string, data: unknown) {
+  const queue = pendingSignals.get(targetId) ?? [];
+  queue.push({ from, data, queuedAt: Date.now() });
+  while (queue.length > MAX_PENDING_SIGNALS_PER_TARGET) queue.shift();
+  pendingSignals.set(targetId, queue);
+}
+
+// Delivers a relayed signal immediately if the target is reachable in the
+// same room right now; otherwise queues it for flushPendingSignals to
+// deliver once that peer (re)joins. Deliberately keyed by client id (not
+// looked up via clientsById), since a silently-watching moderator socket
+// (see "admin-join") never registers a name and so never gets a clientsById
+// entry at all.
+function deliverOrQueueSignal(room: string, targetId: string, from: string, data: unknown) {
+  const roomInfo = rooms.get(room);
+  const target = roomInfo
+    ? [...roomInfo.sockets].map((s) => clients.get(s)).find((c) => c?.id === targetId)
+    : undefined;
+  if (target && target.socket.readyState === target.socket.OPEN) {
+    send(target.socket, { type: "signal", from, data });
+    return;
+  }
+  queueSignal(targetId, from, data);
+}
+
+function flushPendingSignals(info: ClientInfo) {
+  const queue = pendingSignals.get(info.id);
+  if (!queue) return;
+  pendingSignals.delete(info.id);
+  const now = Date.now();
+  for (const item of queue) {
+    if (now - item.queuedAt > PENDING_SIGNAL_TTL_MS) continue;
+    send(info.socket, { type: "signal", from: item.from, data: item.data });
   }
 }
 
@@ -160,6 +212,12 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
   // periodic traffic that keeps idle-timeout proxies from killing the
   // connection in the first place.
   const heartbeat = setInterval(() => {
+    const now = Date.now();
+    for (const [targetId, queue] of pendingSignals) {
+      const fresh = queue.filter((item) => now - item.queuedAt <= PENDING_SIGNAL_TTL_MS);
+      if (fresh.length === 0) pendingSignals.delete(targetId);
+      else if (fresh.length !== queue.length) pendingSignals.set(targetId, fresh);
+    }
     for (const info of clients.values()) {
       if (!info.isAlive) {
         heartbeatReapedTotal.inc();
@@ -340,6 +398,7 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
             .filter((s) => s !== socket)
             .map((s) => peerSummary(clients.get(s)!));
           send(socket, { type: "room-state", room, selfId: info.id, peers });
+          flushPendingSignals(info);
           broadcastToRoom(room, { type: "peer-joined", id: info.id, name: info.name }, socket);
           break;
         }
@@ -385,6 +444,7 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
             .filter((s) => s !== socket)
             .map((s) => peerSummary(clients.get(s)!));
           send(socket, { type: "room-state", room, selfId: info.id, peers: adminPeers });
+          flushPendingSignals(info);
           broadcastToRoom(room, { type: "peer-joined", id: info.id, name: info.name, role: "moderator" }, socket);
           break;
         }
@@ -407,20 +467,13 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
         case "signal": {
           if (!info.room) return;
           const targetId = typeof msg.to === "string" ? msg.to : "";
-          const roomInfo = rooms.get(info.room);
-          if (!roomInfo) return;
+          if (!targetId) return;
           const dataKind =
             msg.data && typeof msg.data === "object" && "kind" in msg.data
               ? String((msg.data as { kind: unknown }).kind)
               : "unknown";
           signalsRelayedTotal.inc({ kind: dataKind });
-          for (const s of roomInfo.sockets) {
-            const target = clients.get(s);
-            if (target && target.id === targetId) {
-              send(s, { type: "signal", from: info.id, data: msg.data });
-              break;
-            }
-          }
+          deliverOrQueueSignal(info.room, targetId, info.id, msg.data);
           break;
         }
         default:
@@ -436,7 +489,10 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
       if (info.name && namesInUse.get(info.name.toLowerCase()) === socket) {
         namesInUse.delete(info.name.toLowerCase());
       }
-      if (clientsById.get(info.id) === info) clientsById.delete(info.id);
+      if (clientsById.get(info.id) === info) {
+        clientsById.delete(info.id);
+        pendingSignals.delete(info.id);
+      }
       clients.delete(socket);
     });
   });
