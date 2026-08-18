@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { signalingClient } from "./signalingClient";
 import { trackEvent } from "./analytics";
 import { ICE_CONFIG } from "./iceConfig";
@@ -17,6 +17,64 @@ type SignalData = {
   candidate?: RTCIceCandidateInit;
 };
 
+// Mesh P2P means whoever shares their screen uploads one full encode per
+// viewer (see AGENTS.md-adjacent discussion in useRoomMedia's callers) — in
+// a big room that upload is often the actual bottleneck, so letting the
+// broadcaster trade resolution/fps/bitrate down independently is the one
+// lever that helps without a server-side media relay.
+export type ShareResolution = "1080p" | "720p" | "480p" | "360p";
+export type ShareFps = 15 | 24 | 30 | 60;
+export type ShareBitrate = "low" | "medium" | "high";
+
+type QualityPreset = {
+  width: number;
+  height: number;
+  frameRate: number;
+  maxBitrateKbps: number;
+};
+
+const RESOLUTION_DIMENSIONS: Record<ShareResolution, { width: number; height: number }> = {
+  "1080p": { width: 1920, height: 1080 },
+  "720p": { width: 1280, height: 720 },
+  "480p": { width: 854, height: 480 },
+  "360p": { width: 640, height: 360 },
+};
+
+const BITRATE_KBPS: Record<ShareBitrate, number> = {
+  low: 700,
+  medium: 2000,
+  high: 4000,
+};
+
+export const SHARE_RESOLUTION_OPTIONS: { value: ShareResolution; label: string }[] = [
+  { value: "1080p", label: "1080p" },
+  { value: "720p", label: "720p" },
+  { value: "480p", label: "480p" },
+  { value: "360p", label: "360p" },
+];
+
+export const SHARE_FPS_OPTIONS: { value: ShareFps; label: string }[] = [
+  { value: 15, label: "15 fps" },
+  { value: 24, label: "24 fps" },
+  { value: 30, label: "30 fps" },
+  { value: 60, label: "60 fps" },
+];
+
+export const SHARE_BITRATE_OPTIONS: { value: ShareBitrate; label: string }[] = [
+  { value: "low", label: "Bitrate baixo (~700 kbps)" },
+  { value: "medium", label: "Bitrate médio (~2 Mbps)" },
+  { value: "high", label: "Bitrate alto (~4 Mbps)" },
+];
+
+function applySenderBitrate(sender: RTCRtpSender, maxBitrateKbps: number | undefined) {
+  if (!maxBitrateKbps) return;
+  const params = sender.getParameters();
+  const encodings = params.encodings && params.encodings.length > 0 ? params.encodings : [{}];
+  encodings[0].maxBitrate = maxBitrateKbps * 1000;
+  params.encodings = encodings;
+  sender.setParameters(params).catch(() => {});
+}
+
 // Shared connection-management for a single media channel (screen share or
 // mic), broadcast from this client to every peer in the room. Each channel
 // gets its own set of peer connections and its own signaling namespace so
@@ -27,7 +85,11 @@ function useBroadcastChannel(
   capture: (source?: ShareSource) => Promise<MediaStream>,
   isSupported: () => boolean,
   notSupportedMessage: string,
-  failureMessage: string
+  failureMessage: string,
+  // Only meaningful for the screen channel — mic never passes this. When it
+  // changes while a share is already active, the live track and every
+  // current sender get updated in place instead of requiring a restart.
+  videoQuality?: QualityPreset
 ) {
   const eventPrefix = channel === "screen" ? "screen_share" : "mic";
   const [active, setActive] = useState(false);
@@ -41,6 +103,10 @@ function useBroadcastChannel(
   const activeRef = useRef(false);
   const pendingSendCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const pendingRecvCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
+  const videoQualityRef = useRef(videoQuality);
+  useEffect(() => {
+    videoQualityRef.current = videoQuality;
+  }, [videoQuality]);
 
   const removeRemoteStream = useCallback((peerId: string) => {
     setRemoteStreams((prev) => {
@@ -93,7 +159,10 @@ function useBroadcastChannel(
       const stream = localStreamRef.current;
       const pc = new RTCPeerConnection(ICE_CONFIG);
       sendPCs.current.set(peerId, pc);
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+      stream.getTracks().forEach((track) => {
+        const sender = pc.addTrack(track, stream);
+        if (track.kind === "video") applySenderBitrate(sender, videoQualityRef.current?.maxBitrateKbps);
+      });
       pc.onicecandidate = (e) => {
         if (e.candidate) {
           signalingClient.sendSignal(peerId, {
@@ -150,6 +219,27 @@ function useBroadcastChannel(
   useEffect(() => {
     openSendPCRef.current = openSendPC;
   }, [openSendPC]);
+
+  // Lets the broadcaster change resolution/fps/bitrate mid-share to react to
+  // a room bogging down, instead of having to stop and restart the whole
+  // capture. Skipped while inactive — a change picked before starting is
+  // simply read fresh by `capture` (via videoQualityRef-equivalent state in
+  // the caller) the next time start() runs.
+  useEffect(() => {
+    if (!videoQuality || !activeRef.current || !localStreamRef.current) return;
+    const track = localStreamRef.current.getVideoTracks()[0];
+    track
+      ?.applyConstraints({
+        width: { ideal: videoQuality.width },
+        height: { ideal: videoQuality.height },
+        frameRate: { ideal: videoQuality.frameRate },
+      })
+      .catch(() => {});
+    for (const pc of sendPCs.current.values()) {
+      const sender = pc.getSenders().find((s) => s.track?.kind === "video");
+      if (sender) applySenderBitrate(sender, videoQuality.maxBitrateKbps);
+    }
+  }, [videoQuality]);
 
   const stop = useCallback(() => {
     if (!activeRef.current) return;
@@ -416,22 +506,70 @@ export function useScreenShareMode() {
 }
 
 export function useRoomMedia(room: string) {
+  // Each of the three dials is independent so the person can e.g. keep
+  // 720p but drop bitrate, or keep quality but drop fps. Refs mirror the
+  // state (same pattern as noiseSuppressionOnRef below) because capture()
+  // only runs once per share start and would otherwise close over a stale
+  // value from whatever render happened to create it.
+  const [shareResolution, setShareResolutionState] = useState<ShareResolution>("720p");
+  const [shareFps, setShareFpsState] = useState<ShareFps>(30);
+  const [shareBitrate, setShareBitrateState] = useState<ShareBitrate>("medium");
+  const shareResolutionRef = useRef(shareResolution);
+  const shareFpsRef = useRef(shareFps);
+  const shareBitrateRef = useRef(shareBitrate);
+
+  const setShareResolution = useCallback((value: ShareResolution) => {
+    shareResolutionRef.current = value;
+    setShareResolutionState(value);
+    trackEvent(`screen_share_resolution_${value}`);
+  }, []);
+  const setShareFps = useCallback((value: ShareFps) => {
+    shareFpsRef.current = value;
+    setShareFpsState(value);
+    trackEvent(`screen_share_fps_${value}`);
+  }, []);
+  const setShareBitrate = useCallback((value: ShareBitrate) => {
+    shareBitrateRef.current = value;
+    setShareBitrateState(value);
+    trackEvent(`screen_share_bitrate_${value}`);
+  }, []);
+
+  // Recomputed only when one of the three dials actually changes, so this
+  // stays a stable reference for useBroadcastChannel's live-reapply effect
+  // in between.
+  const screenQualityPreset = useMemo<QualityPreset>(() => {
+    const dims = RESOLUTION_DIMENSIONS[shareResolution];
+    return {
+      width: dims.width,
+      height: dims.height,
+      frameRate: shareFps,
+      maxBitrateKbps: BITRATE_KBPS[shareBitrate],
+    };
+  }, [shareResolution, shareFps, shareBitrate]);
+
   const screen = useBroadcastChannel(
     "screen",
     room,
     (source) => {
+      const dims = RESOLUTION_DIMENSIONS[shareResolutionRef.current];
+      const videoConstraints: MediaTrackConstraints = {
+        width: { ideal: dims.width },
+        height: { ideal: dims.height },
+        frameRate: { ideal: shareFpsRef.current },
+      };
       if (source === "camera" || !hasDisplayCapture()) {
         return navigator.mediaDevices.getUserMedia({
           video: hasDisplayCapture()
-            ? { facingMode: "user" }
-            : { facingMode: { ideal: "environment" } },
+            ? { ...videoConstraints, facingMode: "user" }
+            : { ...videoConstraints, facingMode: { ideal: "environment" } },
         });
       }
-      return navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      return navigator.mediaDevices.getDisplayMedia({ video: videoConstraints, audio: true });
     },
     () => hasDisplayCapture() || hasCameraCapture(),
     "Seu navegador não suporta compartilhamento de tela nem câmera.",
-    "Não foi possível iniciar o compartilhamento. Verifique as permissões do navegador."
+    "Não foi possível iniciar o compartilhamento. Verifique as permissões do navegador.",
+    screenQualityPreset
   );
 
   // Mirrors noiseSuppressionOn below without going stale inside the capture
@@ -482,6 +620,12 @@ export function useRoomMedia(room: string) {
     remoteStreams: screen.remoteStreams,
     shareError: screen.error,
     shareSource: screen.source,
+    shareResolution,
+    setShareResolution,
+    shareFps,
+    setShareFps,
+    shareBitrate,
+    setShareBitrate,
 
     isMicOn: mic.active,
     toggleMic,

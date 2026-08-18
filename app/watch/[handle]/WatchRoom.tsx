@@ -5,7 +5,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signalingClient } from "@/lib/signalingClient";
 import { useSignaling, useHasStoredName } from "@/lib/useSignaling";
-import { useRoomMedia, useScreenShareMode } from "@/lib/useRoomMedia";
+import {
+  useRoomMedia,
+  useScreenShareMode,
+  SHARE_RESOLUTION_OPTIONS,
+  SHARE_FPS_OPTIONS,
+  SHARE_BITRATE_OPTIONS,
+} from "@/lib/useRoomMedia";
 import { trackEvent } from "@/lib/analytics";
 import { toRoomHandle, isPrivateRoomHandle } from "@/lib/roomsApi";
 import { VideoTile } from "@/components/VideoTile";
@@ -40,6 +46,12 @@ export function WatchRoom({ handle }: { handle: string }) {
     remoteStreams,
     shareError,
     shareSource,
+    shareResolution,
+    setShareResolution,
+    shareFps,
+    setShareFps,
+    shareBitrate,
+    setShareBitrate,
     isMicOn,
     toggleMic,
     micError,
@@ -358,6 +370,57 @@ export function WatchRoom({ handle }: { handle: string }) {
               <HeadphonesIcon className="h-5 w-5" />
             )}
           </button>
+
+          <label className="sr-only" htmlFor="share-resolution">
+            Resolução da transmissão
+          </label>
+          <select
+            id="share-resolution"
+            value={shareResolution}
+            onChange={(e) => setShareResolution(e.target.value as typeof shareResolution)}
+            title="Resolução — reduza se a sala estiver travando"
+            className="rounded-lg border border-zinc-300 bg-white px-2 py-2 text-sm font-medium text-zinc-700 outline-none transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            {SHARE_RESOLUTION_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+
+          <label className="sr-only" htmlFor="share-fps">
+            FPS da transmissão
+          </label>
+          <select
+            id="share-fps"
+            value={shareFps}
+            onChange={(e) => setShareFps(Number(e.target.value) as typeof shareFps)}
+            title="Taxa de quadros — reduza se a sala estiver travando"
+            className="rounded-lg border border-zinc-300 bg-white px-2 py-2 text-sm font-medium text-zinc-700 outline-none transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            {SHARE_FPS_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+
+          <label className="sr-only" htmlFor="share-bitrate">
+            Bitrate da transmissão
+          </label>
+          <select
+            id="share-bitrate"
+            value={shareBitrate}
+            onChange={(e) => setShareBitrate(e.target.value as typeof shareBitrate)}
+            title="Bitrate — reduza se a sala estiver travando"
+            className="rounded-lg border border-zinc-300 bg-white px-2 py-2 text-sm font-medium text-zinc-700 outline-none transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            {SHARE_BITRATE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
 
           {isSharing ? (
             <button
