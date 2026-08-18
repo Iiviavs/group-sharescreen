@@ -17,7 +17,7 @@ export default function Home() {
   const [nameInput, setNameInput] = useState("");
   const [roomInput, setRoomInput] = useState("");
   const [roomError, setRoomError] = useState<string | null>(null);
-  const [roomIsPrivate, setRoomIsPrivate] = useState(true);
+  const [roomIsPrivate, setRoomIsPrivate] = useState(false);
   const [changingName, setChangingName] = useState(false);
   const hasStoredName = useHasStoredName();
   const previousNameRef = useRef(state.name);
