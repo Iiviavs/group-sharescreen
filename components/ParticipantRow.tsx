@@ -1,7 +1,7 @@
 "use client";
 
 import { useSpeaking } from "@/lib/useSpeaking";
-import { MicIcon, ScreenIcon, SpeakerIcon, SpeakerMuteIcon } from "./icons";
+import { MicIcon, MicOffIcon, ScreenIcon, SpeakerIcon, SpeakerMuteIcon } from "./icons";
 
 export function ParticipantRow({
   name,
@@ -41,7 +41,11 @@ export function ParticipantRow({
         {isSelf && <span className="font-normal text-zinc-500"> (você)</span>}
       </span>
       <span className="flex shrink-0 items-center gap-2 text-zinc-400 dark:text-zinc-500">
-        {micOn && <MicIcon className="h-4 w-4 text-sky-500" />}
+        {micOn ? (
+          <MicIcon className="h-4 w-4 text-sky-500" />
+        ) : (
+          <MicOffIcon className="h-4 w-4 text-zinc-400 dark:text-zinc-600" />
+        )}
         {sharing && <ScreenIcon className="h-4 w-4 text-emerald-500" />}
         {!isSelf && onToggleMute && (
           <button
