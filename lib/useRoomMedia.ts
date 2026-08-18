@@ -23,6 +23,8 @@ export function useRoomMedia(room: string) {
   const sendPCs = useRef<Map<string, RTCPeerConnection>>(new Map());
   const recvPCs = useRef<Map<string, RTCPeerConnection>>(new Map());
   const isSharingRef = useRef(false);
+  const pendingSendCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
+  const pendingRecvCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
 
   const removeRemoteStream = useCallback((peerId: string) => {
     setRemoteStreams((prev) => {
@@ -39,6 +41,7 @@ export function useRoomMedia(room: string) {
       pc.close();
       sendPCs.current.delete(peerId);
     }
+    pendingSendCandidates.current.delete(peerId);
   }, []);
 
   const closeRecvPC = useCallback(
@@ -48,6 +51,7 @@ export function useRoomMedia(room: string) {
         pc.close();
         recvPCs.current.delete(peerId);
       }
+      pendingRecvCandidates.current.delete(peerId);
       removeRemoteStream(peerId);
     },
     [removeRemoteStream]
@@ -165,7 +169,16 @@ export function useRoomMedia(room: string) {
           let pc = recvPCs.current.get(from);
           if (!pc) pc = openRecvPC(from);
           pc.setRemoteDescription(data.sdp)
-            .then(() => pc!.createAnswer())
+            .then(async () => {
+              const queued = pendingRecvCandidates.current.get(from);
+              if (queued) {
+                pendingRecvCandidates.current.delete(from);
+                for (const candidate of queued) {
+                  await pc!.addIceCandidate(candidate).catch(() => {});
+                }
+              }
+              return pc!.createAnswer();
+            })
             .then((answer) => pc!.setLocalDescription(answer))
             .then(() => {
               signalingClient.sendSignal(from, {
@@ -176,15 +189,40 @@ export function useRoomMedia(room: string) {
             })
             .catch(() => closeRecvPC(from));
         } else if (data.kind === "ice" && data.candidate) {
-          recvPCs.current.get(from)?.addIceCandidate(data.candidate).catch(() => {});
+          const pc = recvPCs.current.get(from);
+          if (pc && pc.remoteDescription) {
+            pc.addIceCandidate(data.candidate).catch(() => {});
+          } else {
+            const queue = pendingRecvCandidates.current.get(from) ?? [];
+            queue.push(data.candidate);
+            pendingRecvCandidates.current.set(from, queue);
+          }
         } else if (data.kind === "stop") {
           closeRecvPC(from);
         }
       } else if (data.role === "viewer") {
         if (data.kind === "answer" && data.sdp) {
-          sendPCs.current.get(from)?.setRemoteDescription(data.sdp).catch(() => {});
+          const pc = sendPCs.current.get(from);
+          pc?.setRemoteDescription(data.sdp)
+            .then(async () => {
+              const queued = pendingSendCandidates.current.get(from);
+              if (queued) {
+                pendingSendCandidates.current.delete(from);
+                for (const candidate of queued) {
+                  await pc.addIceCandidate(candidate).catch(() => {});
+                }
+              }
+            })
+            .catch(() => {});
         } else if (data.kind === "ice" && data.candidate) {
-          sendPCs.current.get(from)?.addIceCandidate(data.candidate).catch(() => {});
+          const pc = sendPCs.current.get(from);
+          if (pc && pc.remoteDescription) {
+            pc.addIceCandidate(data.candidate).catch(() => {});
+          } else {
+            const queue = pendingSendCandidates.current.get(from) ?? [];
+            queue.push(data.candidate);
+            pendingSendCandidates.current.set(from, queue);
+          }
         }
       }
     });
