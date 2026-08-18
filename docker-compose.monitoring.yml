@@ -2,15 +2,28 @@
 # server's /metrics endpoint (see monitoring/prometheus.yml to adjust the
 # target).
 #
-# `npm start` brings this up automatically and in the background, via
-# scripts/start-monitoring.mjs — it waits until the site itself is online
-# first (so it never adds to startup time), and if Docker isn't available
-# it's skipped silently; the app is never affected either way. You can also
-# still run it by hand any time:
+# This is a SEPARATE deployment from the app itself on purpose — a reverse
+# proxy / PaaS (Coolify, etc.) can only route a domain to a container it
+# actually manages. If this stack were started as a side effect from
+# *inside* the app's own container (e.g. via the Docker socket), it'd be an
+# invisible sibling container that Coolify never created and can't route
+# to — pointing a domain at "port 3002 on the app resource" would find
+# nothing listening there, since Grafana isn't part of that container.
+#
+# Setup in Coolify: create a new resource of type "Docker Compose", point
+# it at this file (same repo/branch as the app), deploy it, then add your
+# domain to the `grafana` service in Coolify's UI — Coolify's proxy talks
+# to it directly over Docker, no host port juggling needed.
+#
+# Running it by hand instead (e.g. on a plain VPS, no PaaS):
 #   docker compose -f docker-compose.monitoring.yml up -d
-#   Prometheus: http://localhost:9090
+#   Prometheus: http://localhost:9090 (loopback-only, see below)
 #   Grafana:    http://localhost:3002  (login: admin / admin, unless
 #               GRAFANA_ADMIN_PASSWORD is set — change it after first login)
+#
+# Either way, the app's own signaling port (4000, see /metrics) needs to be
+# reachable from wherever this Prometheus container runs — published to the
+# host is enough for the default host.docker.internal target below.
 #
 # The "ShareScreen" dashboard is provisioned automatically under the
 # ShareScreen folder in Grafana.
