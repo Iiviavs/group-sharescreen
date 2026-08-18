@@ -1,6 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  SpeakerIcon,
+  SpeakerMuteIcon,
+  PipIcon,
+  PipExitIcon,
+  FullscreenIcon,
+  FullscreenExitIcon,
+  EyeOffIcon,
+  ArrowLeftIcon,
+} from "@/components/icons";
 
 function noopSubscribe() {
   return () => {};
@@ -19,6 +29,7 @@ export function VideoTile({
   muted = false,
   allowUnmute = true,
   fill = false,
+  onStopWatching,
 }: {
   stream: MediaStream;
   label: string;
@@ -28,6 +39,11 @@ export function VideoTile({
   // When true (the lone tile in the room), grow to fill the available
   // space instead of staying locked to a 16:9 card like the grid view.
   fill?: boolean;
+  // Only passed for remote peers — lets the viewer stop receiving this
+  // specific stream (see WatchRoom/useRoomMedia) without affecting anyone
+  // else's tile. Omitted for the local "Você" tile, which has nothing to
+  // stop watching.
+  onStopWatching?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -112,30 +128,77 @@ export function VideoTile({
           <button
             type="button"
             onClick={() => setIsMuted((m) => !m)}
-            className="rounded-full bg-black/60 px-2.5 py-1.5 text-xs text-white hover:bg-black/80 active:bg-black/80"
+            title={isMuted ? "Ativar som" : "Silenciar"}
+            aria-label={isMuted ? "Ativar som" : "Silenciar"}
+            className="rounded-full bg-black/60 p-1.5 text-white hover:bg-black/80 active:bg-black/80"
           >
-            {isMuted ? "Ativar som" : "Silenciar"}
+            {isMuted ? <SpeakerMuteIcon className="h-4 w-4" /> : <SpeakerIcon className="h-4 w-4" />}
           </button>
         )}
         {pipSupported && (
           <button
             type="button"
             onClick={togglePiP}
-            title="Picture-in-picture"
-            className="rounded-full bg-black/60 px-2.5 py-1.5 text-xs text-white hover:bg-black/80 active:bg-black/80"
+            title={isPiP ? "Sair do picture-in-picture" : "Picture-in-picture"}
+            aria-label={isPiP ? "Sair do picture-in-picture" : "Picture-in-picture"}
+            className="rounded-full bg-black/60 p-1.5 text-white hover:bg-black/80 active:bg-black/80"
           >
-            {isPiP ? "Sair do PIP" : "PIP"}
+            {isPiP ? <PipExitIcon className="h-4 w-4" /> : <PipIcon className="h-4 w-4" />}
           </button>
         )}
         <button
           type="button"
           onClick={toggleFullscreen}
-          title="Tela cheia"
-          className="rounded-full bg-black/60 px-2.5 py-1.5 text-xs text-white hover:bg-black/80 active:bg-black/80"
+          title={isFullscreen ? "Sair da tela cheia" : "Tela cheia"}
+          aria-label={isFullscreen ? "Sair da tela cheia" : "Tela cheia"}
+          className="rounded-full bg-black/60 p-1.5 text-white hover:bg-black/80 active:bg-black/80"
         >
-          {isFullscreen ? "Sair da tela cheia" : "Tela cheia"}
+          {isFullscreen ? <FullscreenExitIcon className="h-4 w-4" /> : <FullscreenIcon className="h-4 w-4" />}
         </button>
+        {onStopWatching && (
+          <button
+            type="button"
+            onClick={onStopWatching}
+            title="Parar de assistir"
+            aria-label="Parar de assistir"
+            className="rounded-full bg-black/60 p-1.5 text-white hover:bg-black/80 active:bg-black/80"
+          >
+            <EyeOffIcon className="h-4 w-4" />
+          </button>
+        )}
       </div>
+    </div>
+  );
+}
+
+export function StoppedPeerTile({
+  label,
+  fill = false,
+  onResume,
+}: {
+  label: string;
+  fill?: boolean;
+  onResume: () => void;
+}) {
+  return (
+    <div
+      className={`relative flex w-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border border-white/10 bg-black px-4 text-center ${
+        fill ? "h-full min-h-[240px]" : "aspect-video"
+      }`}
+    >
+      <p className="text-sm text-zinc-300">
+        Você saiu dessa transmissão
+        <br />
+        <span className="text-zinc-500">({label})</span>
+      </p>
+      <button
+        type="button"
+        onClick={onResume}
+        className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-white/20"
+      >
+        <ArrowLeftIcon className="h-4 w-4" />
+        Voltar
+      </button>
     </div>
   );
 }

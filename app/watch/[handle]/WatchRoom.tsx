@@ -14,7 +14,7 @@ import {
 } from "@/lib/useRoomMedia";
 import { trackEvent } from "@/lib/analytics";
 import { toRoomHandle, isPrivateRoomHandle } from "@/lib/roomsApi";
-import { VideoTile } from "@/components/VideoTile";
+import { VideoTile, StoppedPeerTile } from "@/components/VideoTile";
 import { RemoteAudio } from "@/components/RemoteAudio";
 import { ParticipantRow } from "@/components/ParticipantRow";
 import { ChatPanel } from "@/components/ChatPanel";
@@ -44,6 +44,9 @@ export function WatchRoom({ handle }: { handle: string }) {
     stopShare,
     localStream,
     remoteStreams,
+    stoppedPeers,
+    stopWatchingPeer,
+    resumeWatchingPeer,
     shareError,
     shareSource,
     shareResolution,
@@ -247,8 +250,13 @@ export function WatchRoom({ handle }: { handle: string }) {
   const visiblePeers = state.peers.filter((p) => p.role !== "moderator");
   const peerCount = visiblePeers.length + (state.name ? 1 : 0);
   const remoteEntries = Object.entries(remoteStreams);
-  const nothingToShow = remoteEntries.length === 0 && !isSharing;
-  const tileCount = remoteEntries.length + (isSharing && localStream ? 1 : 0);
+  // A peer we deliberately stopped watching has no entry in remoteStreams
+  // (the underlying connection is closed to save resources — see
+  // stopWatchingPeer), but still gets a tile slot showing a "you left this
+  // transmission" placeholder instead of just vanishing from the grid.
+  const stoppedEntries = visiblePeers.filter((p) => stoppedPeers.has(p.id) && !(p.id in remoteStreams));
+  const nothingToShow = remoteEntries.length === 0 && stoppedEntries.length === 0 && !isSharing;
+  const tileCount = remoteEntries.length + stoppedEntries.length + (isSharing && localStream ? 1 : 0);
   const isSingleTile = tileCount === 1;
 
   return (
@@ -647,9 +655,18 @@ export function WatchRoom({ handle }: { handle: string }) {
                     badge="ao vivo"
                     muted
                     fill={isSingleTile}
+                    onStopWatching={() => stopWatchingPeer(peerId)}
                   />
                 );
               })}
+              {stoppedEntries.map((peer) => (
+                <StoppedPeerTile
+                  key={peer.id}
+                  label={peer.name}
+                  fill={isSingleTile}
+                  onResume={() => resumeWatchingPeer(peer.id)}
+                />
+              ))}
             </div>
           )}
         </main>
