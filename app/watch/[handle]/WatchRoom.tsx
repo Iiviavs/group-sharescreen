@@ -11,6 +11,7 @@ import { toRoomHandle, isPrivateRoomHandle } from "@/lib/roomsApi";
 import { VideoTile } from "@/components/VideoTile";
 import { RemoteAudio } from "@/components/RemoteAudio";
 import { ParticipantRow } from "@/components/ParticipantRow";
+import { MicIcon, MicOffIcon, HeadphonesIcon, HeadphonesOffIcon } from "@/components/icons";
 
 const HANDLE_RE = /^[a-zA-Z0-9_-]+$/;
 
@@ -226,21 +227,29 @@ export function WatchRoom({ handle }: { handle: string }) {
           <button
             type="button"
             onClick={toggleMic}
-            className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition ${
-              isMicOn ? "bg-red-600 hover:bg-red-700" : "bg-zinc-700 hover:bg-zinc-600"
+            title={isMicOn ? "Desativar microfone" : "Ativar microfone"}
+            aria-label={isMicOn ? "Desativar microfone" : "Ativar microfone"}
+            className={`rounded-lg p-2 text-white transition ${
+              isMicOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
             }`}
           >
-            {isMicOn ? "Desativar microfone" : "Ativar microfone"}
+            {isMicOn ? <MicIcon className="h-5 w-5" /> : <MicOffIcon className="h-5 w-5" />}
           </button>
 
           <button
             type="button"
             onClick={toggleMicsMuted}
-            className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition ${
-              micsMuted ? "bg-amber-600 hover:bg-amber-700" : "bg-zinc-700 hover:bg-zinc-600"
+            title={micsMuted ? "Reativar microfones" : "Silenciar microfones"}
+            aria-label={micsMuted ? "Reativar microfones" : "Silenciar microfones"}
+            className={`rounded-lg p-2 text-white transition ${
+              micsMuted ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
             }`}
           >
-            {micsMuted ? "Reativar microfones" : "Silenciar microfones"}
+            {micsMuted ? (
+              <HeadphonesOffIcon className="h-5 w-5" />
+            ) : (
+              <HeadphonesIcon className="h-5 w-5" />
+            )}
           </button>
 
           <button

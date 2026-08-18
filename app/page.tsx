@@ -157,6 +157,20 @@ export default function Home() {
             </button>
           </form>
         )}
+
+        <p className="mt-6 text-center text-xs text-zinc-400 dark:text-zinc-600">
+          Desenvolvido por{" "}
+          <span className="font-medium text-zinc-500 dark:text-zinc-400">@NemTudo</span> (
+          <a
+            href="https://discord.gg/nemtudo"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-300"
+          >
+            discord.gg/nemtudo
+          </a>
+          )
+        </p>
       </main>
     </div>
   );

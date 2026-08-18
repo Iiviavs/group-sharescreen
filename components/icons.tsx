@@ -19,6 +19,65 @@ export function MicIcon({ className }: IconProps) {
   );
 }
 
+export function MicOffIcon({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect x="9" y="2" width="6" height="12" rx="3" />
+      <path d="M5 10a7 7 0 0 0 14 0" />
+      <line x1="12" y1="19" x2="12" y2="22" />
+      <line x1="3" y1="3" x2="21" y2="21" />
+    </svg>
+  );
+}
+
+export function HeadphonesIcon({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M3 14v-2a9 9 0 0 1 18 0v2" />
+      <rect x="2" y="14" width="5" height="7" rx="2" />
+      <rect x="17" y="14" width="5" height="7" rx="2" />
+    </svg>
+  );
+}
+
+export function HeadphonesOffIcon({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M3 14v-2a9 9 0 0 1 18 0v2" />
+      <rect x="2" y="14" width="5" height="7" rx="2" />
+      <rect x="17" y="14" width="5" height="7" rx="2" />
+      <line x1="3" y1="3" x2="21" y2="21" />
+    </svg>
+  );
+}
+
 export function ScreenIcon({ className }: IconProps) {
   return (
     <svg
