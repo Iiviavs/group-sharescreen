@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import type { ChatMessage } from "@/lib/signalingClient";
 
 function formatTime(ts: number): string {
@@ -20,12 +20,25 @@ export function ChatPanel({
 }) {
   const [input, setInput] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
+  // Tracks whether we've already jumped to bottom for the current batch of
+  // messages, so a room's preloaded history opens scrolled to the bottom
+  // (like a real chat) instead of at the top where it first renders.
+  const initializedRef = useRef(false);
 
   // Keeps the newest message in view as they arrive, without fighting the
   // user if they've scrolled up to read older ones.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = listRef.current;
     if (!el) return;
+    if (messages.length === 0) {
+      initializedRef.current = false;
+      return;
+    }
+    if (!initializedRef.current) {
+      el.scrollTop = el.scrollHeight;
+      initializedRef.current = true;
+      return;
+    }
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
     if (nearBottom) el.scrollTop = el.scrollHeight;
   }, [messages]);
