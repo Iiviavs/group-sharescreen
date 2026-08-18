@@ -53,6 +53,7 @@ class SignalingClient {
   private ws: WebSocket | null = null;
   private listeners = new Set<Listener>();
   private signalListeners = new Set<SignalListener>();
+  private roomJoinedListeners = new Set<Listener>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
   private desiredName: string | null = null;
@@ -75,6 +76,14 @@ class SignalingClient {
   onSignal(cb: SignalListener) {
     this.signalListeners.add(cb);
     return () => this.signalListeners.delete(cb);
+  }
+
+  // Fires every time room-state is received, including after a reconnect
+  // rejoins the same room — lets media channels re-announce sharing/mic
+  // state, which the server resets to false for the new socket.
+  onRoomJoined(cb: Listener) {
+    this.roomJoinedListeners.add(cb);
+    return () => this.roomJoinedListeners.delete(cb);
   }
 
   private setState(patch: Partial<SignalingState>) {
@@ -151,6 +160,7 @@ class SignalingClient {
           peers: msg.peers as PeerInfo[],
         });
         trackEvent("room_joined");
+        this.roomJoinedListeners.forEach((l) => l());
         break;
       case "peer-joined":
         this.setState({

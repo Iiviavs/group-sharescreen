@@ -281,9 +281,19 @@ function useBroadcastChannel(
       }
     });
 
+    // After the signaling socket reconnects and rejoins, the server has a
+    // fresh entry with sharing/mic reset to false — re-announce our actual
+    // state so other peers' indicators don't go stale.
+    const unsubscribeRoomJoined = signalingClient.onRoomJoined(() => {
+      if (!activeRef.current) return;
+      if (channel === "screen") signalingClient.setSharing(true);
+      else signalingClient.setMic(true);
+    });
+
     return () => {
       unsubscribeSignal();
       unsubscribeState();
+      unsubscribeRoomJoined();
     };
   }, [channel, openRecvPC, openSendPC, closeSendPC, closeRecvPC]);
 
