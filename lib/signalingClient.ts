@@ -1,5 +1,7 @@
 "use client";
 
+import { trackEvent } from "./analytics";
+
 export type PeerInfo = { id: string; name: string; sharing: boolean; mic: boolean };
 
 export type SignalingStatus = "idle" | "connecting" | "open" | "closed";
@@ -133,12 +135,14 @@ class SignalingClient {
       case "registered":
         this.setState({ name: msg.name as string, nameError: null, selfId: msg.id as string });
         setStoredName(msg.name as string);
+        trackEvent("name_registered");
         if (this.desiredRoom) this.rawSend({ type: "join", room: this.desiredRoom });
         break;
       case "register-error":
         this.setState({ nameError: msg.message as string });
         this.desiredName = null;
         setStoredName(null);
+        trackEvent("name_register_error");
         break;
       case "room-state":
         this.setState({
@@ -146,6 +150,7 @@ class SignalingClient {
           selfId: msg.selfId as string,
           peers: msg.peers as PeerInfo[],
         });
+        trackEvent("room_joined");
         break;
       case "peer-joined":
         this.setState({

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { signalingClient } from "@/lib/signalingClient";
 import { useSignaling, useHasStoredName } from "@/lib/useSignaling";
 import { useRoomMedia } from "@/lib/useRoomMedia";
+import { trackEvent } from "@/lib/analytics";
 import { VideoTile } from "@/components/VideoTile";
 import { RemoteAudio } from "@/components/RemoteAudio";
 
@@ -64,6 +65,7 @@ export function WatchRoom({ handle }: { handle: string }) {
     setSwitching(false);
     setSwitchInput("");
     setSwitchError(null);
+    trackEvent("room_switch");
     router.push(`/watch/${trimmed}`);
   }
 

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { signalingClient } from "./signalingClient";
+import { trackEvent } from "./analytics";
 
 const TURN_URL = process.env.NEXT_PUBLIC_TURN_URL || "turn:n1-br.nemtudo.me:3478?transport=udp";
 const TURN_USERNAME = process.env.NEXT_PUBLIC_TURN_USERNAME || "nemtudo";
@@ -40,6 +41,7 @@ function useBroadcastChannel(
   notSupportedMessage: string,
   failureMessage: string
 ) {
+  const eventPrefix = channel === "screen" ? "screen_share" : "mic";
   const [active, setActive] = useState(false);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
@@ -133,7 +135,8 @@ function useBroadcastChannel(
     sendPCs.current.clear();
     if (channel === "screen") signalingClient.setSharing(false);
     else signalingClient.setMic(false);
-  }, [channel]);
+    trackEvent(`${eventPrefix}_stop`);
+  }, [channel, eventPrefix]);
 
   const start = useCallback(async () => {
     if (activeRef.current) return;
@@ -150,14 +153,25 @@ function useBroadcastChannel(
       setActive(true);
       if (channel === "screen") signalingClient.setSharing(true);
       else signalingClient.setMic(true);
+      trackEvent(`${eventPrefix}_start`);
       stream.getTracks().forEach((track) => track.addEventListener("ended", () => stop()));
       for (const peer of signalingClient.state.peers) {
         openSendPC(peer.id);
       }
     } catch {
       setError(failureMessage);
+      trackEvent(`${eventPrefix}_error`);
     }
-  }, [capture, isSupported, notSupportedMessage, failureMessage, channel, openSendPC, stop]);
+  }, [
+    capture,
+    isSupported,
+    notSupportedMessage,
+    failureMessage,
+    channel,
+    eventPrefix,
+    openSendPC,
+    stop,
+  ]);
 
   const openRecvPC = useCallback(
     (peerId: string) => {
