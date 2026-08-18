@@ -6,14 +6,16 @@ import Link from "next/link";
 import { signalingClient } from "@/lib/signalingClient";
 import { useSignaling, useHasStoredName } from "@/lib/useSignaling";
 import { trackEvent } from "@/lib/analytics";
-import { toRoomHandle } from "@/lib/roomsApi";
+import { toRoomHandle, fetchPublicRooms } from "@/lib/roomsApi";
 
 const HANDLE_RE = /^[a-zA-Z0-9_-]+$/;
+const PEOPLE_COUNT_POLL_MS = 8000;
 
 export default function Home() {
   const state = useSignaling();
   const router = useRouter();
 
+  const [peopleOnline, setPeopleOnline] = useState<number | null>(null);
   const [nameInput, setNameInput] = useState("");
   const [roomInput, setRoomInput] = useState("");
   const [roomError, setRoomError] = useState<string | null>(null);
@@ -35,6 +37,30 @@ export default function Home() {
     previousNameRef.current = state.name;
   }, [state.name, changingName]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+
+    async function load() {
+      try {
+        const rooms = await fetchPublicRooms(controller.signal);
+        if (cancelled) return;
+        setPeopleOnline(rooms.reduce((sum, r) => sum + r.peopleCount, 0));
+      } catch {
+        // Directory unreachable — leave the last known count in place
+        // rather than flashing an error over a non-essential counter.
+      }
+    }
+
+    load();
+    const interval = setInterval(load, PEOPLE_COUNT_POLL_MS);
+    return () => {
+      cancelled = true;
+      controller.abort();
+      clearInterval(interval);
+    };
+  }, []);
+
   function handleNameSubmit(e: FormEvent) {
     e.preventDefault();
     const trimmed = nameInput.trim();
@@ -55,7 +81,13 @@ export default function Home() {
   }
 
   return (
-    <div className="flex flex-1 items-center justify-center bg-zinc-50 px-4 py-16 dark:bg-black">
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 bg-zinc-50 px-4 py-16 dark:bg-black">
+      {peopleOnline !== null && (
+        <span className="flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3.5 py-1.5 text-xs font-medium text-zinc-600 shadow-sm dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
+          <span className="h-2 w-2 rounded-full bg-emerald-500" />
+          {peopleOnline} {peopleOnline === 1 ? "pessoa" : "pessoas"} em salas agora
+        </span>
+      )}
       <main className="w-full max-w-md rounded-2xl border border-black/10 bg-white p-8 shadow-sm dark:border-white/10 dark:bg-zinc-950">
         <h1 className="text-2xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
           GoLive
