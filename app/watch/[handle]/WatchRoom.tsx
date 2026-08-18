@@ -39,6 +39,7 @@ export function WatchRoom({ handle }: { handle: string }) {
     localStream,
     remoteStreams,
     shareError,
+    shareSource,
     isMicOn,
     toggleMic,
     micError,
@@ -358,20 +359,41 @@ export function WatchRoom({ handle }: { handle: string }) {
             )}
           </button>
 
-          <button
-            type="button"
-            onClick={isSharing ? stopShare : startShare}
-            disabled={!isSharing && screenShareMode === "unsupported"}
-            className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50 ${
-              isSharing ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
-            }`}
-          >
-            {isSharing
-              ? "Parar compartilhamento"
-              : screenShareMode === "camera"
-                ? "Compartilhar câmera"
-                : "Compartilhar tela"}
-          </button>
+          {isSharing ? (
+            <button
+              type="button"
+              onClick={stopShare}
+              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700"
+            >
+              Parar compartilhamento
+            </button>
+          ) : screenShareMode === "display" ? (
+            <>
+              <button
+                type="button"
+                onClick={() => startShare("display")}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+              >
+                Compartilhar tela
+              </button>
+              <button
+                type="button"
+                onClick={() => startShare("camera")}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+              >
+                Compartilhar câmera
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => startShare()}
+              disabled={screenShareMode === "unsupported"}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Compartilhar câmera
+            </button>
+          )}
         </div>
 
         {renaming && (
@@ -483,7 +505,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                 <VideoTile
                   stream={localStream}
                   label="Você"
-                  badge="transmitindo"
+                  badge={shareSource === "camera" ? "câmera" : "transmitindo"}
                   muted
                   allowUnmute={false}
                   fill={isSingleTile}

@@ -7,6 +7,7 @@ import { ICE_CONFIG } from "./iceConfig";
 import { captureNoiseSuppressedMic, setGraphSuppressionEnabled, type MicNoiseGraph } from "./rnnoise";
 
 type Channel = "screen" | "mic";
+type ShareSource = "display" | "camera";
 
 type SignalData = {
   channel?: Channel;
@@ -23,7 +24,7 @@ type SignalData = {
 function useBroadcastChannel(
   channel: Channel,
   room: string,
-  capture: () => Promise<MediaStream>,
+  capture: (source?: ShareSource) => Promise<MediaStream>,
   isSupported: () => boolean,
   notSupportedMessage: string,
   failureMessage: string
@@ -33,6 +34,7 @@ function useBroadcastChannel(
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [error, setError] = useState<string | null>(null);
+  const [source, setSource] = useState<ShareSource | undefined>(undefined);
   const localStreamRef = useRef<MediaStream | null>(null);
   const sendPCs = useRef<Map<string, RTCPeerConnection>>(new Map());
   const recvPCs = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -156,6 +158,7 @@ function useBroadcastChannel(
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
     setLocalStream(null);
+    setSource(undefined);
     for (const [peerId, pc] of sendPCs.current) {
       signalingClient.sendSignal(peerId, { channel, role: "broadcaster", kind: "stop" });
       pc.close();
@@ -166,7 +169,7 @@ function useBroadcastChannel(
     trackEvent(`${eventPrefix}_stop`);
   }, [channel, eventPrefix]);
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (requestedSource?: ShareSource) => {
     if (activeRef.current) return;
     setError(null);
     if (!isSupported()) {
@@ -174,11 +177,12 @@ function useBroadcastChannel(
       return;
     }
     try {
-      const stream = await capture();
+      const stream = await capture(requestedSource);
       localStreamRef.current = stream;
       activeRef.current = true;
       setLocalStream(stream);
       setActive(true);
+      setSource(requestedSource);
       if (channel === "screen") signalingClient.setSharing(true);
       else signalingClient.setMic(true);
       trackEvent(`${eventPrefix}_start`);
@@ -379,7 +383,7 @@ function useBroadcastChannel(
     };
   }, [room, stop]);
 
-  return { active, start, stop, localStream, remoteStreams, error };
+  return { active, start, stop, localStream, remoteStreams, error, source };
 }
 
 function hasDisplayCapture() {
@@ -415,13 +419,15 @@ export function useRoomMedia(room: string) {
   const screen = useBroadcastChannel(
     "screen",
     room,
-    () => {
-      if (hasDisplayCapture()) {
-        return navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    (source) => {
+      if (source === "camera" || !hasDisplayCapture()) {
+        return navigator.mediaDevices.getUserMedia({
+          video: hasDisplayCapture()
+            ? { facingMode: "user" }
+            : { facingMode: { ideal: "environment" } },
+        });
       }
-      return navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" } },
-      });
+      return navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
     },
     () => hasDisplayCapture() || hasCameraCapture(),
     "Seu navegador não suporta compartilhamento de tela nem câmera.",
@@ -475,6 +481,7 @@ export function useRoomMedia(room: string) {
     localStream: screen.localStream,
     remoteStreams: screen.remoteStreams,
     shareError: screen.error,
+    shareSource: screen.source,
 
     isMicOn: mic.active,
     toggleMic,
