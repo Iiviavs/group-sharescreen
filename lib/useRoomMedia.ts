@@ -166,6 +166,15 @@ function useBroadcastChannel(
   useEffect(() => {
     stoppedPeersRef.current = stoppedPeers;
   }, [stoppedPeers]);
+  // Peers between resumeWatchingPeer() and their fresh stream actually
+  // arriving — without tracking this separately the tile has nothing to show
+  // for that stretch (not stopped anymore, but remoteStreams has nothing
+  // yet), which used to just make it vanish instead of reading "Retomando...".
+  const [resumingPeers, setResumingPeers] = useState<Set<string>>(new Set());
+  const resumingPeersRef = useRef(resumingPeers);
+  useEffect(() => {
+    resumingPeersRef.current = resumingPeers;
+  }, [resumingPeers]);
   const localStreamRef = useRef<MediaStream | null>(null);
   const sendPCs = useRef<Map<string, RTCPeerConnection>>(new Map());
   const recvPCs = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -180,6 +189,14 @@ function useBroadcastChannel(
 
   const clearStopped = useCallback((peerId: string) => {
     setStoppedPeers((prev) => {
+      if (!prev.has(peerId)) return prev;
+      const next = new Set(prev);
+      next.delete(peerId);
+      return next;
+    });
+  }, []);
+  const clearResuming = useCallback((peerId: string) => {
+    setResumingPeers((prev) => {
       if (!prev.has(peerId)) return prev;
       const next = new Set(prev);
       next.delete(peerId);
@@ -229,8 +246,9 @@ function useBroadcastChannel(
     (peerId: string) => {
       closeRecvPC(peerId);
       clearStopped(peerId);
+      clearResuming(peerId);
     },
-    [closeRecvPC, clearStopped]
+    [closeRecvPC, clearStopped, clearResuming]
   );
 
   // Lets a viewer stop receiving one specific peer's stream without touching
@@ -255,6 +273,12 @@ function useBroadcastChannel(
   const resumeWatchingPeer = useCallback(
     (peerId: string) => {
       clearStopped(peerId);
+      setResumingPeers((prev) => {
+        if (prev.has(peerId)) return prev;
+        const next = new Set(prev);
+        next.add(peerId);
+        return next;
+      });
       signalingClient.sendSignal(peerId, { channel, role: "viewer", kind: "resume" });
     },
     [channel, clearStopped]
@@ -434,6 +458,7 @@ function useBroadcastChannel(
       recvPCs.current.set(peerId, pc);
       pc.ontrack = (e) => {
         setRemoteStreams((prev) => ({ ...prev, [peerId]: e.streams[0] }));
+        clearResuming(peerId);
       };
       pc.onicecandidate = (e) => {
         if (e.candidate) {
@@ -465,7 +490,7 @@ function useBroadcastChannel(
       };
       return pc;
     },
-    [channel, closeRecvPC]
+    [channel, closeRecvPC, clearResuming]
   );
 
   useEffect(() => {
@@ -598,6 +623,9 @@ function useBroadcastChannel(
       for (const peerId of [...stoppedPeersRef.current]) {
         if (!currentIds.has(peerId)) clearStopped(peerId);
       }
+      for (const peerId of [...resumingPeersRef.current]) {
+        if (!currentIds.has(peerId)) clearResuming(peerId);
+      }
       for (const peerId of [...viewerPausedPeers.current]) {
         if (!currentIds.has(peerId)) viewerPausedPeers.current.delete(peerId);
       }
@@ -615,7 +643,16 @@ function useBroadcastChannel(
       unsubscribeState();
       unsubscribeRoomJoined();
     };
-  }, [channel, openRecvPC, openSendPC, closeSendPC, closeRecvPC, closeRecvPCFully, clearStopped]);
+  }, [
+    channel,
+    openRecvPC,
+    openSendPC,
+    closeSendPC,
+    closeRecvPC,
+    closeRecvPCFully,
+    clearStopped,
+    clearResuming,
+  ]);
 
   useEffect(() => {
     const pcs = recvPCs.current;
@@ -626,6 +663,7 @@ function useBroadcastChannel(
       pcs.clear();
       setRemoteStreams({});
       setStoppedPeers(new Set());
+      setResumingPeers(new Set());
       pausedPeers.clear();
     };
   }, [room, stop]);
@@ -639,6 +677,7 @@ function useBroadcastChannel(
     error,
     source,
     stoppedPeers,
+    resumingPeers,
     stopWatchingPeer,
     resumeWatchingPeer,
   };
@@ -819,6 +858,7 @@ export function useRoomMedia(room: string) {
     shareError: screen.error,
     shareSource: screen.source,
     stoppedPeers: screen.stoppedPeers,
+    resumingPeers: screen.resumingPeers,
     stopWatchingPeer: screen.stopWatchingPeer,
     resumeWatchingPeer: screen.resumeWatchingPeer,
     shareResolution,

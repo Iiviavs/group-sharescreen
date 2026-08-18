@@ -14,7 +14,7 @@ import {
 } from "@/lib/useRoomMedia";
 import { trackEvent } from "@/lib/analytics";
 import { toRoomHandle, isPrivateRoomHandle } from "@/lib/roomsApi";
-import { VideoTile, StoppedPeerTile } from "@/components/VideoTile";
+import { VideoTile, StoppedPeerTile, ResumingPeerTile } from "@/components/VideoTile";
 import { RemoteAudio } from "@/components/RemoteAudio";
 import { ParticipantRow } from "@/components/ParticipantRow";
 import { ChatPanel } from "@/components/ChatPanel";
@@ -45,6 +45,7 @@ export function WatchRoom({ handle }: { handle: string }) {
     localStream,
     remoteStreams,
     stoppedPeers,
+    resumingPeers,
     stopWatchingPeer,
     resumeWatchingPeer,
     shareError,
@@ -255,8 +256,21 @@ export function WatchRoom({ handle }: { handle: string }) {
   // stopWatchingPeer), but still gets a tile slot showing a "you left this
   // transmission" placeholder instead of just vanishing from the grid.
   const stoppedEntries = visiblePeers.filter((p) => stoppedPeers.has(p.id) && !(p.id in remoteStreams));
-  const nothingToShow = remoteEntries.length === 0 && stoppedEntries.length === 0 && !isSharing;
-  const tileCount = remoteEntries.length + stoppedEntries.length + (isSharing && localStream ? 1 : 0);
+  // Same idea while a resume is in flight — no stream yet, but not "stopped"
+  // anymore either, so it still needs its own tile slot (see ResumingPeerTile).
+  const resumingEntries = visiblePeers.filter(
+    (p) => resumingPeers.has(p.id) && !(p.id in remoteStreams)
+  );
+  const nothingToShow =
+    remoteEntries.length === 0 &&
+    stoppedEntries.length === 0 &&
+    resumingEntries.length === 0 &&
+    !isSharing;
+  const tileCount =
+    remoteEntries.length +
+    stoppedEntries.length +
+    resumingEntries.length +
+    (isSharing && localStream ? 1 : 0);
   const isSingleTile = tileCount === 1;
 
   return (
@@ -631,7 +645,10 @@ export function WatchRoom({ handle }: { handle: string }) {
             <div
               className={
                 isSingleTile
-                  ? "h-full min-h-[300px]"
+                  ? // No min-height floor: on a short viewport that floor could
+                    // force this taller than what main actually has, which is
+                    // what pushed the tile past the bottom and forced a scroll.
+                    "h-full"
                   : "grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-3"
               }
             >
@@ -666,6 +683,9 @@ export function WatchRoom({ handle }: { handle: string }) {
                   fill={isSingleTile}
                   onResume={() => resumeWatchingPeer(peer.id)}
                 />
+              ))}
+              {resumingEntries.map((peer) => (
+                <ResumingPeerTile key={peer.id} fill={isSingleTile} />
               ))}
             </div>
           )}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
   SpeakerIcon,
   SpeakerMuteIcon,
@@ -8,8 +8,8 @@ import {
   PipExitIcon,
   FullscreenIcon,
   FullscreenExitIcon,
+  EyeIcon,
   EyeOffIcon,
-  ArrowLeftIcon,
 } from "@/components/icons";
 
 function noopSubscribe() {
@@ -111,7 +111,12 @@ export function VideoTile({
     <div
       ref={containerRef}
       className={`relative w-full overflow-hidden rounded-xl border border-white/10 bg-black ${
-        fill ? "h-full min-h-[240px]" : "aspect-video"
+        // No min-height floor here: on a short viewport a fixed floor could
+        // force this box taller than the space main actually has, which is
+        // exactly what pushed the tile past the bottom of the screen and
+        // forced a scroll — h-full alone always stays within whatever main
+        // gives it.
+        fill ? "h-full" : "aspect-video"
       }`}
     >
       <video ref={videoRef} autoPlay playsInline className="h-full w-full object-contain bg-black" />
@@ -123,16 +128,16 @@ export function VideoTile({
           </span>
         )}
       </div>
-      <div className="absolute right-2 top-2 flex flex-wrap items-center justify-end gap-1.5">
+      <div className="absolute right-2 top-2 flex flex-wrap items-center justify-end gap-2">
         {allowUnmute && (
           <button
             type="button"
             onClick={() => setIsMuted((m) => !m)}
             title={isMuted ? "Ativar som" : "Silenciar"}
             aria-label={isMuted ? "Ativar som" : "Silenciar"}
-            className="rounded-full bg-black/60 p-1.5 text-white hover:bg-black/80 active:bg-black/80"
+            className="rounded-full bg-black/60 p-2 text-white hover:bg-black/80 active:bg-black/80"
           >
-            {isMuted ? <SpeakerMuteIcon className="h-4 w-4" /> : <SpeakerIcon className="h-4 w-4" />}
+            {isMuted ? <SpeakerMuteIcon className="h-5 w-5" /> : <SpeakerIcon className="h-5 w-5" />}
           </button>
         )}
         {pipSupported && (
@@ -141,9 +146,9 @@ export function VideoTile({
             onClick={togglePiP}
             title={isPiP ? "Sair do picture-in-picture" : "Picture-in-picture"}
             aria-label={isPiP ? "Sair do picture-in-picture" : "Picture-in-picture"}
-            className="rounded-full bg-black/60 p-1.5 text-white hover:bg-black/80 active:bg-black/80"
+            className="rounded-full bg-black/60 p-2 text-white hover:bg-black/80 active:bg-black/80"
           >
-            {isPiP ? <PipExitIcon className="h-4 w-4" /> : <PipIcon className="h-4 w-4" />}
+            {isPiP ? <PipExitIcon className="h-5 w-5" /> : <PipIcon className="h-5 w-5" />}
           </button>
         )}
         <button
@@ -151,9 +156,9 @@ export function VideoTile({
           onClick={toggleFullscreen}
           title={isFullscreen ? "Sair da tela cheia" : "Tela cheia"}
           aria-label={isFullscreen ? "Sair da tela cheia" : "Tela cheia"}
-          className="rounded-full bg-black/60 p-1.5 text-white hover:bg-black/80 active:bg-black/80"
+          className="rounded-full bg-black/60 p-2 text-white hover:bg-black/80 active:bg-black/80"
         >
-          {isFullscreen ? <FullscreenExitIcon className="h-4 w-4" /> : <FullscreenIcon className="h-4 w-4" />}
+          {isFullscreen ? <FullscreenExitIcon className="h-5 w-5" /> : <FullscreenIcon className="h-5 w-5" />}
         </button>
         {onStopWatching && (
           <button
@@ -161,12 +166,32 @@ export function VideoTile({
             onClick={onStopWatching}
             title="Parar de assistir"
             aria-label="Parar de assistir"
-            className="rounded-full bg-black/60 p-1.5 text-white hover:bg-black/80 active:bg-black/80"
+            className="rounded-full bg-black/60 p-2 text-white hover:bg-black/80 active:bg-black/80"
           >
-            <EyeOffIcon className="h-4 w-4" />
+            <EyeOffIcon className="h-5 w-5" />
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+function PlaceholderTile({
+  fill,
+  children,
+}: {
+  fill: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className={`relative flex w-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border border-white/10 bg-black px-4 text-center ${
+        // Same reasoning as VideoTile's fill container above: no min-height
+        // floor, so this never grows past what main actually has to give.
+        fill ? "h-full" : "aspect-video"
+      }`}
+    >
+      {children}
     </div>
   );
 }
@@ -181,11 +206,7 @@ export function StoppedPeerTile({
   onResume: () => void;
 }) {
   return (
-    <div
-      className={`relative flex w-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border border-white/10 bg-black px-4 text-center ${
-        fill ? "h-full min-h-[240px]" : "aspect-video"
-      }`}
-    >
+    <PlaceholderTile fill={fill}>
       <p className="text-sm text-zinc-300">
         Você saiu dessa transmissão
         <br />
@@ -196,9 +217,21 @@ export function StoppedPeerTile({
         onClick={onResume}
         className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-white/20"
       >
-        <ArrowLeftIcon className="h-4 w-4" />
-        Voltar
+        <EyeIcon className="h-5 w-5" />
+        Retomar transmissão
       </button>
-    </div>
+    </PlaceholderTile>
+  );
+}
+
+// Shown between the moment resumeWatchingPeer() is called and the moment a
+// fresh stream actually arrives — without this, the tile would just vanish
+// for that stretch (no tile at all), since it's neither in stoppedPeers
+// (cleared immediately) nor in remoteStreams (nothing received yet).
+export function ResumingPeerTile({ fill = false }: { fill?: boolean }) {
+  return (
+    <PlaceholderTile fill={fill}>
+      <p className="text-sm text-zinc-400">Retomando...</p>
+    </PlaceholderTile>
   );
 }
