@@ -18,12 +18,16 @@ export function VideoTile({
   badge,
   muted = false,
   allowUnmute = true,
+  fill = false,
 }: {
   stream: MediaStream;
   label: string;
   badge?: string;
   muted?: boolean;
   allowUnmute?: boolean;
+  // When true (the lone tile in the room), grow to fill the available
+  // space instead of staying locked to a 16:9 card like the grid view.
+  fill?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -90,7 +94,9 @@ export function VideoTile({
   return (
     <div
       ref={containerRef}
-      className="relative h-full min-h-[160px] w-full overflow-hidden rounded-xl border border-white/10 bg-black"
+      className={`relative w-full overflow-hidden rounded-xl border border-white/10 bg-black ${
+        fill ? "h-full min-h-[240px]" : "aspect-video"
+      }`}
     >
       <video ref={videoRef} autoPlay playsInline className="h-full w-full object-contain bg-black" />
       <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-black/85 to-transparent px-3 py-2">

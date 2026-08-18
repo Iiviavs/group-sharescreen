@@ -13,18 +13,6 @@ import { ParticipantRow } from "@/components/ParticipantRow";
 
 const HANDLE_RE = /^[a-zA-Z0-9_-]+$/;
 
-// A gallery-style grid: 1 tile fills the space, 2 split it evenly, 3+ form
-// a balanced grid — collapsing to fewer columns on narrow screens so tiles
-// never get cramped on mobile.
-function getGridColsClass(count: number): string {
-  if (count <= 1) return "grid-cols-1";
-  if (count === 2) return "grid-cols-1 sm:grid-cols-2";
-  if (count <= 4) return "grid-cols-2";
-  if (count <= 6) return "grid-cols-2 lg:grid-cols-3";
-  if (count <= 9) return "grid-cols-3";
-  return "grid-cols-3 lg:grid-cols-4";
-}
-
 export function WatchRoom({ handle }: { handle: string }) {
   const router = useRouter();
   const state = useSignaling();
@@ -163,6 +151,7 @@ export function WatchRoom({ handle }: { handle: string }) {
   const remoteEntries = Object.entries(remoteStreams);
   const nothingToShow = remoteEntries.length === 0 && !isSharing;
   const tileCount = remoteEntries.length + (isSharing && localStream ? 1 : 0);
+  const isSingleTile = tileCount === 1;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-zinc-50 dark:bg-black">
@@ -265,7 +254,7 @@ export function WatchRoom({ handle }: { handle: string }) {
       ))}
 
       <div className="flex min-h-0 flex-1 flex-col gap-6 p-4 lg:flex-row">
-        <main className="min-h-0 flex-1">
+        <main className="min-h-0 flex-1 overflow-y-auto">
           {nothingToShow ? (
             <div className="flex h-full min-h-[300px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-300 text-center dark:border-zinc-800">
               <p className="text-zinc-600 dark:text-zinc-400">
@@ -279,7 +268,11 @@ export function WatchRoom({ handle }: { handle: string }) {
             </div>
           ) : (
             <div
-              className={`grid h-full min-h-[300px] auto-rows-fr gap-4 ${getGridColsClass(tileCount)}`}
+              className={
+                isSingleTile
+                  ? "h-full min-h-[300px]"
+                  : "grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-3"
+              }
             >
               {isSharing && localStream && (
                 <VideoTile
@@ -288,6 +281,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                   badge="transmitindo"
                   muted
                   allowUnmute={false}
+                  fill={isSingleTile}
                 />
               )}
               {remoteEntries.map(([peerId, stream]) => {
@@ -299,6 +293,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                     label={peerName}
                     badge="ao vivo"
                     muted
+                    fill={isSingleTile}
                   />
                 );
               })}
