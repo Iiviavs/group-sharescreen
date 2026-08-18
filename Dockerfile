@@ -56,5 +56,9 @@ ENV SIGNALING_HOST=0.0.0.0
 # UMAMI_URL is read at request time by app/api/umami/[...path]/route.ts (not
 # baked in at build time) — it must be supplied when running the container,
 # e.g. `docker run -e UMAMI_URL=https://seu-umami.exemplo.com ...`.
+#
+# METRICS_TOKEN (optional) is also read at request time by
+# server/index.ts — if set, GET /metrics requires that bearer token.
+# Prometheus scrape configs support this natively (authorization.credentials).
 
 CMD ["npm", "start"]

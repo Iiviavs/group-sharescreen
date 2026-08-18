@@ -1,0 +1,46 @@
+# Standalone Prometheus + Grafana stack for ShareScreen — separate from
+# however you already run the app itself. Points at the signaling server's
+# /metrics endpoint (see monitoring/prometheus.yml to adjust the target).
+#
+# Usage:
+#   docker compose -f docker-compose.monitoring.yml up -d
+#   Prometheus: http://localhost:9090
+#   Grafana:    http://localhost:3002  (login: admin / admin, unless
+#               GRAFANA_ADMIN_PASSWORD is set — change it after first login)
+#
+# The "ShareScreen" dashboard is provisioned automatically under the
+# ShareScreen folder in Grafana.
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: sharescreen-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: sharescreen-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3002:3000"
+
+volumes:
+  prometheus-data:
+  grafana-data:

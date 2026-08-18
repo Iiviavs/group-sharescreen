@@ -1,5 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
+import {
+  registerStatsProvider,
+  wsConnectionsTotal,
+  wsDisconnectionsTotal,
+  heartbeatReapedTotal,
+  registerErrorsTotal,
+  roomsCreatedTotal,
+  signalsRelayedTotal,
+} from "./metrics.js";
 
 const HANDLE_RE = /^[a-zA-Z0-9_-]{1,32}$/;
 const CLIENT_ID_RE = /^[a-zA-Z0-9-]{8,64}$/;
@@ -33,6 +42,16 @@ const clients = new Map<WebSocket, ClientInfo>();
 const clientsById = new Map<string, ClientInfo>();
 const namesInUse = new Map<string, WebSocket>();
 const rooms = new Map<string, RoomInfo>();
+
+registerStatsProvider(() => ({
+  connectedSockets: clients.size,
+  registeredPeers: [...clients.values()].filter((c) => c.name !== null).length,
+  rooms: [...rooms.entries()].map(([handle, info]) => ({
+    handle,
+    peopleCount: info.sockets.size,
+    isPrivate: isPrivateRoom(handle),
+  })),
+}));
 
 function isValidDisplayName(name: string): boolean {
   if (name.length < 1 || name.length > 24) return false;
@@ -108,6 +127,7 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
   const heartbeat = setInterval(() => {
     for (const info of clients.values()) {
       if (!info.isAlive) {
+        heartbeatReapedTotal.inc();
         info.socket.terminate();
         continue;
       }
@@ -147,6 +167,7 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
       socket,
     };
     clients.set(socket, info);
+    wsConnectionsTotal.inc();
     send(socket, { type: "welcome", id: info.id });
 
     socket.on("pong", () => {
@@ -166,6 +187,7 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
         case "register": {
           const rawName = typeof msg.name === "string" ? msg.name.trim().slice(0, 24) : "";
           if (!isValidDisplayName(rawName)) {
+            registerErrorsTotal.inc();
             send(socket, { type: "register-error", message: "Nome inválido." });
             return;
           }
@@ -187,6 +209,7 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
           const key = rawName.toLowerCase();
           const existingByName = namesInUse.get(key);
           if (existingByName && existingByName !== socket) {
+            registerErrorsTotal.inc();
             send(socket, { type: "register-error", message: "Esse nome já está em uso." });
             return;
           }
@@ -230,6 +253,7 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
           if (!roomInfo) {
             roomInfo = { sockets: new Set(), createdAt: Date.now() };
             rooms.set(room, roomInfo);
+            roomsCreatedTotal.inc({ visibility: isPrivateRoom(room) ? "private" : "public" });
           }
           roomInfo.sockets.add(socket);
           const peers = [...roomInfo.sockets]
@@ -260,6 +284,11 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
           const targetId = typeof msg.to === "string" ? msg.to : "";
           const roomInfo = rooms.get(info.room);
           if (!roomInfo) return;
+          const dataKind =
+            msg.data && typeof msg.data === "object" && "kind" in msg.data
+              ? String((msg.data as { kind: unknown }).kind)
+              : "unknown";
+          signalsRelayedTotal.inc({ kind: dataKind });
           for (const s of roomInfo.sockets) {
             const target = clients.get(s);
             if (target && target.id === targetId) {
@@ -275,6 +304,7 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
     });
 
     socket.on("close", () => {
+      wsDisconnectionsTotal.inc();
       if (info.room) leaveRoom(info);
       // Guard against a stale/superseded session's delayed close event
       // wiping out a newer reconnect that already took over this name/id.
