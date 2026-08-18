@@ -195,6 +195,14 @@ export function WatchRoom({ handle }: { handle: string }) {
           <span className="rounded-full bg-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
             {peerCount} {peerCount === 1 ? "pessoa" : "pessoas"}
           </span>
+          <a
+            href="https://discord.gg/nemtudo"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm font-medium text-red-600 underline underline-offset-2 hover:text-red-700 dark:text-red-500 dark:hover:text-red-400"
+          >
+            Reportar bug
+          </a>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
