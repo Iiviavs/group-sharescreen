@@ -135,6 +135,32 @@ export function WatchRoom({ handle }: { handle: string }) {
     );
   }
 
+  // Another connection under the same identity (a second tab, or another
+  // device/reload that briefly overlapped this one) just took over — see
+  // signalingClient's SUPERSEDED_CLOSE_CODE handling. This tab deliberately
+  // stopped trying to reconnect instead of fighting the other one for the
+  // identity forever, so tell the user what happened instead of it just
+  // looking frozen.
+  if (state.status === "superseded") {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 px-4 text-center">
+        <p className="text-lg font-medium text-zinc-900 dark:text-zinc-100">
+          Essa sessão foi aberta em outra aba ou dispositivo.
+        </p>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          Só é possível ficar conectado com o mesmo nome em um lugar por vez.
+        </p>
+        <button
+          type="button"
+          onClick={() => state.name && signalingClient.register(state.name)}
+          className="rounded-lg bg-zinc-950 px-4 py-2.5 font-medium text-white transition hover:bg-zinc-800 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+        >
+          Usar esta aba
+        </button>
+      </div>
+    );
+  }
+
   if (!state.name) {
     return (
       <div className="flex flex-1 items-center justify-center px-4 py-16">

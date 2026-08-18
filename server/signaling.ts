@@ -181,6 +181,16 @@ function leaveRoom(info: ClientInfo) {
   broadcastToRoom(room, { type: "peer-left", id: info.id }, info.socket);
 }
 
+// Close code used when a second connection reclaims a client id out from
+// under a still-live socket (see detachSession below) — lets the displaced
+// client tell "I was intentionally superseded" apart from an ordinary
+// network drop, so it knows not to reconnect and reclaim the id right back.
+// Without this distinction the two sockets would keep alternately kicking
+// each other off forever (each successful reconnect resets its own
+// exponential backoff, so the fight never settles). 4000 is in the
+// private-use range reserved by RFC 6455 for application-defined codes.
+const SUPERSEDED_CLOSE_CODE = 4000;
+
 // Used when a reconnect (same persisted client id) shows up before the old
 // socket has been reaped yet — e.g. a brief network blip, or a second tab.
 // Removes the stale session from every bookkeeping structure and closes it
@@ -200,7 +210,10 @@ function detachSession(info: ClientInfo) {
   }
   if (clientsById.get(info.id) === info) clientsById.delete(info.id);
   clients.delete(info.socket);
-  info.socket.terminate();
+  // A graceful close (not terminate()) so the close frame with our code
+  // actually reaches the displaced client instead of the connection just
+  // dying silently.
+  info.socket.close(SUPERSEDED_CLOSE_CODE, "superseded-by-new-connection");
 }
 
 export function registerSignalingRoutes(app: FastifyInstance, genId: () => string) {

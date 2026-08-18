@@ -14,7 +14,7 @@ export type PeerInfo = {
   role?: "moderator";
 };
 
-export type SignalingStatus = "idle" | "connecting" | "open" | "closed";
+export type SignalingStatus = "idle" | "connecting" | "open" | "closed" | "superseded";
 
 export type SignalingState = {
   status: SignalingStatus;
@@ -31,6 +31,8 @@ type SignalListener = (from: string, data: Record<string, unknown>) => void;
 const WS_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || "ws://localhost:4000/ws";
 const NAME_STORAGE_KEY = "sharescreen:name";
 const CLIENT_ID_STORAGE_KEY = "sharescreen:clientId";
+// Mirrors server/signaling.ts's SUPERSEDED_CLOSE_CODE.
+const SUPERSEDED_CLOSE_CODE = 4000;
 
 const initialState: SignalingState = {
   status: "idle",
@@ -153,7 +155,7 @@ class SignalingClient {
       this.handleMessage(msg);
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       // Deliberately keep the last-known room/peers instead of blanking
       // them: the underlying WebRTC connections to those peers are
       // untouched by a brief signaling hiccup, so wiping the list here
@@ -161,6 +163,18 @@ class SignalingClient {
       // reappear even though their audio/video never actually stopped.
       // Once we reconnect, a fresh room-state reconciles anything that's
       // genuinely stale (see the pruning in useRoomMedia's onRoomJoined).
+      // Code 4000 (see server/signaling.ts's detachSession) means another
+      // connection — a second tab, or a reload that briefly overlapped the
+      // old connection — just reclaimed this exact clientId. Reconnecting
+      // would only reclaim it right back, kicking that one instead: without
+      // this check the two sockets alternate forever, each resetting its
+      // own backoff every time it briefly wins, never settling. Surface it
+      // as a distinct status instead of "closed" so the UI can tell the
+      // user what happened rather than looking like it's stuck reconnecting.
+      if (event.code === SUPERSEDED_CLOSE_CODE) {
+        this.setState({ status: "superseded" });
+        return;
+      }
       this.setState({ status: "closed" });
       this.scheduleReconnect();
     };
