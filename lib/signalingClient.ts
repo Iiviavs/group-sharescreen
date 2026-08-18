@@ -17,6 +17,7 @@ type Listener = () => void;
 type SignalListener = (from: string, data: Record<string, unknown>) => void;
 
 const WS_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || "ws://localhost:4000/ws";
+const NAME_STORAGE_KEY = "sharescreen:name";
 
 const initialState: SignalingState = {
   status: "idle",
@@ -26,6 +27,25 @@ const initialState: SignalingState = {
   room: null,
   peers: [],
 };
+
+export function getStoredName(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(NAME_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function setStoredName(name: string | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (name) window.localStorage.setItem(NAME_STORAGE_KEY, name);
+    else window.localStorage.removeItem(NAME_STORAGE_KEY);
+  } catch {
+    // ignored - localStorage may be unavailable (private mode, quota, etc.)
+  }
+}
 
 class SignalingClient {
   private ws: WebSocket | null = null;
@@ -37,6 +57,11 @@ class SignalingClient {
   private desiredRoom: string | null = null;
 
   state: SignalingState = initialState;
+
+  constructor() {
+    const storedName = getStoredName();
+    if (storedName) this.register(storedName);
+  }
 
   subscribe = (cb: Listener) => {
     this.listeners.add(cb);
@@ -107,11 +132,13 @@ class SignalingClient {
         break;
       case "registered":
         this.setState({ name: msg.name as string, nameError: null, selfId: msg.id as string });
+        setStoredName(msg.name as string);
         if (this.desiredRoom) this.rawSend({ type: "join", room: this.desiredRoom });
         break;
       case "register-error":
         this.setState({ nameError: msg.message as string });
         this.desiredName = null;
+        setStoredName(null);
         break;
       case "room-state":
         this.setState({

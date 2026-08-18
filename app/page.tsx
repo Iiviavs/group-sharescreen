@@ -1,11 +1,21 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, useSyncExternalStore, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { signalingClient } from "@/lib/signalingClient";
+import { signalingClient, getStoredName } from "@/lib/signalingClient";
 import { useSignaling } from "@/lib/useSignaling";
 
 const HANDLE_RE = /^[a-zA-Z0-9_-]+$/;
+
+function noopSubscribe() {
+  return () => {};
+}
+function getHasStoredName() {
+  return getStoredName() !== null;
+}
+function getHasStoredNameServer() {
+  return false;
+}
 
 export default function Home() {
   const state = useSignaling();
@@ -14,8 +24,10 @@ export default function Home() {
   const [nameInput, setNameInput] = useState("");
   const [roomInput, setRoomInput] = useState("");
   const [roomError, setRoomError] = useState<string | null>(null);
+  const hasStoredName = useSyncExternalStore(noopSubscribe, getHasStoredName, getHasStoredNameServer);
 
   const registered = Boolean(state.name);
+  const restoring = !registered && hasStoredName && !state.nameError;
 
   useEffect(() => {
     if (!state.name) return;
@@ -54,7 +66,9 @@ export default function Home() {
           Compartilhe sua tela com quem estiver na mesma sala, sem cadastro.
         </p>
 
-        {!registered ? (
+        {restoring ? (
+          <p className="mt-8 text-sm text-zinc-500 dark:text-zinc-400">Reconectando...</p>
+        ) : !registered ? (
           <form onSubmit={handleNameSubmit} className="mt-8 flex flex-col gap-3">
             <label htmlFor="name" className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
               Escolha seu nome

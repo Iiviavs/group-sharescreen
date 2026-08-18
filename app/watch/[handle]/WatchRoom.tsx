@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { signalingClient } from "@/lib/signalingClient";
+import { signalingClient, getStoredName } from "@/lib/signalingClient";
 import { useSignaling } from "@/lib/useSignaling";
 import { useRoomMedia } from "@/lib/useRoomMedia";
 import { VideoTile } from "@/components/VideoTile";
@@ -25,10 +25,12 @@ export function WatchRoom({ handle }: { handle: string }) {
   useEffect(() => {
     if (!validHandle) return;
     if (state.status === "idle" || state.status === "connecting") return;
-    if (!state.name) {
-      sessionStorage.setItem("pendingRoom", handle);
-      router.replace("/");
-    }
+    if (state.name) return;
+    // A stored name means the client is still (re)connecting/registering
+    // after a page reload — wait instead of bouncing to the home screen.
+    if (getStoredName()) return;
+    sessionStorage.setItem("pendingRoom", handle);
+    router.replace("/");
   }, [state.name, state.status, handle, router, validHandle]);
 
   useEffect(() => {
@@ -61,6 +63,14 @@ export function WatchRoom({ handle }: { handle: string }) {
         <Link href="/" className="text-sm font-medium underline underline-offset-4">
           Voltar para o início
         </Link>
+      </div>
+    );
+  }
+
+  if (!state.name) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
+        <p className="text-zinc-600 dark:text-zinc-400">Reconectando...</p>
       </div>
     );
   }
