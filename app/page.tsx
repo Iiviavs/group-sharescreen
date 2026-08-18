@@ -100,7 +100,7 @@ export default function Home() {
               <span className="font-semibold text-zinc-900 dark:text-zinc-100">{state.name}</span>
             </p>
             <label htmlFor="room" className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              Para qual sala você quer ir?
+              Para qual sala você quer ir ou criar?
             </label>
             <input
               id="room"
