@@ -166,6 +166,7 @@ export default function Home() {
             target="_blank"
             rel="noopener noreferrer"
             className="underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-300"
+            style={{ color: "#267fff" }}
           >
             discord.gg/nemtudo
           </a>
