@@ -17,7 +17,13 @@ const METRICS_TOKEN = process.env.METRICS_TOKEN || null;
 async function main() {
   const app = Fastify({ logger: true });
 
-  await app.register(cors, { origin: true });
+  // @fastify/cors defaults to methods: "GET,HEAD,POST" — without listing
+  // DELETE explicitly here, the browser's preflight for
+  // DELETE /admin/announcement (clearing an announcement) gets back an
+  // Access-Control-Allow-Methods that doesn't include DELETE, so it blocks
+  // the real request client-side with a CORS error before it ever reaches
+  // this server.
+  await app.register(cors, { origin: true, methods: ["GET", "HEAD", "POST", "DELETE"] });
   await app.register(websocketPlugin, {
     options: { maxPayload: 64 * 1024 },
   });

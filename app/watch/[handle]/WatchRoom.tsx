@@ -71,6 +71,7 @@ export function WatchRoom({ handle }: { handle: string }) {
   const [mutedPeerIds, setMutedPeerIds] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState(false);
   const [renameInput, setRenameInput] = useState("");
+  const [qualityOpen, setQualityOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const previousNameRef = useRef(state.name);
 
@@ -297,6 +298,7 @@ export function WatchRoom({ handle }: { handle: string }) {
             type="button"
             onClick={() => {
               setSwitching(false);
+              setQualityOpen(false);
               setRenaming((r) => {
                 if (!r) setRenameInput(state.name ?? "");
                 return !r;
@@ -311,6 +313,7 @@ export function WatchRoom({ handle }: { handle: string }) {
             type="button"
             onClick={() => {
               setRenaming(false);
+              setQualityOpen(false);
               setSwitching((s) => !s);
             }}
             className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
@@ -371,56 +374,18 @@ export function WatchRoom({ handle }: { handle: string }) {
             )}
           </button>
 
-          <label className="sr-only" htmlFor="share-resolution">
-            Resolução da transmissão
-          </label>
-          <select
-            id="share-resolution"
-            value={shareResolution}
-            onChange={(e) => setShareResolution(e.target.value as typeof shareResolution)}
-            title="Resolução — reduza se a sala estiver travando"
-            className="rounded-lg border border-zinc-300 bg-white px-2 py-2 text-sm font-medium text-zinc-700 outline-none transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          <button
+            type="button"
+            onClick={() => {
+              setRenaming(false);
+              setSwitching(false);
+              setQualityOpen((q) => !q);
+            }}
+            title="Qualidade da transmissão — reduza se a sala estiver travando"
+            className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
           >
-            {SHARE_RESOLUTION_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-
-          <label className="sr-only" htmlFor="share-fps">
-            FPS da transmissão
-          </label>
-          <select
-            id="share-fps"
-            value={shareFps}
-            onChange={(e) => setShareFps(Number(e.target.value) as typeof shareFps)}
-            title="Taxa de quadros — reduza se a sala estiver travando"
-            className="rounded-lg border border-zinc-300 bg-white px-2 py-2 text-sm font-medium text-zinc-700 outline-none transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
-          >
-            {SHARE_FPS_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-
-          <label className="sr-only" htmlFor="share-bitrate">
-            Bitrate da transmissão
-          </label>
-          <select
-            id="share-bitrate"
-            value={shareBitrate}
-            onChange={(e) => setShareBitrate(e.target.value as typeof shareBitrate)}
-            title="Bitrate — reduza se a sala estiver travando"
-            className="rounded-lg border border-zinc-300 bg-white px-2 py-2 text-sm font-medium text-zinc-700 outline-none transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
-          >
-            {SHARE_BITRATE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+            Qualidade: {shareResolution} · {shareFps}fps
+          </button>
 
           {isSharing ? (
             <button
@@ -525,6 +490,90 @@ export function WatchRoom({ handle }: { handle: string }) {
               Ver salas públicas ativas
             </Link>
           </form>
+        )}
+
+        {qualityOpen && (
+          <div className="absolute inset-x-4 top-full z-20 mt-2 rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-950 sm:inset-x-auto sm:right-4 sm:w-72">
+            <div className="mb-2 flex items-start justify-between gap-2">
+              <p className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                Qualidade da transmissão — reduza se a sala estiver travando
+              </p>
+              <button
+                type="button"
+                onClick={() => setQualityOpen(false)}
+                aria-label="Fechar"
+                title="Fechar"
+                className="shrink-0 text-lg leading-none text-zinc-400 transition hover:text-zinc-700 dark:hover:text-zinc-200"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <div>
+                <label
+                  htmlFor="share-resolution"
+                  className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400"
+                >
+                  Resolução
+                </label>
+                <select
+                  id="share-resolution"
+                  value={shareResolution}
+                  onChange={(e) => setShareResolution(e.target.value as typeof shareResolution)}
+                  className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                >
+                  {SHARE_RESOLUTION_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="share-fps"
+                  className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400"
+                >
+                  Taxa de quadros
+                </label>
+                <select
+                  id="share-fps"
+                  value={shareFps}
+                  onChange={(e) => setShareFps(Number(e.target.value) as typeof shareFps)}
+                  className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                >
+                  {SHARE_FPS_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="share-bitrate"
+                  className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400"
+                >
+                  Bitrate
+                </label>
+                <select
+                  id="share-bitrate"
+                  value={shareBitrate}
+                  onChange={(e) => setShareBitrate(e.target.value as typeof shareBitrate)}
+                  className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                >
+                  {SHARE_BITRATE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
         )}
       </header>
 

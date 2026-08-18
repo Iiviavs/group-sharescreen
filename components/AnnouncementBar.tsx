@@ -9,13 +9,20 @@ import { ANNOUNCEMENT_COLOR_PRESETS, type Announcement } from "@/lib/announcemen
 export function AnnouncementBar({
   announcement,
   onDismiss,
+  onButtonClick,
 }: {
   announcement: Announcement;
   onDismiss?: () => void;
+  // Fired right before the actual button behavior — kept separate from that
+  // behavior (rather than baked into this component) so the admin panel's
+  // preview can render the exact same bar without also emitting analytics
+  // for a click that never really reached a visitor.
+  onButtonClick?: () => void;
 }) {
   const preset = ANNOUNCEMENT_COLOR_PRESETS[announcement.color];
 
   function handleButtonClick() {
+    onButtonClick?.();
     if (announcement.buttonAction === "reload") {
       window.location.reload();
       return;
