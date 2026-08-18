@@ -35,6 +35,13 @@ export function WatchRoom({ handle }: { handle: string }) {
   const [switchInput, setSwitchInput] = useState("");
   const [switchError, setSwitchError] = useState<string | null>(null);
   const [nameInput, setNameInput] = useState("");
+  const [micsMuted, setMicsMuted] = useState(false);
+
+  function toggleMicsMuted() {
+    const next = !micsMuted;
+    setMicsMuted(next);
+    trackEvent(next ? "mics_muted" : "mics_unmuted");
+  }
 
   // A stored name means the client is still (re)connecting/registering
   // after a page reload — show a loading state instead of asking again.
@@ -144,7 +151,7 @@ export function WatchRoom({ handle }: { handle: string }) {
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="relative">
             <button
               type="button"
@@ -156,7 +163,7 @@ export function WatchRoom({ handle }: { handle: string }) {
             {switching && (
               <form
                 onSubmit={handleSwitchSubmit}
-                className="absolute right-0 top-full z-10 mt-2 w-64 rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-950"
+                className="absolute right-0 top-full z-10 mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-950"
               >
                 <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
                   Nova sala
@@ -192,6 +199,16 @@ export function WatchRoom({ handle }: { handle: string }) {
 
           <button
             type="button"
+            onClick={toggleMicsMuted}
+            className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition ${
+              micsMuted ? "bg-amber-600 hover:bg-amber-700" : "bg-zinc-700 hover:bg-zinc-600"
+            }`}
+          >
+            {micsMuted ? "Reativar microfones" : "Silenciar microfones"}
+          </button>
+
+          <button
+            type="button"
             onClick={isSharing ? stopShare : startShare}
             className={`rounded-lg px-4 py-2 text-sm font-semibold text-white transition ${
               isSharing ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
@@ -214,7 +231,7 @@ export function WatchRoom({ handle }: { handle: string }) {
       )}
 
       {Object.entries(remoteMicStreams).map(([peerId, stream]) => (
-        <RemoteAudio key={peerId} stream={stream} />
+        <RemoteAudio key={peerId} stream={stream} muted={micsMuted} />
       ))}
 
       <div className="flex flex-1 flex-col gap-6 p-4 lg:flex-row">

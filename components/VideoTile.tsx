@@ -90,7 +90,7 @@ export function VideoTile({
   return (
     <div
       ref={containerRef}
-      className="group relative aspect-video overflow-hidden rounded-xl border border-white/10 bg-black"
+      className="relative aspect-video overflow-hidden rounded-xl border border-white/10 bg-black"
     >
       <video ref={videoRef} autoPlay playsInline className="h-full w-full object-contain bg-black" />
       <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-black/85 to-transparent px-3 py-2">
@@ -101,12 +101,12 @@ export function VideoTile({
           </span>
         )}
       </div>
-      <div className="absolute right-2 top-2 flex items-center gap-1.5 opacity-0 transition group-hover:opacity-100">
+      <div className="absolute right-2 top-2 flex flex-wrap items-center justify-end gap-1.5">
         {allowUnmute && (
           <button
             type="button"
             onClick={() => setIsMuted((m) => !m)}
-            className="rounded-full bg-black/60 px-2 py-1 text-xs text-white hover:bg-black/80"
+            className="rounded-full bg-black/60 px-2.5 py-1.5 text-xs text-white hover:bg-black/80 active:bg-black/80"
           >
             {isMuted ? "Ativar som" : "Silenciar"}
           </button>
@@ -116,7 +116,7 @@ export function VideoTile({
             type="button"
             onClick={togglePiP}
             title="Picture-in-picture"
-            className="rounded-full bg-black/60 px-2 py-1 text-xs text-white hover:bg-black/80"
+            className="rounded-full bg-black/60 px-2.5 py-1.5 text-xs text-white hover:bg-black/80 active:bg-black/80"
           >
             {isPiP ? "Sair do PIP" : "PIP"}
           </button>
@@ -125,7 +125,7 @@ export function VideoTile({
           type="button"
           onClick={toggleFullscreen}
           title="Tela cheia"
-          className="rounded-full bg-black/60 px-2 py-1 text-xs text-white hover:bg-black/80"
+          className="rounded-full bg-black/60 px-2.5 py-1.5 text-xs text-white hover:bg-black/80 active:bg-black/80"
         >
           {isFullscreen ? "Sair da tela cheia" : "Tela cheia"}
         </button>
