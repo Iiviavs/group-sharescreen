@@ -323,10 +323,25 @@ function useBroadcastChannel(
       }
     });
 
-    // After the signaling socket reconnects and rejoins, the server has a
-    // fresh entry with sharing/mic reset to false — re-announce our actual
-    // state so other peers' indicators don't go stale.
     const unsubscribeRoomJoined = signalingClient.onRoomJoined(() => {
+      // Our own signaling socket reconnecting replaces the whole peer list
+      // at once instead of emitting individual peer-left events — so if
+      // someone actually left the room while we were briefly disconnected,
+      // nothing else would ever tell us. Without this, their connection and
+      // video/audio tile would linger as a permanent ghost. Stable
+      // client ids (see signalingClient) mean everyone who's still around
+      // keeps the same id, so this only prunes genuinely departed peers.
+      const currentIds = new Set(signalingClient.state.peers.map((p) => p.id));
+      for (const peerId of [...sendPCs.current.keys()]) {
+        if (!currentIds.has(peerId)) closeSendPC(peerId);
+      }
+      for (const peerId of [...recvPCs.current.keys()]) {
+        if (!currentIds.has(peerId)) closeRecvPC(peerId);
+      }
+
+      // The server has a fresh entry with sharing/mic reset to false —
+      // re-announce our actual state so other peers' indicators don't go
+      // stale.
       if (!activeRef.current) return;
       if (channel === "screen") signalingClient.setSharing(true);
       else signalingClient.setMic(true);

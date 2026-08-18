@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 
 const HANDLE_RE = /^[a-zA-Z0-9_-]{1,32}$/;
+const CLIENT_ID_RE = /^[a-zA-Z0-9-]{8,64}$/;
 const HEARTBEAT_INTERVAL_MS = 25_000;
 
 interface ClientInfo {
@@ -15,6 +16,7 @@ interface ClientInfo {
 }
 
 const clients = new Map<WebSocket, ClientInfo>();
+const clientsById = new Map<string, ClientInfo>();
 const namesInUse = new Map<string, WebSocket>();
 const rooms = new Map<string, Set<WebSocket>>();
 
@@ -57,6 +59,28 @@ function leaveRoom(info: ClientInfo) {
   info.sharing = false;
   info.mic = false;
   broadcastToRoom(room, { type: "peer-left", id: info.id }, info.socket);
+}
+
+// Used when a reconnect (same persisted client id) shows up before the old
+// socket has been reaped yet — e.g. a brief network blip, or a second tab.
+// Removes the stale session from every bookkeeping structure and closes it
+// *without* broadcasting peer-left, since this identity is carried over
+// seamlessly to the new socket rather than actually leaving the room.
+function detachSession(info: ClientInfo) {
+  if (info.room) {
+    const set = rooms.get(info.room);
+    if (set) {
+      set.delete(info.socket);
+      if (set.size === 0) rooms.delete(info.room);
+    }
+    info.room = null;
+  }
+  if (info.name && namesInUse.get(info.name.toLowerCase()) === info.socket) {
+    namesInUse.delete(info.name.toLowerCase());
+  }
+  if (clientsById.get(info.id) === info) clientsById.delete(info.id);
+  clients.delete(info.socket);
+  info.socket.terminate();
 }
 
 export function registerSignalingRoutes(app: FastifyInstance, genId: () => string) {
@@ -116,15 +140,37 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
             send(socket, { type: "register-error", message: "Nome inválido." });
             return;
           }
+
+          // A client-supplied id (persisted client-side across reloads and
+          // reconnects) lets a returning client reclaim its previous
+          // identity instead of showing up as a stranger to everyone else's
+          // still-open peer connections. If a stale session under that id
+          // is still around (server restart wiped nothing since it's a
+          // fresh process, but a plain reconnect can race the heartbeat
+          // reaper), take it over cleanly first.
+          const requestedClientId = typeof msg.clientId === "string" ? msg.clientId : "";
+          const clientId = CLIENT_ID_RE.test(requestedClientId) ? requestedClientId : null;
+          const existingById = clientId ? clientsById.get(clientId) : undefined;
+          if (existingById && existingById.socket !== socket) {
+            detachSession(existingById);
+          }
+
           const key = rawName.toLowerCase();
-          const existing = namesInUse.get(key);
-          if (existing && existing !== socket) {
+          const existingByName = namesInUse.get(key);
+          if (existingByName && existingByName !== socket) {
             send(socket, { type: "register-error", message: "Esse nome já está em uso." });
             return;
           }
           if (info.name) namesInUse.delete(info.name.toLowerCase());
           info.name = rawName;
           namesInUse.set(key, socket);
+
+          if (clientId && clientId !== info.id) {
+            if (clientsById.get(info.id) === info) clientsById.delete(info.id);
+            info.id = clientId;
+          }
+          clientsById.set(info.id, info);
+
           send(socket, { type: "registered", id: info.id, name: rawName });
           break;
         }
@@ -193,7 +239,12 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
 
     socket.on("close", () => {
       if (info.room) leaveRoom(info);
-      if (info.name) namesInUse.delete(info.name.toLowerCase());
+      // Guard against a stale/superseded session's delayed close event
+      // wiping out a newer reconnect that already took over this name/id.
+      if (info.name && namesInUse.get(info.name.toLowerCase()) === socket) {
+        namesInUse.delete(info.name.toLowerCase());
+      }
+      if (clientsById.get(info.id) === info) clientsById.delete(info.id);
       clients.delete(socket);
     });
   });

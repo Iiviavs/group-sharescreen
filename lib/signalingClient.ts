@@ -20,6 +20,7 @@ type SignalListener = (from: string, data: Record<string, unknown>) => void;
 
 const WS_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || "ws://localhost:4000/ws";
 const NAME_STORAGE_KEY = "sharescreen:name";
+const CLIENT_ID_STORAGE_KEY = "sharescreen:clientId";
 
 const initialState: SignalingState = {
   status: "idle",
@@ -44,6 +45,30 @@ function setStoredName(name: string | null) {
   try {
     if (name) window.localStorage.setItem(NAME_STORAGE_KEY, name);
     else window.localStorage.removeItem(NAME_STORAGE_KEY);
+  } catch {
+    // ignored - localStorage may be unavailable (private mode, quota, etc.)
+  }
+}
+
+// A stable per-browser id, persisted across reloads and reconnects
+// (including after the signaling server itself restarts for a deploy) so a
+// returning client can reclaim its previous identity instead of showing up
+// as a stranger — which would otherwise orphan everyone else's still-open
+// WebRTC connections to it. The server adopts whatever id we send it once
+// registered, so this also self-heals if it's ever out of sync.
+function getClientId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(CLIENT_ID_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function setClientId(id: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(CLIENT_ID_STORAGE_KEY, id);
   } catch {
     // ignored - localStorage may be unavailable (private mode, quota, etc.)
   }
@@ -103,7 +128,9 @@ class SignalingClient {
     ws.onopen = () => {
       this.reconnectAttempts = 0;
       this.setState({ status: "open" });
-      if (this.desiredName) this.rawSend({ type: "register", name: this.desiredName });
+      if (this.desiredName) {
+        this.rawSend({ type: "register", name: this.desiredName, clientId: getClientId() });
+      }
     };
 
     ws.onmessage = (event) => {
@@ -144,6 +171,7 @@ class SignalingClient {
       case "registered":
         this.setState({ name: msg.name as string, nameError: null, selfId: msg.id as string });
         setStoredName(msg.name as string);
+        setClientId(msg.id as string);
         trackEvent("name_registered");
         if (this.desiredRoom) this.rawSend({ type: "join", room: this.desiredRoom });
         break;
@@ -162,14 +190,24 @@ class SignalingClient {
         trackEvent("room_joined");
         this.roomJoinedListeners.forEach((l) => l());
         break;
-      case "peer-joined":
+      case "peer-joined": {
+        // Idempotent by id: a peer that reclaimed its identity after a
+        // reconnect can legitimately "join" again while still listed (its
+        // stale departure isn't announced, to avoid tearing down otherwise
+        // still-healthy WebRTC connections over a brief signaling hiccup).
+        const alreadyKnown = this.state.peers.some((p) => p.id === msg.id);
         this.setState({
-          peers: [
-            ...this.state.peers,
-            { id: msg.id as string, name: msg.name as string, sharing: false, mic: false },
-          ],
+          peers: alreadyKnown
+            ? this.state.peers.map((p) =>
+                p.id === msg.id ? { ...p, name: msg.name as string, sharing: false, mic: false } : p
+              )
+            : [
+                ...this.state.peers,
+                { id: msg.id as string, name: msg.name as string, sharing: false, mic: false },
+              ],
         });
         break;
+      }
       case "peer-left":
         this.setState({ peers: this.state.peers.filter((p) => p.id !== msg.id) });
         this.signalListeners.forEach((l) => l(msg.id as string, { kind: "peer-left" }));
@@ -210,7 +248,7 @@ class SignalingClient {
     this.setState({ nameError: null });
     const wasOpen = this.ws && this.ws.readyState === WebSocket.OPEN;
     this.ensureSocket();
-    if (wasOpen) this.rawSend({ type: "register", name });
+    if (wasOpen) this.rawSend({ type: "register", name, clientId: getClientId() });
   }
 
   joinRoom(room: string) {
