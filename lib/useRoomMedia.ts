@@ -84,6 +84,8 @@ function useBroadcastChannel(
     [removeRemoteStream]
   );
 
+  const openSendPCRef = useRef<(peerId: string) => void>(() => {});
+
   const openSendPC = useCallback(
     (peerId: string) => {
       if (sendPCs.current.has(peerId) || !localStreamRef.current) return;
@@ -102,13 +104,30 @@ function useBroadcastChannel(
         }
       };
       pc.onconnectionstatechange = () => {
-        if (pc.connectionState === "failed" || pc.connectionState === "closed") {
+        // Ignore events from a pc that's already been superseded (e.g. a
+        // retry already replaced it) — otherwise this stale callback could
+        // tear down the new connection instead of the dead one.
+        if (sendPCs.current.get(peerId) !== pc) return;
+        if (pc.connectionState === "failed") {
+          closeSendPC(peerId);
+          // A P2P link can die from a transient network blip (wifi/cell
+          // handoff, brief packet loss, TURN hiccup) without the peer
+          // actually leaving the room. Nothing else would ever re-offer,
+          // so without this retry the tile just stays dead forever.
+          setTimeout(() => {
+            if (activeRef.current && signalingClient.state.peers.some((p) => p.id === peerId)) {
+              openSendPCRef.current(peerId);
+            }
+          }, 2000);
+        } else if (pc.connectionState === "closed") {
           closeSendPC(peerId);
         }
       };
       pc.createOffer()
         .then(async (offer) => {
+          if (sendPCs.current.get(peerId) !== pc) return;
           await pc.setLocalDescription(offer);
+          if (sendPCs.current.get(peerId) !== pc) return;
           signalingClient.sendSignal(peerId, {
             channel,
             role: "broadcaster",
@@ -116,10 +135,16 @@ function useBroadcastChannel(
             sdp: pc.localDescription,
           });
         })
-        .catch(() => closeSendPC(peerId));
+        .catch(() => {
+          if (sendPCs.current.get(peerId) === pc) closeSendPC(peerId);
+        });
     },
     [channel, closeSendPC]
   );
+
+  useEffect(() => {
+    openSendPCRef.current = openSendPC;
+  }, [openSendPC]);
 
   const stop = useCallback(() => {
     if (!activeRef.current) return;
@@ -191,6 +216,7 @@ function useBroadcastChannel(
         }
       };
       pc.onconnectionstatechange = () => {
+        if (recvPCs.current.get(peerId) !== pc) return;
         if (pc.connectionState === "failed" || pc.connectionState === "closed") {
           closeRecvPC(peerId);
         }
@@ -211,29 +237,45 @@ function useBroadcastChannel(
       if (data.channel !== channel) return;
       if (data.role === "broadcaster") {
         if (data.kind === "offer" && data.sdp) {
-          let pc = recvPCs.current.get(from);
-          if (!pc) pc = openRecvPC(from);
-          pc.setRemoteDescription(data.sdp)
+          // A fresh offer always comes from a brand-new RTCPeerConnection on
+          // the sender's side (this app never renegotiates an existing one
+          // in place, including on the failure-triggered retry above) — if
+          // we still have a pc for this peer, it belongs to a superseded
+          // session. Reusing it here would feed unrelated SDP into it
+          // instead of cleanly replacing the connection, which can leave
+          // two live tracks feeding the same rendered stream (duplicated,
+          // echoing audio) rather than one.
+          if (recvPCs.current.has(from)) closeRecvPC(from);
+          const thisPc = openRecvPC(from);
+          thisPc
+            .setRemoteDescription(data.sdp)
             .then(async () => {
+              if (recvPCs.current.get(from) !== thisPc) return null;
               const queued = pendingRecvCandidates.current.get(from);
               if (queued) {
                 pendingRecvCandidates.current.delete(from);
                 for (const candidate of queued) {
-                  await pc!.addIceCandidate(candidate).catch(() => {});
+                  await thisPc.addIceCandidate(candidate).catch(() => {});
                 }
               }
-              return pc!.createAnswer();
+              return thisPc.createAnswer();
             })
-            .then((answer) => pc!.setLocalDescription(answer))
+            .then((answer) => {
+              if (!answer || recvPCs.current.get(from) !== thisPc) return;
+              return thisPc.setLocalDescription(answer);
+            })
             .then(() => {
+              if (recvPCs.current.get(from) !== thisPc) return;
               signalingClient.sendSignal(from, {
                 channel,
                 role: "viewer",
                 kind: "answer",
-                sdp: pc!.localDescription,
+                sdp: thisPc.localDescription,
               });
             })
-            .catch(() => closeRecvPC(from));
+            .catch(() => {
+              if (recvPCs.current.get(from) === thisPc) closeRecvPC(from);
+            });
         } else if (data.kind === "ice" && data.candidate) {
           const pc = recvPCs.current.get(from);
           if (pc && pc.remoteDescription) {
