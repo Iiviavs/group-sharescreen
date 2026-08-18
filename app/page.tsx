@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { signalingClient } from "@/lib/signalingClient";
 import { useSignaling, useHasStoredName } from "@/lib/useSignaling";
 import { trackEvent } from "@/lib/analytics";
+import { toRoomHandle } from "@/lib/roomsApi";
 
 const HANDLE_RE = /^[a-zA-Z0-9_-]+$/;
 
@@ -15,6 +17,7 @@ export default function Home() {
   const [nameInput, setNameInput] = useState("");
   const [roomInput, setRoomInput] = useState("");
   const [roomError, setRoomError] = useState<string | null>(null);
+  const [roomIsPrivate, setRoomIsPrivate] = useState(false);
   const [changingName, setChangingName] = useState(false);
   const hasStoredName = useHasStoredName();
   const previousNameRef = useRef(state.name);
@@ -48,7 +51,7 @@ export default function Home() {
       return;
     }
     setRoomError(null);
-    router.push(`/watch/${trimmed}`);
+    router.push(`/watch/${toRoomHandle(trimmed, roomIsPrivate)}`);
   }
 
   return (
@@ -60,6 +63,12 @@ export default function Home() {
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
           Compartilhe sua tela com quem estiver na mesma sala, sem cadastro.
         </p>
+        <Link
+          href="/rooms"
+          className="mt-3 inline-block text-sm font-medium underline underline-offset-2 text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+        >
+          Ver salas públicas ativas
+        </Link>
 
         {restoring ? (
           <p className="mt-8 text-sm text-zinc-500 dark:text-zinc-400">Reconectando...</p>
@@ -129,6 +138,15 @@ export default function Home() {
               placeholder="Ex: reuniao-time"
               className="rounded-lg border border-zinc-300 bg-white px-4 py-2.5 text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
             />
+            <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
+              <input
+                type="checkbox"
+                checked={roomIsPrivate}
+                onChange={(e) => setRoomIsPrivate(e.target.checked)}
+                className="h-4 w-4 rounded border-zinc-300 dark:border-zinc-700"
+              />
+              Sala privada (não aparece na lista de salas públicas)
+            </label>
             {roomError && <p className="text-sm text-red-500">{roomError}</p>}
             <button
               type="submit"

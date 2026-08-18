@@ -5,6 +5,15 @@ const HANDLE_RE = /^[a-zA-Z0-9_-]{1,32}$/;
 const CLIENT_ID_RE = /^[a-zA-Z0-9-]{8,64}$/;
 const HEARTBEAT_INTERVAL_MS = 25_000;
 
+// Any handle starting with this is private: excluded from the public /rooms
+// listing. This is the only thing that makes a room private — there's no
+// separate flag to keep in sync, so it can't drift from the handle itself.
+const PRIVATE_PREFIX = "priv-";
+
+function isPrivateRoom(room: string): boolean {
+  return room.startsWith(PRIVATE_PREFIX);
+}
+
 interface ClientInfo {
   id: string;
   name: string | null;
@@ -15,10 +24,15 @@ interface ClientInfo {
   socket: WebSocket;
 }
 
+interface RoomInfo {
+  sockets: Set<WebSocket>;
+  createdAt: number;
+}
+
 const clients = new Map<WebSocket, ClientInfo>();
 const clientsById = new Map<string, ClientInfo>();
 const namesInUse = new Map<string, WebSocket>();
-const rooms = new Map<string, Set<WebSocket>>();
+const rooms = new Map<string, RoomInfo>();
 
 function isValidDisplayName(name: string): boolean {
   if (name.length < 1 || name.length > 24) return false;
@@ -36,9 +50,9 @@ function send(socket: WebSocket, msg: unknown) {
 }
 
 function broadcastToRoom(room: string, msg: unknown, exclude?: WebSocket) {
-  const set = rooms.get(room);
-  if (!set) return;
-  for (const s of set) {
+  const roomInfo = rooms.get(room);
+  if (!roomInfo) return;
+  for (const s of roomInfo.sockets) {
     if (s !== exclude) send(s, msg);
   }
 }
@@ -50,10 +64,10 @@ function peerSummary(info: ClientInfo) {
 function leaveRoom(info: ClientInfo) {
   if (!info.room) return;
   const room = info.room;
-  const set = rooms.get(room);
-  if (set) {
-    set.delete(info.socket);
-    if (set.size === 0) rooms.delete(room);
+  const roomInfo = rooms.get(room);
+  if (roomInfo) {
+    roomInfo.sockets.delete(info.socket);
+    if (roomInfo.sockets.size === 0) rooms.delete(room);
   }
   info.room = null;
   info.sharing = false;
@@ -68,10 +82,10 @@ function leaveRoom(info: ClientInfo) {
 // seamlessly to the new socket rather than actually leaving the room.
 function detachSession(info: ClientInfo) {
   if (info.room) {
-    const set = rooms.get(info.room);
-    if (set) {
-      set.delete(info.socket);
-      if (set.size === 0) rooms.delete(info.room);
+    const roomInfo = rooms.get(info.room);
+    if (roomInfo) {
+      roomInfo.sockets.delete(info.socket);
+      if (roomInfo.sockets.size === 0) rooms.delete(info.room);
     }
     info.room = null;
   }
@@ -105,6 +119,21 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
   app.addHook("onClose", (_instance, done) => {
     clearInterval(heartbeat);
     done();
+  });
+
+  // Public room directory. Private rooms (handle starts with "priv-") are
+  // filtered out here, server-side — the client never receives them, so
+  // there's no separate access-control step to forget on the frontend.
+  app.get("/rooms", async () => {
+    const publicRooms = [...rooms.entries()]
+      .filter(([handle]) => !isPrivateRoom(handle))
+      .map(([handle, info]) => ({
+        handle,
+        peopleCount: info.sockets.size,
+        createdAt: info.createdAt,
+      }))
+      .sort((a, b) => b.peopleCount - a.peopleCount || a.createdAt - b.createdAt);
+    return { rooms: publicRooms };
   });
 
   app.get("/ws", { websocket: true }, (socket: WebSocket) => {
@@ -197,13 +226,13 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
           info.room = room;
           info.sharing = false;
           info.mic = false;
-          let set = rooms.get(room);
-          if (!set) {
-            set = new Set();
-            rooms.set(room, set);
+          let roomInfo = rooms.get(room);
+          if (!roomInfo) {
+            roomInfo = { sockets: new Set(), createdAt: Date.now() };
+            rooms.set(room, roomInfo);
           }
-          set.add(socket);
-          const peers = [...set]
+          roomInfo.sockets.add(socket);
+          const peers = [...roomInfo.sockets]
             .filter((s) => s !== socket)
             .map((s) => peerSummary(clients.get(s)!));
           send(socket, { type: "room-state", room, selfId: info.id, peers });
@@ -229,9 +258,9 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
         case "signal": {
           if (!info.room) return;
           const targetId = typeof msg.to === "string" ? msg.to : "";
-          const set = rooms.get(info.room);
-          if (!set) return;
-          for (const s of set) {
+          const roomInfo = rooms.get(info.room);
+          if (!roomInfo) return;
+          for (const s of roomInfo.sockets) {
             const target = clients.get(s);
             if (target && target.id === targetId) {
               send(s, { type: "signal", from: info.id, data: msg.data });

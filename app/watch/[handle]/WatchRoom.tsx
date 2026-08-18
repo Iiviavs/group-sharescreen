@@ -7,6 +7,7 @@ import { signalingClient } from "@/lib/signalingClient";
 import { useSignaling, useHasStoredName } from "@/lib/useSignaling";
 import { useRoomMedia, useScreenShareMode } from "@/lib/useRoomMedia";
 import { trackEvent } from "@/lib/analytics";
+import { toRoomHandle } from "@/lib/roomsApi";
 import { VideoTile } from "@/components/VideoTile";
 import { RemoteAudio } from "@/components/RemoteAudio";
 import { ParticipantRow } from "@/components/ParticipantRow";
@@ -37,6 +38,7 @@ export function WatchRoom({ handle }: { handle: string }) {
   const [switching, setSwitching] = useState(false);
   const [switchInput, setSwitchInput] = useState("");
   const [switchError, setSwitchError] = useState<string | null>(null);
+  const [switchIsPrivate, setSwitchIsPrivate] = useState(false);
   const [nameInput, setNameInput] = useState("");
   const [micsMuted, setMicsMuted] = useState(false);
   const [mutedPeerIds, setMutedPeerIds] = useState<Set<string>>(new Set());
@@ -108,7 +110,7 @@ export function WatchRoom({ handle }: { handle: string }) {
     setSwitchInput("");
     setSwitchError(null);
     trackEvent("room_switch");
-    router.push(`/watch/${trimmed}`);
+    router.push(`/watch/${toRoomHandle(trimmed, switchIsPrivate)}`);
   }
 
   if (!validHandle) {
@@ -292,6 +294,15 @@ export function WatchRoom({ handle }: { handle: string }) {
               placeholder="Ex: reuniao-time"
               className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
             />
+            <label className="mt-2 flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+              <input
+                type="checkbox"
+                checked={switchIsPrivate}
+                onChange={(e) => setSwitchIsPrivate(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-zinc-300 dark:border-zinc-700"
+              />
+              Sala privada
+            </label>
             {switchError && <p className="mt-1 text-xs text-red-500">{switchError}</p>}
             <button
               type="submit"
@@ -300,6 +311,12 @@ export function WatchRoom({ handle }: { handle: string }) {
             >
               Ir para a sala
             </button>
+            <Link
+              href="/rooms"
+              className="mt-2 block text-center text-xs font-medium text-zinc-500 underline underline-offset-2 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
+            >
+              Ver salas públicas ativas
+            </Link>
           </form>
         )}
       </header>
