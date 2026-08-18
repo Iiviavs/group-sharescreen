@@ -1,7 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import { signalingClient } from "./signalingClient";
+import { signalingClient, getStoredName } from "./signalingClient";
 
 export function useSignaling() {
   return useSyncExternalStore(
@@ -9,4 +9,18 @@ export function useSignaling() {
     signalingClient.getSnapshot,
     signalingClient.getSnapshot
   );
+}
+
+function noopSubscribe() {
+  return () => {};
+}
+function getHasStoredName() {
+  return getStoredName() !== null;
+}
+function getHasStoredNameServer() {
+  return false;
+}
+
+export function useHasStoredName() {
+  return useSyncExternalStore(noopSubscribe, getHasStoredName, getHasStoredNameServer);
 }

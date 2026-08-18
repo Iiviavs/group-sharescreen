@@ -1,21 +1,11 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { signalingClient, getStoredName } from "@/lib/signalingClient";
-import { useSignaling } from "@/lib/useSignaling";
+import { signalingClient } from "@/lib/signalingClient";
+import { useSignaling, useHasStoredName } from "@/lib/useSignaling";
 
 const HANDLE_RE = /^[a-zA-Z0-9_-]+$/;
-
-function noopSubscribe() {
-  return () => {};
-}
-function getHasStoredName() {
-  return getStoredName() !== null;
-}
-function getHasStoredNameServer() {
-  return false;
-}
 
 export default function Home() {
   const state = useSignaling();
@@ -24,19 +14,10 @@ export default function Home() {
   const [nameInput, setNameInput] = useState("");
   const [roomInput, setRoomInput] = useState("");
   const [roomError, setRoomError] = useState<string | null>(null);
-  const hasStoredName = useSyncExternalStore(noopSubscribe, getHasStoredName, getHasStoredNameServer);
+  const hasStoredName = useHasStoredName();
 
   const registered = Boolean(state.name);
   const restoring = !registered && hasStoredName && !state.nameError;
-
-  useEffect(() => {
-    if (!state.name) return;
-    const pending = typeof window !== "undefined" ? sessionStorage.getItem("pendingRoom") : null;
-    if (pending) {
-      sessionStorage.removeItem("pendingRoom");
-      router.replace(`/watch/${pending}`);
-    }
-  }, [state.name, router]);
 
   function handleNameSubmit(e: FormEvent) {
     e.preventDefault();

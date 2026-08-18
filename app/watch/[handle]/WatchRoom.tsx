@@ -3,8 +3,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { signalingClient, getStoredName } from "@/lib/signalingClient";
-import { useSignaling } from "@/lib/useSignaling";
+import { signalingClient } from "@/lib/signalingClient";
+import { useSignaling, useHasStoredName } from "@/lib/useSignaling";
 import { useRoomMedia } from "@/lib/useRoomMedia";
 import { VideoTile } from "@/components/VideoTile";
 
@@ -13,6 +13,7 @@ const HANDLE_RE = /^[a-zA-Z0-9_-]+$/;
 export function WatchRoom({ handle }: { handle: string }) {
   const router = useRouter();
   const state = useSignaling();
+  const hasStoredName = useHasStoredName();
   const validHandle = HANDLE_RE.test(handle);
 
   const { isSharing, startShare, stopShare, localStream, remoteStreams, shareError } =
@@ -21,17 +22,11 @@ export function WatchRoom({ handle }: { handle: string }) {
   const [switching, setSwitching] = useState(false);
   const [switchInput, setSwitchInput] = useState("");
   const [switchError, setSwitchError] = useState<string | null>(null);
+  const [nameInput, setNameInput] = useState("");
 
-  useEffect(() => {
-    if (!validHandle) return;
-    if (state.status === "idle" || state.status === "connecting") return;
-    if (state.name) return;
-    // A stored name means the client is still (re)connecting/registering
-    // after a page reload — wait instead of bouncing to the home screen.
-    if (getStoredName()) return;
-    sessionStorage.setItem("pendingRoom", handle);
-    router.replace("/");
-  }, [state.name, state.status, handle, router, validHandle]);
+  // A stored name means the client is still (re)connecting/registering
+  // after a page reload — show a loading state instead of asking again.
+  const restoring = !state.name && hasStoredName && !state.nameError;
 
   useEffect(() => {
     if (!validHandle || !state.name) return;
@@ -40,6 +35,13 @@ export function WatchRoom({ handle }: { handle: string }) {
       signalingClient.leaveRoom();
     };
   }, [validHandle, state.name, handle]);
+
+  function handleNameSubmit(e: FormEvent) {
+    e.preventDefault();
+    const trimmed = nameInput.trim();
+    if (!trimmed) return;
+    signalingClient.register(trimmed);
+  }
 
   function handleSwitchSubmit(e: FormEvent) {
     e.preventDefault();
@@ -67,10 +69,47 @@ export function WatchRoom({ handle }: { handle: string }) {
     );
   }
 
-  if (!state.name) {
+  if (restoring) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
         <p className="text-zinc-600 dark:text-zinc-400">Reconectando...</p>
+      </div>
+    );
+  }
+
+  if (!state.name) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-4 py-16">
+        <main className="w-full max-w-md rounded-2xl border border-black/10 bg-white p-8 shadow-sm dark:border-white/10 dark:bg-zinc-950">
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
+            Entrar na sala {handle}
+          </h1>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            Escolha um nome para entrar nesta sala.
+          </p>
+          <form onSubmit={handleNameSubmit} className="mt-8 flex flex-col gap-3">
+            <label htmlFor="name" className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              Seu nome
+            </label>
+            <input
+              id="name"
+              autoFocus
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              maxLength={24}
+              placeholder="Ex: Maria"
+              className="rounded-lg border border-zinc-300 bg-white px-4 py-2.5 text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+            />
+            {state.nameError && <p className="text-sm text-red-500">{state.nameError}</p>}
+            <button
+              type="submit"
+              disabled={!nameInput.trim()}
+              className="mt-2 rounded-lg bg-zinc-950 px-4 py-2.5 font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+            >
+              Entrar na sala
+            </button>
+          </form>
+        </main>
       </div>
     );
   }
