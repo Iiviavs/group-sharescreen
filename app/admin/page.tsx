@@ -136,9 +136,6 @@ export default function AdminPage() {
             <h1 className="text-2xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
               Moderação
             </h1>
-            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-              Todas as salas ativas, públicas e privadas. Visualizar não avisa os participantes.
-            </p>
           </div>
           <div className="flex shrink-0 gap-2">
             <Link
