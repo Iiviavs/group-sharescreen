@@ -11,7 +11,6 @@ import {
   EyeIcon,
   EyeOffIcon,
 } from "@/components/icons";
-import { SpeakerIcon, SpeakerMuteIcon } from "./icons";
 
 function noopSubscribe() {
   return () => {};
@@ -31,6 +30,7 @@ export function VideoTile({
   allowUnmute = true,
   fill = false,
   onStopWatching,
+  onDoubleClick,
 }: {
   stream: MediaStream;
   label: string;
@@ -45,6 +45,7 @@ export function VideoTile({
   // else's tile. Omitted for the local "Você" tile, which has nothing to
   // stop watching.
   onStopWatching?: () => void;
+  onDoubleClick?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -111,6 +112,7 @@ export function VideoTile({
   return (
     <div
       ref={containerRef}
+      onDoubleClick={onDoubleClick}
       className={`relative w-full overflow-hidden rounded-xl border border-white/10 bg-black ${
         // No min-height floor here: on a short viewport a fixed floor could
         // force this box taller than the space main actually has, which is

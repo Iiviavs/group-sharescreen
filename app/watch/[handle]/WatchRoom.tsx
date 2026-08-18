@@ -85,6 +85,7 @@ export function WatchRoom({ handle }: { handle: string }) {
   const [renameInput, setRenameInput] = useState("");
   const [qualityOpen, setQualityOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [focusedPeerId, setFocusedPeerId] = useState<string | null>(null);
   const previousNameRef = useRef(state.name);
 
   // Closes the rename popover once the name actually changes — covers both
@@ -257,6 +258,24 @@ export function WatchRoom({ handle }: { handle: string }) {
   const visiblePeers = state.peers.filter((p) => p.role !== "moderator");
   const peerCount = visiblePeers.length + (state.name ? 1 : 0);
   const remoteEntries = Object.entries(remoteStreams);
+  const remoteScreenEntries = Object.entries(remoteStreams);
+  const remoteCameraOnlyEntries = Object.entries(remoteCameraStreams).filter(
+    ([peerId]) => !remoteStreams[peerId]
+  );
+  const focusedScreenEntries = focusedPeerId
+    ? focusedPeerId === "self"
+      ? []
+      : remoteScreenEntries.filter(([peerId]) => peerId === focusedPeerId)
+    : remoteScreenEntries;
+  const focusedCameraOnlyEntries = focusedPeerId
+    ? focusedPeerId === "self"
+      ? []
+      : remoteCameraOnlyEntries.filter(([peerId]) => peerId === focusedPeerId)
+    : remoteCameraOnlyEntries;
+  const hasMultipleShares =
+    remoteScreenEntries.length +
+    remoteCameraOnlyEntries.length +
+    (isSharing && (localStream || localCameraStream) ? 1 : 0) > 1;
   // A peer we deliberately stopped watching has no entry in remoteStreams
   // (the underlying connection is closed to save resources — see
   // stopWatchingPeer), but still gets a tile slot showing a "you left this
@@ -273,10 +292,13 @@ export function WatchRoom({ handle }: { handle: string }) {
     resumingEntries.length === 0 &&
     !isSharing;
   const tileCount =
-    remoteEntries.length +
+    focusedScreenEntries.length +
+    focusedCameraOnlyEntries.length +
     stoppedEntries.length +
     resumingEntries.length +
-    (isSharing && localStream ? 1 : 0);
+    ((!focusedPeerId || focusedPeerId === "self") && isSharing && (localStream || localCameraStream)
+      ? 1
+      : 0);
   const isSingleTile = tileCount === 1;
 
   return (
@@ -672,17 +694,24 @@ export function WatchRoom({ handle }: { handle: string }) {
               </p>
             </div>
           ) : (
-            <div
-              className={
-                isSingleTile
-                  ? // No min-height floor: on a short viewport that floor could
-                    // force this taller than what main actually has, which is
-                    // what pushed the tile past the bottom and forced a scroll.
-                    "h-full"
-                  : "grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-3"
-              }
-            >
-              {isSharing && localStream ? (
+            <>
+              {focusedPeerId && hasMultipleShares && (
+                <button
+                  type="button"
+                  onClick={() => setFocusedPeerId(null)}
+                  className="mb-3 rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                >
+                  Voltar para todas as transmissões
+                </button>
+              )}
+              <div
+                className={
+                  isSingleTile
+                    ? "h-full"
+                    : "grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-3"
+                }
+              >
+              {(!focusedPeerId || focusedPeerId === "self") && isSharing && localStream ? (
                 <div className={isSingleTile ? "relative h-full min-h-75" : "relative"}>
                   <VideoTile
                     stream={localStream}
@@ -691,6 +720,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                     muted
                     allowUnmute={false}
                     fill={isSingleTile}
+                    onDoubleClick={() => setFocusedPeerId("self")}
                   />
                   {localCameraStream && (
                     <div className="absolute bottom-3 right-3 z-10 w-2/5 min-w-40 max-w-70 sm:w-1/4">
@@ -705,7 +735,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                   )}
                 </div>
               ) : (
-                localCameraStream && (
+                (!focusedPeerId || focusedPeerId === "self") && localCameraStream && (
                   <VideoTile
                     stream={localCameraStream}
                     label="Você"
@@ -713,10 +743,11 @@ export function WatchRoom({ handle }: { handle: string }) {
                     muted
                     allowUnmute={false}
                     fill={isSingleTile}
+                    onDoubleClick={() => setFocusedPeerId("self")}
                   />
                 )
               )}
-              {remoteScreenEntries.map(([peerId, stream]) => {
+              {focusedScreenEntries.map(([peerId, stream]) => {
                 const peerName = state.peers.find((p) => p.id === peerId)?.name ?? "Alguém";
                 return (
                   <div key={`screen-${peerId}`} className={isSingleTile ? "relative h-full min-h-75" : "relative"}>
@@ -726,6 +757,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                       badge="ao vivo · tela"
                       muted
                       fill={isSingleTile}
+                      onDoubleClick={() => setFocusedPeerId(peerId)}
                     />
                     {remoteCameraStreams[peerId] && (
                       <div className="absolute bottom-3 right-3 z-10 w-2/5 min-w-40 max-w-70 sm:w-1/4">
@@ -740,9 +772,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                   </div>
                 );
               })}
-              {Object.entries(remoteCameraStreams)
-                .filter(([peerId]) => !remoteStreams[peerId])
-                .map(([peerId, stream]) => {
+              {focusedCameraOnlyEntries.map(([peerId, stream]) => {
                   const peerName = state.peers.find((p) => p.id === peerId)?.name ?? "Alguém";
                   return remoteStreams[peerId] ? null : (
                     <VideoTile
@@ -752,10 +782,12 @@ export function WatchRoom({ handle }: { handle: string }) {
                       badge="ao vivo · câmera"
                       muted
                       fill={isSingleTile}
+                      onDoubleClick={() => setFocusedPeerId(peerId)}
                     />
                   );
                 })}
-            </div>
+              </div>
+            </>
           )}
         </main>
 
