@@ -52,6 +52,8 @@ export function WatchRoom({ handle }: { handle: string }) {
     setShareFps,
     shareBitrate,
     setShareBitrate,
+    smartQualityEnabled,
+    setSmartQualityEnabled,
     isMicOn,
     toggleMic,
     micError,
@@ -506,6 +508,22 @@ export function WatchRoom({ handle }: { handle: string }) {
             </div>
 
             <div className="flex flex-col gap-3">
+              <label className="flex items-start gap-2 rounded-md border border-zinc-200 bg-zinc-50 p-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={smartQualityEnabled}
+                  onChange={(e) => setSmartQualityEnabled(e.target.checked)}
+                  className="mt-0.5 h-3.5 w-3.5 rounded border-zinc-300 dark:border-zinc-700"
+                />
+                <span>
+                  <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                    Ativar controle inteligente de qualidade
+                  </span>
+                  <br />
+                  Reduz resolução e bitrate automaticamente quando a sala tem muita gente. As opções abaixo viram o teto — a qualidade real pode ficar menor.
+                </span>
+              </label>
+
               <div>
                 <label
                   htmlFor="share-resolution"

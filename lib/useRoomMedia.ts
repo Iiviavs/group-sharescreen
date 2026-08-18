@@ -46,6 +46,65 @@ const BITRATE_KBPS: Record<ShareBitrate, number> = {
   high: 4000,
 };
 
+// Mesh upload cost grows with every extra viewer, so past a few people in
+// the room the sender's bitrate is throttled down automatically instead of
+// letting the browser keep trying to push the full preset to everyone.
+// Presets that are already conservative have little slack to give up, so
+// they hold out longer before cutting anything; "high" has the most room to
+// spare and starts giving it up first.
+const THROTTLE_START_PEERS: Record<ShareBitrate, number> = {
+  low: 6,
+  medium: 4,
+  high: 3,
+};
+// kbps shed per peer beyond the start threshold.
+const THROTTLE_STEP_KBPS: Record<ShareBitrate, number> = {
+  low: 40,
+  medium: 120,
+  high: 250,
+};
+// Never throttled below this, no matter how crowded the room gets.
+const THROTTLE_FLOOR_KBPS: Record<ShareBitrate, number> = {
+  low: 350,
+  medium: 800,
+  high: 1200,
+};
+
+function throttledBitrateKbps(preset: ShareBitrate, peerCount: number): number {
+  const base = BITRATE_KBPS[preset];
+  const startAt = THROTTLE_START_PEERS[preset];
+  if (peerCount <= startAt) return base;
+  const excessPeers = peerCount - startAt;
+  const reduced = base - excessPeers * THROTTLE_STEP_KBPS[preset];
+  return Math.max(THROTTLE_FLOOR_KBPS[preset], reduced);
+}
+
+const RESOLUTION_ORDER: ShareResolution[] = ["1080p", "720p", "480p", "360p"];
+
+// Same idea as the bitrate throttle, one tier at a time: each peer-count
+// threshold in the list drops resolution one more step. A preset that's
+// already low starts from a shorter (or empty) list, so it takes more
+// people in the room before it has anything left to give up.
+const RESOLUTION_STEP_DOWN_PEERS: Record<ShareResolution, number[]> = {
+  "1080p": [3, 10, 14],
+  "720p": [6, 12],
+  "480p": [8],
+  "360p": [],
+};
+
+function throttledResolution(preset: ShareResolution, peerCount: number): ShareResolution {
+  const stepsDown = RESOLUTION_STEP_DOWN_PEERS[preset].filter((threshold) => peerCount >= threshold).length;
+  const targetIndex = Math.min(RESOLUTION_ORDER.indexOf(preset) + stepsDown, RESOLUTION_ORDER.length - 1);
+  return RESOLUTION_ORDER[targetIndex];
+}
+
+function getPeerCount() {
+  return signalingClient.state.peers.length;
+}
+function getPeerCountServer() {
+  return 0;
+}
+
 export const SHARE_RESOLUTION_OPTIONS: { value: ShareResolution; label: string }[] = [
   { value: "1080p", label: "1080p" },
   { value: "720p", label: "720p" },
@@ -521,9 +580,14 @@ export function useRoomMedia(room: string) {
   const [shareResolution, setShareResolutionState] = useState<ShareResolution>("720p");
   const [shareFps, setShareFpsState] = useState<ShareFps>(30);
   const [shareBitrate, setShareBitrateState] = useState<ShareBitrate>("medium");
+  // On by default: automatically steps resolution/bitrate down as the room
+  // fills up (see throttledResolution/throttledBitrateKbps). Turning it off
+  // makes the three dials above absolute again, exactly as picked.
+  const [smartQualityEnabled, setSmartQualityEnabledState] = useState(true);
   const shareResolutionRef = useRef(shareResolution);
   const shareFpsRef = useRef(shareFps);
   const shareBitrateRef = useRef(shareBitrate);
+  const smartQualityEnabledRef = useRef(smartQualityEnabled);
 
   const setShareResolution = useCallback((value: ShareResolution) => {
     shareResolutionRef.current = value;
@@ -540,25 +604,49 @@ export function useRoomMedia(room: string) {
     setShareBitrateState(value);
     trackEvent(`screen_share_bitrate_${value}`);
   }, []);
+  const setSmartQualityEnabled = useCallback((value: boolean) => {
+    smartQualityEnabledRef.current = value;
+    setSmartQualityEnabledState(value);
+    trackEvent(value ? "smart_quality_on" : "smart_quality_off");
+  }, []);
 
-  // Recomputed only when one of the three dials actually changes, so this
-  // stays a stable reference for useBroadcastChannel's live-reapply effect
-  // in between.
+  // Other peers in the room (mesh upload targets) — drives the automatic
+  // resolution/bitrate throttle below, and needs to be reactive so it kicks
+  // in/out as people join or leave mid-share, not just when the dials
+  // change. Mirrored into a ref for the same reason as the dials above:
+  // capture() below only runs once per share start.
+  const peerCount = useSyncExternalStore(signalingClient.subscribe, getPeerCount, getPeerCountServer);
+  const peerCountRef = useRef(peerCount);
+  useEffect(() => {
+    peerCountRef.current = peerCount;
+  }, [peerCount]);
+
+  // Recomputed when one of the dials, the smart-quality toggle, or the
+  // room's peer count changes, so this stays a stable reference for
+  // useBroadcastChannel's live-reapply effect in between.
   const screenQualityPreset = useMemo<QualityPreset>(() => {
-    const dims = RESOLUTION_DIMENSIONS[shareResolution];
+    const effectiveResolution = smartQualityEnabled
+      ? throttledResolution(shareResolution, peerCount)
+      : shareResolution;
+    const dims = RESOLUTION_DIMENSIONS[effectiveResolution];
     return {
       width: dims.width,
       height: dims.height,
       frameRate: shareFps,
-      maxBitrateKbps: BITRATE_KBPS[shareBitrate],
+      maxBitrateKbps: smartQualityEnabled
+        ? throttledBitrateKbps(shareBitrate, peerCount)
+        : BITRATE_KBPS[shareBitrate],
     };
-  }, [shareResolution, shareFps, shareBitrate]);
+  }, [shareResolution, shareFps, shareBitrate, smartQualityEnabled, peerCount]);
 
   const screen = useBroadcastChannel(
     "screen",
     room,
     (source) => {
-      const dims = RESOLUTION_DIMENSIONS[shareResolutionRef.current];
+      const effectiveResolution = smartQualityEnabledRef.current
+        ? throttledResolution(shareResolutionRef.current, peerCountRef.current)
+        : shareResolutionRef.current;
+      const dims = RESOLUTION_DIMENSIONS[effectiveResolution];
       const videoConstraints: MediaTrackConstraints = {
         width: { ideal: dims.width },
         height: { ideal: dims.height },
@@ -634,6 +722,8 @@ export function useRoomMedia(room: string) {
     setShareFps,
     shareBitrate,
     setShareBitrate,
+    smartQualityEnabled,
+    setSmartQualityEnabled,
 
     isMicOn: mic.active,
     toggleMic,
