@@ -4,15 +4,15 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { signalingClient } from "./signalingClient";
 import { trackEvent } from "./analytics";
 
-const TURN_URL = process.env.NEXT_PUBLIC_TURN_URL || "turn:n1-br.nemtudo.me:3478?transport=udp";
-const TURN_USERNAME = process.env.NEXT_PUBLIC_TURN_USERNAME || "nemtudo";
-const TURN_CREDENTIAL = process.env.NEXT_PUBLIC_TURN_CREDENTIAL || "nemtudomtforte123";
+const TURN_URLS = process.env.NEXT_PUBLIC_TURN_URLS || "";
+const TURN_USERNAME = process.env.NEXT_PUBLIC_TURN_USERNAME || "";
+const TURN_CREDENTIAL = process.env.NEXT_PUBLIC_TURN_CREDENTIAL || "";
 
 const ICE_CONFIG: RTCConfiguration = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
     {
-      urls: TURN_URL,
+      urls: TURN_URLS.split(","),
       username: TURN_USERNAME,
       credential: TURN_CREDENTIAL,
     },
