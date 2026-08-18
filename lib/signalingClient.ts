@@ -2,7 +2,17 @@
 
 import { trackEvent } from "./analytics";
 
-export type PeerInfo = { id: string; name: string; sharing: boolean; mic: boolean };
+// `role: "moderator"` marks a moderator silently watching for moderation
+// (see server/signaling.ts's "admin-join") — present in the peer list so
+// this client's own useRoomMedia still opens a WebRTC connection to it like
+// any other peer, but the UI (WatchRoom) filters it out of what's shown.
+export type PeerInfo = {
+  id: string;
+  name: string;
+  sharing: boolean;
+  mic: boolean;
+  role?: "moderator";
+};
 
 export type SignalingStatus = "idle" | "connecting" | "open" | "closed";
 
@@ -211,14 +221,17 @@ class SignalingClient {
         // stale departure isn't announced, to avoid tearing down otherwise
         // still-healthy WebRTC connections over a brief signaling hiccup).
         const alreadyKnown = this.state.peers.some((p) => p.id === msg.id);
+        const role = msg.role === "moderator" ? "moderator" : undefined;
         this.setState({
           peers: alreadyKnown
             ? this.state.peers.map((p) =>
-                p.id === msg.id ? { ...p, name: msg.name as string, sharing: false, mic: false } : p
+                p.id === msg.id
+                  ? { ...p, name: msg.name as string, sharing: false, mic: false, role }
+                  : p
               )
             : [
                 ...this.state.peers,
-                { id: msg.id as string, name: msg.name as string, sharing: false, mic: false },
+                { id: msg.id as string, name: msg.name as string, sharing: false, mic: false, role },
               ],
         });
         break;

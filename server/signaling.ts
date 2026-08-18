@@ -9,6 +9,13 @@ import {
   roomsCreatedTotal,
   signalsRelayedTotal,
 } from "./metrics.js";
+import {
+  ADMIN_ENABLED,
+  checkBasicAuth,
+  createAdminToken,
+  verifyAdminToken,
+  revokeAdminToken,
+} from "./adminAuth.js";
 
 const HANDLE_RE = /^[a-zA-Z0-9_-]{1,32}$/;
 const CLIENT_ID_RE = /^[a-zA-Z0-9-]{8,64}$/;
@@ -31,6 +38,17 @@ interface ClientInfo {
   mic: boolean;
   isAlive: boolean;
   socket: WebSocket;
+  // Set for a moderator connection opened via "admin-join" (see
+  // registerAdminRoutes below). Moderator sockets ride the exact same room
+  // machinery as a real participant — they're added to the room's socket
+  // set and included unfiltered in the peers array sent to real
+  // participants, which is what makes broadcasters' existing
+  // "open a connection to every peer I see" logic transparently push them
+  // an offer too. The `role: "moderator"` tag on that peer entry (see
+  // peerSummary) is what the *client* then uses to hide it from the visible
+  // participant list and count — nothing server-side ever filters a
+  // moderator out of a room, only out of numbers/lists real users see.
+  isModerator?: boolean;
 }
 
 interface RoomInfo {
@@ -45,10 +63,10 @@ const rooms = new Map<string, RoomInfo>();
 
 registerStatsProvider(() => ({
   connectedSockets: clients.size,
-  registeredPeers: [...clients.values()].filter((c) => c.name !== null).length,
+  registeredPeers: [...clients.values()].filter((c) => c.name !== null && !c.isModerator).length,
   rooms: [...rooms.entries()].map(([handle, info]) => ({
     handle,
-    peopleCount: info.sockets.size,
+    peopleCount: realPeopleCount(info),
     isPrivate: isPrivateRoom(handle),
   })),
 }));
@@ -77,7 +95,24 @@ function broadcastToRoom(room: string, msg: unknown, exclude?: WebSocket) {
 }
 
 function peerSummary(info: ClientInfo) {
-  return { id: info.id, name: info.name, sharing: info.sharing, mic: info.mic };
+  return {
+    id: info.id,
+    name: info.name,
+    sharing: info.sharing,
+    mic: info.mic,
+    ...(info.isModerator ? { role: "moderator" as const } : {}),
+  };
+}
+
+// Real (non-moderator) headcount for a room — used everywhere a number or
+// list is shown to an ordinary user, so a moderator watching never inflates
+// what participants see.
+function realPeopleCount(roomInfo: RoomInfo): number {
+  let count = 0;
+  for (const s of roomInfo.sockets) {
+    if (!clients.get(s)?.isModerator) count += 1;
+  }
+  return count;
 }
 
 function leaveRoom(info: ClientInfo) {
@@ -149,11 +184,56 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
       .filter(([handle]) => !isPrivateRoom(handle))
       .map(([handle, info]) => ({
         handle,
-        peopleCount: info.sockets.size,
+        peopleCount: realPeopleCount(info),
         createdAt: info.createdAt,
       }))
       .sort((a, b) => b.peopleCount - a.peopleCount || a.createdAt - b.createdAt);
     return { rooms: publicRooms };
+  });
+
+  // Moderation surface, gated entirely behind ADMIN_USER/ADMIN_PASSWORD
+  // (see adminAuth.ts) — every route below 404s outright if those env vars
+  // aren't both set, so there's no accidental half-open admin endpoint on a
+  // deployment that never opted in.
+  app.post("/admin/login", async (request, reply) => {
+    if (!ADMIN_ENABLED) return reply.code(404).send();
+    if (!checkBasicAuth(request.headers.authorization)) {
+      reply.header("WWW-Authenticate", 'Basic realm="admin"');
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+    return { token: createAdminToken() };
+  });
+
+  app.post("/admin/logout", async (request, reply) => {
+    if (!ADMIN_ENABLED) return reply.code(404).send();
+    const header = request.headers.authorization || "";
+    if (header.startsWith("Bearer ")) revokeAdminToken(header.slice(7));
+    return reply.code(204).send();
+  });
+
+  // Full room directory for moderators — unlike /rooms, this includes
+  // private rooms and per-peer detail, since moderation is the one
+  // legitimate reason to need that visibility.
+  app.get("/admin/rooms", async (request, reply) => {
+    if (!ADMIN_ENABLED) return reply.code(404).send();
+    const header = request.headers.authorization || "";
+    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+    if (!verifyAdminToken(token)) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+    const allRooms = [...rooms.entries()]
+      .map(([handle, info]) => ({
+        handle,
+        isPrivate: isPrivateRoom(handle),
+        createdAt: info.createdAt,
+        peopleCount: realPeopleCount(info),
+        peers: [...info.sockets]
+          .map((s) => clients.get(s))
+          .filter((c): c is ClientInfo => c !== undefined && !c.isModerator)
+          .map((c) => ({ id: c.id, name: c.name, sharing: c.sharing, mic: c.mic })),
+      }))
+      .sort((a, b) => b.peopleCount - a.peopleCount || a.createdAt - b.createdAt);
+    return { rooms: allRooms };
   });
 
   app.get("/ws", { websocket: true }, (socket: WebSocket) => {
@@ -261,6 +341,51 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
             .map((s) => peerSummary(clients.get(s)!));
           send(socket, { type: "room-state", room, selfId: info.id, peers });
           broadcastToRoom(room, { type: "peer-joined", id: info.id, name: info.name }, socket);
+          break;
+        }
+        // A moderator entering a room to watch/listen for moderation.
+        // Deliberately mirrors "join" (same room bookkeeping, same
+        // room-state/peer-joined messages) so this socket rides the exact
+        // same signal-relay and broadcaster-reactivity machinery a real
+        // participant does — the only difference is the `role: "moderator"`
+        // tag on its peer entry, which is what the client uses to keep it
+        // out of the visible participant list/count. Leaving reuses the
+        // plain "leave" message (and socket close already calls
+        // leaveRoom() regardless), so no separate cleanup path is needed.
+        case "admin-join": {
+          if (!ADMIN_ENABLED) {
+            send(socket, { type: "error", message: "Moderação desativada." });
+            return;
+          }
+          const token = typeof msg.token === "string" ? msg.token : "";
+          if (!verifyAdminToken(token)) {
+            send(socket, { type: "error", message: "Não autorizado." });
+            socket.terminate();
+            return;
+          }
+          const room = typeof msg.room === "string" ? msg.room : "";
+          if (!HANDLE_RE.test(room)) {
+            send(socket, { type: "error", message: "Sala inválida." });
+            return;
+          }
+          const roomInfo = rooms.get(room);
+          if (!roomInfo) {
+            send(socket, { type: "error", message: "Sala não encontrada ou já encerrada." });
+            return;
+          }
+          if (info.room === room) return;
+          if (info.room) leaveRoom(info);
+          info.isModerator = true;
+          info.name = info.name ?? "Moderador";
+          info.room = room;
+          info.sharing = false;
+          info.mic = false;
+          roomInfo.sockets.add(socket);
+          const adminPeers = [...roomInfo.sockets]
+            .filter((s) => s !== socket)
+            .map((s) => peerSummary(clients.get(s)!));
+          send(socket, { type: "room-state", room, selfId: info.id, peers: adminPeers });
+          broadcastToRoom(room, { type: "peer-joined", id: info.id, name: info.name, role: "moderator" }, socket);
           break;
         }
         case "leave": {

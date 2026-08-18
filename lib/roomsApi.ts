@@ -3,7 +3,7 @@ const WS_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || "ws://localhost:4000/ws"
 // The signaling server also serves plain HTTP endpoints (health, room
 // directory) on the same host — derive that base from the WS URL instead of
 // needing a second env var for what's really the same server.
-function getSignalingHttpBase(): string {
+export function getSignalingHttpBase(): string {
   return WS_URL.replace(/^ws/, "http").replace(/\/ws\/?$/, "");
 }
 

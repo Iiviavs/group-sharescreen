@@ -172,7 +172,12 @@ export function WatchRoom({ handle }: { handle: string }) {
     );
   }
 
-  const peerCount = state.peers.length + (state.name ? 1 : 0);
+  // Moderator "ghost" peers (see server/signaling.ts's admin-join) ride the
+  // same peer list so their WebRTC connections get set up transparently,
+  // but must never show up to real participants — filtered out here rather
+  // than never added, so this is the one place that has to remember it.
+  const visiblePeers = state.peers.filter((p) => p.role !== "moderator");
+  const peerCount = visiblePeers.length + (state.name ? 1 : 0);
   const remoteEntries = Object.entries(remoteStreams);
   const nothingToShow = remoteEntries.length === 0 && !isSharing;
   const tileCount = remoteEntries.length + (isSharing && localStream ? 1 : 0);
@@ -419,7 +424,7 @@ export function WatchRoom({ handle }: { handle: string }) {
               sharing={isSharing}
               micStream={localMicStream}
             />
-            {state.peers.map((p) => (
+            {visiblePeers.map((p) => (
               <ParticipantRow
                 key={p.id}
                 name={p.name}
