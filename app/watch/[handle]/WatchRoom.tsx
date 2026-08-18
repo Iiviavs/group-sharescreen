@@ -439,7 +439,7 @@ export function WatchRoom({ handle }: { handle: string }) {
           )}
         </main>
 
-        <aside className="flex w-full shrink-0 flex-col lg:h-full lg:min-h-0 lg:w-64">
+        <aside className="w-full shrink-0 lg:w-64">
           <h2 className="mb-2 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
             Participantes
           </h2>

@@ -36,7 +36,7 @@ export function ChatPanel({
   }
 
   return (
-    <div className="mt-4 flex h-72 flex-col overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800 lg:h-auto lg:min-h-0 lg:flex-1">
+    <div className="mt-4 flex h-72 flex-col overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
       <h2 className="border-b border-zinc-200 px-3 py-2 text-sm font-semibold text-zinc-700 dark:border-zinc-800 dark:text-zinc-300">
         Chat
       </h2>
