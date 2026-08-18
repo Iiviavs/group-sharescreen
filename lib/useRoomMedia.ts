@@ -210,7 +210,14 @@ function useBroadcastChannel(
           });
         })
         .catch(() => {
-          if (sendPCs.current.get(peerId) === pc) closeSendPC(peerId);
+          // Offer creation/negotiation can fail outright (not just go
+          // "failed" after connecting) — e.g. a dropped signaling message.
+          // Without a retry here the peer's "sharing" indicator stays on
+          // forever with no video ever arriving, since nothing else re-runs
+          // openSendPC until the peer list itself changes.
+          if (sendPCs.current.get(peerId) !== pc) return;
+          closeSendPC(peerId);
+          scheduleSendRetry(peerId);
         });
     },
     [channel, closeSendPC, scheduleSendRetry]
@@ -557,13 +564,14 @@ export function useRoomMedia(room: string) {
         height: { ideal: dims.height },
         frameRate: { ideal: shareFpsRef.current },
       };
-      if (source === "camera" || !hasDisplayCapture()) {
+      if (source === "camera") {
         return navigator.mediaDevices.getUserMedia({
-          video: hasDisplayCapture()
-            ? { ...videoConstraints, facingMode: "user" }
-            : { ...videoConstraints, facingMode: { ideal: "environment" } },
+          video: { ...videoConstraints, facingMode: "user" },
         });
       }
+      // No fallback to the camera here — on browsers without getDisplayMedia
+      // (most mobile ones) this throws synchronously, which start() below
+      // turns into a visible error instead of silently switching sources.
       return navigator.mediaDevices.getDisplayMedia({ video: videoConstraints, audio: true });
     },
     () => hasDisplayCapture() || hasCameraCapture(),

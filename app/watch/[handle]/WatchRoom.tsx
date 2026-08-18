@@ -395,8 +395,12 @@ export function WatchRoom({ handle }: { handle: string }) {
             >
               Parar compartilhamento
             </button>
-          ) : screenShareMode === "display" ? (
-            <>
+          ) : (
+            <div className="flex items-center gap-3 border-l border-zinc-300 pl-3 dark:border-zinc-700">
+              {/* Most mobile browsers lack getDisplayMedia, but some do
+                  support it — the button stays visible everywhere and, if
+                  unsupported, capture() throws so startShare surfaces a real
+                  error instead of silently falling back to the camera. */}
               <button
                 type="button"
                 onClick={() => startShare("display")}
@@ -407,20 +411,12 @@ export function WatchRoom({ handle }: { handle: string }) {
               <button
                 type="button"
                 onClick={() => startShare("camera")}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+                disabled={screenShareMode === "unsupported"}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Compartilhar câmera
               </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              onClick={() => startShare()}
-              disabled={screenShareMode === "unsupported"}
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Compartilhar câmera
-            </button>
+            </div>
           )}
         </div>
 
