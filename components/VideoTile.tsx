@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { SpeakerIcon, SpeakerMuteIcon } from "./icons";
 
 function noopSubscribe() {
   return () => {};
@@ -95,11 +96,11 @@ export function VideoTile({
     <div
       ref={containerRef}
       className={`relative w-full overflow-hidden rounded-xl border border-white/10 bg-black ${
-        fill ? "h-full min-h-[240px]" : "aspect-video"
+        fill ? "h-full min-h-60" : "aspect-video"
       }`}
     >
       <video ref={videoRef} autoPlay playsInline className="h-full w-full object-contain bg-black" />
-      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-black/85 to-transparent px-3 py-2">
+      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-linear-to-t from-black/85 to-transparent px-3 py-2">
         <span className="truncate text-sm font-medium text-white">{label}</span>
         {badge && (
           <span className="rounded-full bg-red-500/90 px-2 py-0.5 text-xs font-semibold text-white">
@@ -112,9 +113,11 @@ export function VideoTile({
           <button
             type="button"
             onClick={() => setIsMuted((m) => !m)}
-            className="rounded-full bg-black/60 px-2.5 py-1.5 text-xs text-white hover:bg-black/80 active:bg-black/80"
+            title={isMuted ? "Ativar som" : "Silenciar"}
+            aria-label={isMuted ? "Ativar som" : "Silenciar"}
+            className="rounded-full bg-black/60 p-2 text-white hover:bg-black/80 active:bg-black/80"
           >
-            {isMuted ? "Ativar som" : "Silenciar"}
+            {isMuted ? <SpeakerMuteIcon className="h-4 w-4" /> : <SpeakerIcon className="h-4 w-4" />}
           </button>
         )}
         {pipSupported && (
