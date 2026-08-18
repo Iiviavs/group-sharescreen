@@ -161,6 +161,7 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
             send(socket, { type: "register-error", message: "Esse nome já está em uso." });
             return;
           }
+          const previousName = info.name;
           if (info.name) namesInUse.delete(info.name.toLowerCase());
           info.name = rawName;
           namesInUse.set(key, socket);
@@ -172,6 +173,13 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
           clientsById.set(info.id, info);
 
           send(socket, { type: "registered", id: info.id, name: rawName });
+
+          // Renaming while already in a room doesn't go through "join"
+          // again, so nothing else would tell the other participants —
+          // without this their peer list would keep showing the old name.
+          if (info.room && previousName && previousName !== rawName) {
+            broadcastToRoom(info.room, { type: "peer-renamed", id: info.id, name: rawName }, socket);
+          }
           break;
         }
         case "join": {

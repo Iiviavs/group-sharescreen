@@ -184,8 +184,16 @@ class SignalingClient {
         break;
       case "register-error":
         this.setState({ nameError: msg.message as string });
-        this.desiredName = null;
-        setStoredName(null);
+        // If we already had a confirmed name, this was a rename attempt —
+        // fall back to it instead of abandoning an otherwise-working
+        // session (which would also stop future reconnects from
+        // re-registering at all, since desiredName would be null).
+        if (this.state.name) {
+          this.desiredName = this.state.name;
+        } else {
+          this.desiredName = null;
+          setStoredName(null);
+        }
         trackEvent("name_register_error");
         break;
       case "room-state":
@@ -218,6 +226,13 @@ class SignalingClient {
       case "peer-left":
         this.setState({ peers: this.state.peers.filter((p) => p.id !== msg.id) });
         this.signalListeners.forEach((l) => l(msg.id as string, { kind: "peer-left" }));
+        break;
+      case "peer-renamed":
+        this.setState({
+          peers: this.state.peers.map((p) =>
+            p.id === msg.id ? { ...p, name: msg.name as string } : p
+          ),
+        });
         break;
       case "peer-sharing":
         this.setState({

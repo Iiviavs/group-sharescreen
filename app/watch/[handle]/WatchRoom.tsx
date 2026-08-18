@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signalingClient } from "@/lib/signalingClient";
@@ -40,6 +40,20 @@ export function WatchRoom({ handle }: { handle: string }) {
   const [nameInput, setNameInput] = useState("");
   const [micsMuted, setMicsMuted] = useState(false);
   const [mutedPeerIds, setMutedPeerIds] = useState<Set<string>>(new Set());
+  const [renaming, setRenaming] = useState(false);
+  const [renameInput, setRenameInput] = useState("");
+  const previousNameRef = useRef(state.name);
+
+  // Closes the rename popover once the name actually changes — covers both
+  // success (server confirmed the new name) and a plain reconnect, without
+  // needing to guess at exact timing.
+  useEffect(() => {
+    if (renaming && state.name !== previousNameRef.current) {
+      setRenaming(false);
+      setRenameInput("");
+    }
+    previousNameRef.current = state.name;
+  }, [state.name, renaming]);
 
   function toggleMicsMuted() {
     const next = !micsMuted;
@@ -72,6 +86,14 @@ export function WatchRoom({ handle }: { handle: string }) {
     e.preventDefault();
     const trimmed = nameInput.trim();
     if (!trimmed) return;
+    signalingClient.register(trimmed);
+  }
+
+  function handleRenameSubmit(e: FormEvent) {
+    e.preventDefault();
+    const trimmed = renameInput.trim();
+    if (!trimmed || trimmed === state.name) return;
+    trackEvent("name_change");
     signalingClient.register(trimmed);
   }
 
@@ -169,7 +191,24 @@ export function WatchRoom({ handle }: { handle: string }) {
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => setSwitching((s) => !s)}
+            onClick={() => {
+              setSwitching(false);
+              setRenaming((r) => {
+                if (!r) setRenameInput(state.name ?? "");
+                return !r;
+              });
+            }}
+            className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+          >
+            Mudar nome
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setRenaming(false);
+              setSwitching((s) => !s);
+            }}
             className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
           >
             Trocar de sala
@@ -210,6 +249,33 @@ export function WatchRoom({ handle }: { handle: string }) {
                 : "Compartilhar tela"}
           </button>
         </div>
+
+        {renaming && (
+          <form
+            onSubmit={handleRenameSubmit}
+            className="absolute inset-x-4 top-full z-20 mt-2 rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-950 sm:inset-x-auto sm:right-4 sm:w-72"
+          >
+            <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              Novo nome
+            </label>
+            <input
+              autoFocus
+              value={renameInput}
+              onChange={(e) => setRenameInput(e.target.value)}
+              maxLength={24}
+              placeholder="Ex: Maria"
+              className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+            />
+            {state.nameError && <p className="mt-1 text-xs text-red-500">{state.nameError}</p>}
+            <button
+              type="submit"
+              disabled={!renameInput.trim() || renameInput.trim() === state.name}
+              className="mt-2 w-full rounded-md bg-zinc-950 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+            >
+              Salvar nome
+            </button>
+          </form>
+        )}
 
         {switching && (
           <form
