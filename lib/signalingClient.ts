@@ -144,7 +144,14 @@ class SignalingClient {
     };
 
     ws.onclose = () => {
-      this.setState({ status: "closed", selfId: null, room: null, peers: [] });
+      // Deliberately keep the last-known room/peers instead of blanking
+      // them: the underlying WebRTC connections to those peers are
+      // untouched by a brief signaling hiccup, so wiping the list here
+      // made participants (and their sharing/mic dots) flicker away and
+      // reappear even though their audio/video never actually stopped.
+      // Once we reconnect, a fresh room-state reconciles anything that's
+      // genuinely stale (see the pruning in useRoomMedia's onRoomJoined).
+      this.setState({ status: "closed" });
       this.scheduleReconnect();
     };
 
