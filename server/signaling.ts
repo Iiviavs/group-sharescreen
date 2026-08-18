@@ -141,6 +141,7 @@ registerStatsProvider(() => ({
   rooms: [...rooms.entries()].map(([handle, info]) => ({
     handle,
     peopleCount: realPeopleCount(info),
+    sharingCount: realSharingCount(info),
     isPrivate: isPrivateRoom(handle),
   })),
 }));
@@ -233,6 +234,18 @@ function realPeopleCount(roomInfo: RoomInfo): number {
   let count = 0;
   for (const s of roomInfo.sockets) {
     if (!clients.get(s)?.isModerator) count += 1;
+  }
+  return count;
+}
+
+// Same real-people rule as realPeopleCount, but counting only those actually
+// broadcasting their screen/camera right now (info.sharing), for the
+// sharescreen_room_sharing_screen / sharescreen_sharing_screen_total metrics.
+function realSharingCount(roomInfo: RoomInfo): number {
+  let count = 0;
+  for (const s of roomInfo.sockets) {
+    const client = clients.get(s);
+    if (client && !client.isModerator && client.sharing) count += 1;
   }
   return count;
 }

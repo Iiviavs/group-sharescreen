@@ -9,6 +9,7 @@ collectDefaultMetrics({ register });
 export type RoomStats = {
   handle: string;
   peopleCount: number;
+  sharingCount: number;
   isPrivate: boolean;
 };
 
@@ -80,6 +81,29 @@ new Gauge({
     for (const r of getStats().rooms) {
       if (!r.isPrivate) this.set({ room: r.handle }, r.peopleCount);
     }
+  },
+});
+
+new Gauge({
+  name: "sharescreen_room_sharing_screen",
+  help: "People actively broadcasting their screen/camera, per public room. Private rooms excluded for the same reason as sharescreen_room_people — see sharescreen_sharing_screen_total for the aggregate across all rooms.",
+  labelNames: ["room"],
+  registers: [register],
+  collect() {
+    this.reset();
+    for (const r of getStats().rooms) {
+      if (!r.isPrivate) this.set({ room: r.handle }, r.sharingCount);
+    }
+  },
+});
+
+new Gauge({
+  name: "sharescreen_sharing_screen_total",
+  help: "People actively broadcasting their screen/camera right now, across all rooms (public and private combined)",
+  registers: [register],
+  collect() {
+    const total = getStats().rooms.reduce((sum, r) => sum + r.sharingCount, 0);
+    this.set(total);
   },
 });
 
