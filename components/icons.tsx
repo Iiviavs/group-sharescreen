@@ -134,3 +134,38 @@ export function SpeakerMuteIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+export function NoiseSuppressionIcon({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M2 12h2.5l1.5-6 3 16 3-13 2 3h5" />
+    </svg>
+  );
+}
+
+export function NoiseSuppressionOffIcon({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M2 12h2.5l1.5-6 3 16 3-13 2 3h5" />
+      <line x1="3" y1="3" x2="21" y2="21" />
+    </svg>
+  );
+}

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { signalingClient } from "./signalingClient";
 import { trackEvent } from "./analytics";
 import { ICE_CONFIG } from "./iceConfig";
+import { captureNoiseSuppressedMic, setGraphSuppressionEnabled, type MicNoiseGraph } from "./rnnoise";
 
 type Channel = "screen" | "mic";
 
@@ -427,10 +428,28 @@ export function useRoomMedia(room: string) {
     "Não foi possível iniciar o compartilhamento. Verifique as permissões do navegador."
   );
 
+  // Mirrors noiseSuppressionOn below without going stale inside the capture
+  // closure, which useBroadcastChannel only ever calls once per mic start
+  // (long after a later render could have updated a captured `const`).
+  const noiseSuppressionOnRef = useRef(true);
+  const [noiseSuppressionOn, setNoiseSuppressionOnState] = useState(true);
+  // Non-null only while the mic is active AND RNNoise actually loaded —
+  // used both to reroute the live audio graph on toggle and to tell the UI
+  // whether suppression is really in effect right now.
+  const micGraphRef = useRef<MicNoiseGraph | null>(null);
+  const [noiseSuppressionAvailable, setNoiseSuppressionAvailable] = useState(true);
+
   const mic = useBroadcastChannel(
     "mic",
     room,
-    () => navigator.mediaDevices.getUserMedia({ audio: true }),
+    async () => {
+      const { stream, graph } = await captureNoiseSuppressedMic(noiseSuppressionOnRef.current, () => {
+        micGraphRef.current = null;
+      });
+      micGraphRef.current = graph;
+      setNoiseSuppressionAvailable(graph !== null);
+      return stream;
+    },
     () => Boolean(navigator.mediaDevices?.getUserMedia),
     "Seu navegador não suporta microfone.",
     "Não foi possível ativar o microfone. Verifique a permissão do navegador."
@@ -440,6 +459,14 @@ export function useRoomMedia(room: string) {
     if (mic.active) mic.stop();
     else mic.start();
   }, [mic]);
+
+  const toggleNoiseSuppression = useCallback(() => {
+    const next = !noiseSuppressionOnRef.current;
+    noiseSuppressionOnRef.current = next;
+    setNoiseSuppressionOnState(next);
+    setGraphSuppressionEnabled(micGraphRef.current, next);
+    trackEvent(next ? "noise_suppression_on" : "noise_suppression_off");
+  }, []);
 
   return {
     isSharing: screen.active,
@@ -454,5 +481,11 @@ export function useRoomMedia(room: string) {
     micError: mic.error,
     localMicStream: mic.localStream,
     remoteMicStreams: mic.remoteStreams,
+
+    noiseSuppressionOn,
+    // Only meaningful once the mic has actually started — before that it's
+    // just the pending preference for the next start.
+    noiseSuppressionAvailable,
+    toggleNoiseSuppression,
   };
 }

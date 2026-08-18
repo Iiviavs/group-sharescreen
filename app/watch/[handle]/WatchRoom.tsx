@@ -12,7 +12,14 @@ import { VideoTile } from "@/components/VideoTile";
 import { RemoteAudio } from "@/components/RemoteAudio";
 import { ParticipantRow } from "@/components/ParticipantRow";
 import { ChatPanel } from "@/components/ChatPanel";
-import { MicIcon, MicOffIcon, HeadphonesIcon, HeadphonesOffIcon } from "@/components/icons";
+import {
+  MicIcon,
+  MicOffIcon,
+  HeadphonesIcon,
+  HeadphonesOffIcon,
+  NoiseSuppressionIcon,
+  NoiseSuppressionOffIcon,
+} from "@/components/icons";
 
 const HANDLE_RE = /^[a-zA-Z0-9_-]+$/;
 
@@ -35,6 +42,9 @@ export function WatchRoom({ handle }: { handle: string }) {
     micError,
     localMicStream,
     remoteMicStreams,
+    noiseSuppressionOn,
+    noiseSuppressionAvailable,
+    toggleNoiseSuppression,
   } = useRoomMedia(handle);
 
   const [switching, setSwitching] = useState(false);
@@ -273,6 +283,31 @@ export function WatchRoom({ handle }: { handle: string }) {
             }`}
           >
             {isMicOn ? <MicIcon className="h-5 w-5" /> : <MicOffIcon className="h-5 w-5" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={toggleNoiseSuppression}
+            disabled={isMicOn && !noiseSuppressionAvailable}
+            title={
+              isMicOn && !noiseSuppressionAvailable
+                ? "Supressão de ruído indisponível neste navegador"
+                : noiseSuppressionOn
+                  ? "Desativar supressão de ruído"
+                  : "Ativar supressão de ruído"
+            }
+            aria-label={
+              noiseSuppressionOn ? "Desativar supressão de ruído" : "Ativar supressão de ruído"
+            }
+            className={`rounded-lg p-2 text-white transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              noiseSuppressionOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-zinc-500 hover:bg-zinc-600"
+            }`}
+          >
+            {noiseSuppressionOn ? (
+              <NoiseSuppressionIcon className="h-5 w-5" />
+            ) : (
+              <NoiseSuppressionOffIcon className="h-5 w-5" />
+            )}
           </button>
 
           <button
