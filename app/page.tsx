@@ -6,7 +6,7 @@ import Link from "next/link";
 import { signalingClient } from "@/lib/signalingClient";
 import { useSignaling, useHasStoredName } from "@/lib/useSignaling";
 import { trackEvent } from "@/lib/analytics";
-import { toRoomHandle, fetchPublicRooms } from "@/lib/roomsApi";
+import { toRoomHandle, fetchPeopleOnline } from "@/lib/roomsApi";
 
 const HANDLE_RE = /^[a-zA-Z0-9_-]+$/;
 const PEOPLE_COUNT_POLL_MS = 8000;
@@ -43,9 +43,9 @@ export default function Home() {
 
     async function load() {
       try {
-        const rooms = await fetchPublicRooms(controller.signal);
+        const count = await fetchPeopleOnline(controller.signal);
         if (cancelled) return;
-        setPeopleOnline(rooms.reduce((sum, r) => sum + r.peopleCount, 0));
+        setPeopleOnline(count);
       } catch {
         // Directory unreachable — leave the last known count in place
         // rather than flashing an error over a non-essential counter.

@@ -29,3 +29,12 @@ export async function fetchPublicRooms(signal?: AbortSignal): Promise<PublicRoom
   const data = (await res.json()) as { rooms: PublicRoom[] };
   return data.rooms;
 }
+
+// Total people connected across every room, public and private — the
+// server only ever returns the aggregate count here, never room handles.
+export async function fetchPeopleOnline(signal?: AbortSignal): Promise<number> {
+  const res = await fetch(`${getSignalingHttpBase()}/stats`, { signal });
+  if (!res.ok) throw new Error(`Falha ao carregar estatísticas (status ${res.status})`);
+  const data = (await res.json()) as { peopleOnline: number };
+  return data.peopleOnline;
+}

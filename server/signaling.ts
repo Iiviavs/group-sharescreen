@@ -329,6 +329,16 @@ export function registerSignalingRoutes(app: FastifyInstance, genId: () => strin
     done();
   });
 
+  // Site-wide "people online" counter. Unlike /rooms this includes private
+  // rooms — but only ever returns a single aggregate number, never handles
+  // or peer detail, so it can't be used to discover a private room's
+  // existence the way /admin/rooms can.
+  app.get("/stats", async () => {
+    let peopleOnline = 0;
+    for (const info of rooms.values()) peopleOnline += realPeopleCount(info);
+    return { peopleOnline };
+  });
+
   // Public room directory. Private rooms (handle starts with "priv-") are
   // filtered out here, server-side — the client never receives them, so
   // there's no separate access-control step to forget on the frontend.
