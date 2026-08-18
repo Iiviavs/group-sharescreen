@@ -12,7 +12,7 @@ type ShareSource = "display" | "camera";
 type SignalData = {
   channel?: Channel;
   role?: "broadcaster" | "viewer";
-  kind?: "offer" | "answer" | "ice" | "stop" | "peer-left";
+  kind?: "offer" | "answer" | "ice" | "stop" | "resume" | "peer-left";
   sdp?: RTCSessionDescriptionInit;
   candidate?: RTCIceCandidateInit;
 };
@@ -156,12 +156,53 @@ function useBroadcastChannel(
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<ShareSource | undefined>(undefined);
+  // Peers whose stream WE (as a viewer) deliberately stopped receiving, via
+  // stopWatchingPeer below — kept separate from remoteStreams (which loses
+  // the entry the moment the recvPC closes) so the UI can still render a
+  // "you left this stream" placeholder in that peer's tile slot instead of
+  // the tile just disappearing.
+  const [stoppedPeers, setStoppedPeers] = useState<Set<string>>(new Set());
+  const stoppedPeersRef = useRef(stoppedPeers);
+  useEffect(() => {
+    stoppedPeersRef.current = stoppedPeers;
+  }, [stoppedPeers]);
+  // Peers between resumeWatchingPeer() and their fresh stream actually
+  // arriving — without tracking this separately the tile has nothing to show
+  // for that stretch (not stopped anymore, but remoteStreams has nothing
+  // yet), which used to just make it vanish instead of reading "Retomando...".
+  const [resumingPeers, setResumingPeers] = useState<Set<string>>(new Set());
+  const resumingPeersRef = useRef(resumingPeers);
+  useEffect(() => {
+    resumingPeersRef.current = resumingPeers;
+  }, [resumingPeers]);
   const localStreamRef = useRef<MediaStream | null>(null);
   const sendPCs = useRef<Map<string, RTCPeerConnection>>(new Map());
   const recvPCs = useRef<Map<string, RTCPeerConnection>>(new Map());
   const activeRef = useRef(false);
   const pendingSendCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const pendingRecvCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
+  // Peers who (as viewers of OUR stream) asked us to stop sending — mirrors
+  // stoppedPeers but for the opposite direction. Consulted by the
+  // peer-list-driven reconnect loop below so it doesn't just re-open a sendPC
+  // that was deliberately paused the moment anyone else joins/leaves the room.
+  const viewerPausedPeers = useRef<Set<string>>(new Set());
+
+  const clearStopped = useCallback((peerId: string) => {
+    setStoppedPeers((prev) => {
+      if (!prev.has(peerId)) return prev;
+      const next = new Set(prev);
+      next.delete(peerId);
+      return next;
+    });
+  }, []);
+  const clearResuming = useCallback((peerId: string) => {
+    setResumingPeers((prev) => {
+      if (!prev.has(peerId)) return prev;
+      const next = new Set(prev);
+      next.delete(peerId);
+      return next;
+    });
+  }, []);
   const videoQualityRef = useRef(videoQuality);
   useEffect(() => {
     videoQualityRef.current = videoQuality;
@@ -196,6 +237,51 @@ function useBroadcastChannel(
       removeRemoteStream(peerId);
     },
     [removeRemoteStream]
+  );
+
+  // Called when a peer is genuinely gone (left the room, or stopped sharing
+  // altogether) rather than just paused by us — the placeholder tile has
+  // nothing left to "come back" to, so drop the stopped-by-us marker too.
+  const closeRecvPCFully = useCallback(
+    (peerId: string) => {
+      closeRecvPC(peerId);
+      clearStopped(peerId);
+      clearResuming(peerId);
+    },
+    [closeRecvPC, clearStopped, clearResuming]
+  );
+
+  // Lets a viewer stop receiving one specific peer's stream without touching
+  // anyone else's — closes our recvPC for it (freeing decode/network
+  // resources on our end) and tells that peer to close their matching sendPC
+  // (freeing their upload resources too), instead of just hiding the tile
+  // locally while the connection keeps running in the background.
+  const stopWatchingPeer = useCallback(
+    (peerId: string) => {
+      closeRecvPC(peerId);
+      signalingClient.sendSignal(peerId, { channel, role: "viewer", kind: "stop" });
+      setStoppedPeers((prev) => {
+        if (prev.has(peerId)) return prev;
+        const next = new Set(prev);
+        next.add(peerId);
+        return next;
+      });
+    },
+    [channel, closeRecvPC]
+  );
+
+  const resumeWatchingPeer = useCallback(
+    (peerId: string) => {
+      clearStopped(peerId);
+      setResumingPeers((prev) => {
+        if (prev.has(peerId)) return prev;
+        const next = new Set(prev);
+        next.add(peerId);
+        return next;
+      });
+      signalingClient.sendSignal(peerId, { channel, role: "viewer", kind: "resume" });
+    },
+    [channel, clearStopped]
   );
 
   const openSendPCRef = useRef<(peerId: string) => void>(() => {});
@@ -320,8 +406,13 @@ function useBroadcastChannel(
       pc.close();
     }
     sendPCs.current.clear();
-    if (channel === "mic") signalingClient.setMic(false);
-    else signalingClient.setSharing(false);
+    // A brand-new share later starts clean — mirrors the viewer side, which
+    // has its "stopped watching" marker cleared the moment this "stop"
+    // signal makes closeRecvPCFully run for them (see the onSignal handler
+    // below), since there's no longer a stream to have stopped watching.
+    viewerPausedPeers.current.clear();
+    if (channel === "screen") signalingClient.setSharing(false);
+    else signalingClient.setMic(false);
     trackEvent(`${eventPrefix}_stop`);
   }, [channel, eventPrefix]);
 
@@ -367,6 +458,7 @@ function useBroadcastChannel(
       recvPCs.current.set(peerId, pc);
       pc.ontrack = (e) => {
         setRemoteStreams((prev) => ({ ...prev, [peerId]: e.streams[0] }));
+        clearResuming(peerId);
       };
       pc.onicecandidate = (e) => {
         if (e.candidate) {
@@ -398,7 +490,7 @@ function useBroadcastChannel(
       };
       return pc;
     },
-    [channel, closeRecvPC]
+    [channel, closeRecvPC, clearResuming]
   );
 
   useEffect(() => {
@@ -406,7 +498,8 @@ function useBroadcastChannel(
       const data = rawData as SignalData;
       if (data.kind === "peer-left") {
         closeSendPC(from);
-        closeRecvPC(from);
+        closeRecvPCFully(from);
+        viewerPausedPeers.current.delete(from);
         return;
       }
       if (data.channel !== channel) return;
@@ -461,10 +554,22 @@ function useBroadcastChannel(
             pendingRecvCandidates.current.set(from, queue);
           }
         } else if (data.kind === "stop") {
-          closeRecvPC(from);
+          // The broadcaster stopped sharing entirely — nothing to "come
+          // back" to, so this fully clears the tile rather than leaving a
+          // stopped-by-us placeholder behind.
+          closeRecvPCFully(from);
         }
       } else if (data.role === "viewer") {
-        if (data.kind === "answer" && data.sdp) {
+        if (data.kind === "stop") {
+          // This peer (as a viewer of OUR stream) asked us to stop sending —
+          // free the upload-side connection and remember not to reopen it on
+          // our own until they explicitly ask to resume.
+          viewerPausedPeers.current.add(from);
+          closeSendPC(from);
+        } else if (data.kind === "resume") {
+          viewerPausedPeers.current.delete(from);
+          if (activeRef.current) openSendPC(from);
+        } else if (data.kind === "answer" && data.sdp) {
           const pc = sendPCs.current.get(from);
           pc?.setRemoteDescription(data.sdp)
             .then(async () => {
@@ -493,7 +598,9 @@ function useBroadcastChannel(
     const unsubscribeState = signalingClient.subscribe(() => {
       if (activeRef.current) {
         for (const peer of signalingClient.state.peers) {
-          if (!sendPCs.current.has(peer.id)) openSendPC(peer.id);
+          if (!sendPCs.current.has(peer.id) && !viewerPausedPeers.current.has(peer.id)) {
+            openSendPC(peer.id);
+          }
         }
       }
     });
@@ -511,7 +618,16 @@ function useBroadcastChannel(
         if (!currentIds.has(peerId)) closeSendPC(peerId);
       }
       for (const peerId of [...recvPCs.current.keys()]) {
-        if (!currentIds.has(peerId)) closeRecvPC(peerId);
+        if (!currentIds.has(peerId)) closeRecvPCFully(peerId);
+      }
+      for (const peerId of [...stoppedPeersRef.current]) {
+        if (!currentIds.has(peerId)) clearStopped(peerId);
+      }
+      for (const peerId of [...resumingPeersRef.current]) {
+        if (!currentIds.has(peerId)) clearResuming(peerId);
+      }
+      for (const peerId of [...viewerPausedPeers.current]) {
+        if (!currentIds.has(peerId)) viewerPausedPeers.current.delete(peerId);
       }
 
       // The server has a fresh entry with sharing/mic reset to false —
@@ -527,19 +643,44 @@ function useBroadcastChannel(
       unsubscribeState();
       unsubscribeRoomJoined();
     };
-  }, [channel, openRecvPC, openSendPC, closeSendPC, closeRecvPC]);
+  }, [
+    channel,
+    openRecvPC,
+    openSendPC,
+    closeSendPC,
+    closeRecvPC,
+    closeRecvPCFully,
+    clearStopped,
+    clearResuming,
+  ]);
 
   useEffect(() => {
     const pcs = recvPCs.current;
+    const pausedPeers = viewerPausedPeers.current;
     return () => {
       stop();
       for (const pc of pcs.values()) pc.close();
       pcs.clear();
       setRemoteStreams({});
+      setStoppedPeers(new Set());
+      setResumingPeers(new Set());
+      pausedPeers.clear();
     };
   }, [room, stop]);
 
-  return { active, start, stop, localStream, remoteStreams, error, source };
+  return {
+    active,
+    start,
+    stop,
+    localStream,
+    remoteStreams,
+    error,
+    source,
+    stoppedPeers,
+    resumingPeers,
+    stopWatchingPeer,
+    resumeWatchingPeer,
+  };
 }
 
 function hasDisplayCapture() {
@@ -743,12 +884,10 @@ export function useRoomMedia(room: string) {
     remoteStreams: screen.remoteStreams,
     shareError: screen.error,
     shareSource: screen.source,
-    isCameraSharing: camera.active,
-    startCameraShare: camera.start,
-    stopCameraShare: camera.stop,
-    localCameraStream: camera.localStream,
-    remoteCameraStreams: camera.remoteStreams,
-    cameraShareError: camera.error,
+    stoppedPeers: screen.stoppedPeers,
+    resumingPeers: screen.resumingPeers,
+    stopWatchingPeer: screen.stopWatchingPeer,
+    resumeWatchingPeer: screen.resumeWatchingPeer,
     shareResolution,
     setShareResolution,
     shareFps,

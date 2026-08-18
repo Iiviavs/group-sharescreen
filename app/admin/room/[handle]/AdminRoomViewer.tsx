@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAdminToken, adminLogout } from "@/lib/adminApi";
 import { useAdminRoomViewer } from "@/lib/useAdminRoomViewer";
 import { isPrivateRoomHandle } from "@/lib/roomsApi";
-import { VideoTile } from "@/components/VideoTile";
+import { VideoTile, StoppedPeerTile, ResumingPeerTile } from "@/components/VideoTile";
 import { RemoteAudio } from "@/components/RemoteAudio";
 import { ParticipantRow } from "@/components/ParticipantRow";
 import { ChatPanel } from "@/components/ChatPanel";
@@ -15,8 +15,19 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
   const router = useRouter();
   const token = useAdminToken();
 
-  const { status, error, peers, chatMessages, selfId, screenStreams, micStreams } =
-    useAdminRoomViewer(handle, token);
+  const {
+    status,
+    error,
+    peers,
+    chatMessages,
+    selfId,
+    screenStreams,
+    micStreams,
+    stoppedScreenPeers,
+    resumingScreenPeers,
+    stopWatchingScreenPeer,
+    resumeWatchingScreenPeer,
+  } = useAdminRoomViewer(handle, token);
 
   useEffect(() => {
     if (status !== "unauthorized") return;
@@ -38,7 +49,16 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
   }
 
   const screenEntries = Object.entries(screenStreams);
-  const isSingleTile = screenEntries.length === 1;
+  // Mirrors WatchRoom's placeholder handling: a peer the moderator stopped
+  // watching (or is waiting to resume) has no entry in screenStreams (the
+  // connection is closed to save resources) but still gets a tile slot.
+  const stoppedEntries = peers.filter(
+    (p) => stoppedScreenPeers.has(p.id) && !(p.id in screenStreams)
+  );
+  const resumingEntries = peers.filter(
+    (p) => resumingScreenPeers.has(p.id) && !(p.id in screenStreams)
+  );
+  const isSingleTile = screenEntries.length + stoppedEntries.length + resumingEntries.length === 1;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-zinc-50 dark:bg-black">
@@ -81,7 +101,7 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
 
       <div className="flex min-h-0 flex-1 flex-col gap-6 p-4 lg:flex-row">
         <main className="min-h-0 flex-1 overflow-y-auto">
-          {screenEntries.length === 0 ? (
+          {screenEntries.length === 0 && stoppedEntries.length === 0 && resumingEntries.length === 0 ? (
             <div className="flex h-full min-h-[300px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-300 text-center dark:border-zinc-800">
               <p className="text-zinc-600 dark:text-zinc-400">
                 Ninguém está compartilhando tela nesta sala no momento.
@@ -91,7 +111,11 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
             <div
               className={
                 isSingleTile
-                  ? "h-full min-h-[300px]"
+                  ? // No min-height floor: on a short viewport that floor
+                    // could force this taller than what main actually has,
+                    // which is what pushed the tile past the bottom of the
+                    // screen and forced a scroll.
+                    "h-full"
                   : "grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-3"
               }
             >
@@ -105,9 +129,21 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
                     badge="ao vivo"
                     muted
                     fill={isSingleTile}
+                    onStopWatching={() => stopWatchingScreenPeer(peerId)}
                   />
                 );
               })}
+              {stoppedEntries.map((peer) => (
+                <StoppedPeerTile
+                  key={peer.id}
+                  label={peer.name}
+                  fill={isSingleTile}
+                  onResume={() => resumeWatchingScreenPeer(peer.id)}
+                />
+              ))}
+              {resumingEntries.map((peer) => (
+                <ResumingPeerTile key={peer.id} fill={isSingleTile} />
+              ))}
             </div>
           )}
         </main>

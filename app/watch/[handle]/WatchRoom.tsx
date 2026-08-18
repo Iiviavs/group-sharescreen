@@ -14,7 +14,7 @@ import {
 } from "@/lib/useRoomMedia";
 import { trackEvent } from "@/lib/analytics";
 import { toRoomHandle, isPrivateRoomHandle } from "@/lib/roomsApi";
-import { VideoTile } from "@/components/VideoTile";
+import { VideoTile, StoppedPeerTile, ResumingPeerTile } from "@/components/VideoTile";
 import { RemoteAudio } from "@/components/RemoteAudio";
 import { ParticipantRow } from "@/components/ParticipantRow";
 import { ChatPanel } from "@/components/ChatPanel";
@@ -44,6 +44,10 @@ export function WatchRoom({ handle }: { handle: string }) {
     stopShare,
     localStream,
     remoteStreams,
+    stoppedPeers,
+    resumingPeers,
+    stopWatchingPeer,
+    resumeWatchingPeer,
     shareError,
     shareSource,
     isCameraSharing,
@@ -252,16 +256,27 @@ export function WatchRoom({ handle }: { handle: string }) {
   // than never added, so this is the one place that has to remember it.
   const visiblePeers = state.peers.filter((p) => p.role !== "moderator");
   const peerCount = visiblePeers.length + (state.name ? 1 : 0);
-  const remoteEntries = [
-    ...Object.entries(remoteStreams).map(([peerId, stream]) => ({ peerId, stream, source: "tela" })),
-    ...Object.entries(remoteCameraStreams).map(([peerId, stream]) => ({ peerId, stream, source: "câmera" })),
-  ];
-  const remoteScreenEntries = Object.entries(remoteStreams);
-  const nothingToShow = remoteEntries.length === 0 && !isSharing;
+  const remoteEntries = Object.entries(remoteStreams);
+  // A peer we deliberately stopped watching has no entry in remoteStreams
+  // (the underlying connection is closed to save resources — see
+  // stopWatchingPeer), but still gets a tile slot showing a "you left this
+  // transmission" placeholder instead of just vanishing from the grid.
+  const stoppedEntries = visiblePeers.filter((p) => stoppedPeers.has(p.id) && !(p.id in remoteStreams));
+  // Same idea while a resume is in flight — no stream yet, but not "stopped"
+  // anymore either, so it still needs its own tile slot (see ResumingPeerTile).
+  const resumingEntries = visiblePeers.filter(
+    (p) => resumingPeers.has(p.id) && !(p.id in remoteStreams)
+  );
+  const nothingToShow =
+    remoteEntries.length === 0 &&
+    stoppedEntries.length === 0 &&
+    resumingEntries.length === 0 &&
+    !isSharing;
   const tileCount =
-    remoteScreenEntries.length +
-    Object.keys(remoteCameraStreams).filter((peerId) => !remoteStreams[peerId]).length +
-    (localStream ? 1 : localCameraStream ? 1 : 0);
+    remoteEntries.length +
+    stoppedEntries.length +
+    resumingEntries.length +
+    (isSharing && localStream ? 1 : 0);
   const isSingleTile = tileCount === 1;
 
   return (
@@ -660,7 +675,10 @@ export function WatchRoom({ handle }: { handle: string }) {
             <div
               className={
                 isSingleTile
-                  ? "h-full min-h-75"
+                  ? // No min-height floor: on a short viewport that floor could
+                    // force this taller than what main actually has, which is
+                    // what pushed the tile past the bottom and forced a scroll.
+                    "h-full"
                   : "grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-3"
               }
             >
