@@ -13,6 +13,10 @@ export function toRoomHandle(rawHandle: string, isPrivate: boolean): string {
   return isPrivate ? `${PRIVATE_ROOM_PREFIX}${rawHandle}` : rawHandle;
 }
 
+export function isPrivateRoomHandle(handle: string): boolean {
+  return handle.startsWith(PRIVATE_ROOM_PREFIX);
+}
+
 export type PublicRoom = {
   handle: string;
   peopleCount: number;

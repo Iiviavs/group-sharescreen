@@ -7,7 +7,7 @@ import { signalingClient } from "@/lib/signalingClient";
 import { useSignaling, useHasStoredName } from "@/lib/useSignaling";
 import { useRoomMedia, useScreenShareMode } from "@/lib/useRoomMedia";
 import { trackEvent } from "@/lib/analytics";
-import { toRoomHandle } from "@/lib/roomsApi";
+import { toRoomHandle, isPrivateRoomHandle } from "@/lib/roomsApi";
 import { VideoTile } from "@/components/VideoTile";
 import { RemoteAudio } from "@/components/RemoteAudio";
 import { ParticipantRow } from "@/components/ParticipantRow";
@@ -185,6 +185,13 @@ export function WatchRoom({ handle }: { handle: string }) {
             <p className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Sala</p>
             <h1 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">{handle}</h1>
           </div>
+          <span
+            className={`rounded-full px-2.5 py-1 text-xs font-medium text-white ${
+              isPrivateRoomHandle(handle) ? "bg-red-600" : "bg-emerald-600"
+            }`}
+          >
+            {isPrivateRoomHandle(handle) ? "Sala privada" : "Sala pública"}
+          </span>
           <span className="rounded-full bg-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
             {peerCount} {peerCount === 1 ? "pessoa" : "pessoas"}
           </span>
