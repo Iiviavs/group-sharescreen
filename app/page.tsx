@@ -7,7 +7,8 @@ import { signalingClient, getStoredName } from "@/lib/signalingClient";
 import { useSignaling, useHasStoredName } from "@/lib/useSignaling";
 import { trackEvent } from "@/lib/analytics";
 import { toRoomHandle, fetchPeopleOnline } from "@/lib/roomsApi";
-import { useAccountToken, fetchMe, registerAccount, loginAccount, logoutAccount } from "@/lib/accountApi";
+import { useAccountToken } from "@/lib/accountApi";
+import { useAuth } from "@/lib/AuthContext";
 
 const HANDLE_RE = /^[a-zA-Z0-9_-]+$/;
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
@@ -31,6 +32,7 @@ export default function Home() {
   const state = useSignaling();
   const router = useRouter();
   const accountToken = useAccountToken();
+  const { account, loading: resolvingAccount, login, register, logout } = useAuth();
 
   const [peopleOnline, setPeopleOnline] = useState<number | null>(null);
   const [roomInput, setRoomInput] = useState("");
@@ -47,13 +49,6 @@ export default function Home() {
   const [submitting, setSubmitting] = useState(false);
 
   const hasStoredName = useHasStoredName();
-  // Tracks which token the effect below has already resolved (via
-  // accountApi.fetchMe) — while it's behind the current accountToken (or
-  // null, on first load with a token already on disk), we don't yet know
-  // whether to auto-connect as that account, so the guest/create-account
-  // choice stays hidden behind "Reconectando...".
-  const [resolvedToken, setResolvedToken] = useState<string | null>(null);
-  const resolvingAccount = Boolean(accountToken) && resolvedToken !== accountToken;
 
   const registered = Boolean(state.name);
   const isAccount = Boolean(state.account);
@@ -72,32 +67,25 @@ export default function Home() {
 
   // The single place that turns a stored (or freshly obtained, via
   // login/create-account below) account token into an actual signaling
-  // registration — resolves who the token belongs to and connects as that
-  // account's display name. Falls back to any stored guest name if the
-  // token turns out to be invalid/expired (fetchMe clears it itself),
-  // mirroring what signalingClient's own constructor does when there's no
-  // account token at all.
+  // registration — once AuthContext has resolved who the token belongs to,
+  // connects as that account's display name. Falls back to any stored guest
+  // name if the token turned out to be invalid/expired (AuthContext clears
+  // it itself), mirroring what signalingClient's own constructor does when
+  // there's no account token at all. Guarded by a ref (not just the effect
+  // deps) so a later account refresh doesn't re-trigger a register() call
+  // for a token we've already connected with.
+  const registeredForTokenRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!accountToken) return;
-    let cancelled = false;
-    fetchMe()
-      .then((account) => {
-        if (cancelled) return;
-        if (account) {
-          signalingClient.register(account.displayName, accountToken);
-        } else {
-          const storedName = getStoredName();
-          if (storedName) signalingClient.register(storedName);
-        }
-        setResolvedToken(accountToken);
-      })
-      .catch(() => {
-        if (!cancelled) setResolvedToken(accountToken);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [accountToken]);
+    if (!accountToken || resolvingAccount) return;
+    if (registeredForTokenRef.current === accountToken) return;
+    registeredForTokenRef.current = accountToken;
+    if (account) {
+      signalingClient.register(account.displayName, accountToken);
+    } else {
+      const storedName = getStoredName();
+      if (storedName) signalingClient.register(storedName);
+    }
+  }, [accountToken, resolvingAccount, account]);
 
   useEffect(() => {
     let cancelled = false;
@@ -165,10 +153,10 @@ export default function Home() {
     }
     setSubmitting(true);
     try {
-      await registerAccount(trimmedUser, trimmedDisplay, password);
+      await register(trimmedUser, trimmedDisplay, password);
       trackEvent("account_created");
-      // registerAccount stores the new token, which the effect above picks
-      // up and turns into a signaling registration — nothing more to do.
+      // register() stores the new token, which the effect above picks up
+      // and turns into a signaling registration — nothing more to do.
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Falha ao criar conta.");
     } finally {
@@ -182,7 +170,7 @@ export default function Home() {
     if (!username.trim() || !password) return;
     setSubmitting(true);
     try {
-      await loginAccount(username.trim(), password);
+      await login(username.trim(), password);
       trackEvent("account_login");
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Usuário ou senha inválidos.");
@@ -192,7 +180,8 @@ export default function Home() {
   }
 
   function handleLogout() {
-    logoutAccount();
+    logout();
+    registeredForTokenRef.current = null;
     signalingClient.logoutIdentity();
     resetIdentityForm();
   }

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
+import { AuthProvider } from "@/lib/AuthContext";
 import "./globals.css";
 
 const UMAMI_WEBSITE_ID = process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID;
@@ -28,8 +29,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <AnnouncementBanner />
-        {children}
+        <AuthProvider>
+          <AnnouncementBanner />
+          {children}
+        </AuthProvider>
         {UMAMI_WEBSITE_ID && (
           <Script
             src="/api/umami/script.js"
