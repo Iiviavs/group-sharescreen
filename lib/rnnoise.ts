@@ -1,6 +1,9 @@
 "use client";
 
-import { RnnoiseWorkletNode, loadRnnoise } from "@sapphi-red/web-noise-suppressor";
+// Type-only: erased at compile time, so this doesn't pull the runtime module
+// (and its `class ... extends AudioWorkletNode` at module scope, see below)
+// into the server bundle.
+import type { RnnoiseWorkletNode, loadRnnoise as LoadRnnoiseFn } from "@sapphi-red/web-noise-suppressor";
 
 // Static assets copied from node_modules/@sapphi-red/web-noise-suppressor/dist
 // into public/rnnoise — served as plain files so this works regardless of
@@ -14,9 +17,9 @@ const WASM_SIMD_URL = "/rnnoise/rnnoise_simd.wasm";
 // across every mic start in this tab instead of re-downloading it each time.
 let wasmBinaryPromise: Promise<ArrayBuffer> | null = null;
 
-function getRnnoiseWasmBinary(): Promise<ArrayBuffer> {
+function getRnnoiseWasmBinary(loadRnnoise: typeof LoadRnnoiseFn): Promise<ArrayBuffer> {
   if (!wasmBinaryPromise) {
-    wasmBinaryPromise = loadRnnoise({ url: WASM_URL, simdUrl: WASM_SIMD_URL }).catch((err) => {
+    wasmBinaryPromise = loadRnnoise({ url: WASM_URL, simdUrl: WASM_SIMD_URL }).catch((err: unknown) => {
       // Let a later mic start try again instead of permanently remembering
       // this one failure (e.g. a transient network blip on first load).
       wasmBinaryPromise = null;
@@ -58,9 +61,15 @@ export async function captureNoiseSuppressedMic(
   }
 
   try {
+    // Dynamic: this package's classes do `extends AudioWorkletNode` at
+    // module scope, which throws a bare ReferenceError if evaluated on the
+    // server (React SSR still executes "use client" modules' static imports
+    // on the server for the initial render). Importing it here, after the
+    // AudioWorkletNode guard above, means it only ever loads in the browser.
+    const { RnnoiseWorkletNode, loadRnnoise } = await import("@sapphi-red/web-noise-suppressor");
     const audioCtx = new AudioContext();
     await audioCtx.audioWorklet.addModule(WORKLET_URL);
-    const wasmBinary = await getRnnoiseWasmBinary();
+    const wasmBinary = await getRnnoiseWasmBinary(loadRnnoise);
 
     const source = audioCtx.createMediaStreamSource(rawStream);
     const destination = audioCtx.createMediaStreamDestination();
