@@ -133,6 +133,7 @@ export default function Home() {
       trackEvent("account_created");
       // register() stores the new token, which the effect above picks up
       // and turns into a signaling registration — nothing more to do.
+      resetIdentityForm();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Falha ao criar conta.");
     } finally {
@@ -148,6 +149,7 @@ export default function Home() {
     try {
       await login(username.trim(), password);
       trackEvent("account_login");
+      resetIdentityForm();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Usuário ou senha inválidos.");
     } finally {
