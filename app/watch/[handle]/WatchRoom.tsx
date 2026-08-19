@@ -30,7 +30,10 @@ import {
   CheckIcon,
 } from "@/components/icons";
 
-const HANDLE_RE = /^[a-zA-Z0-9_-]+$/;
+// Mirrors server/signaling.ts's HANDLE_RE — must match exactly, or a name
+// this lets through but the server rejects lands the user in a dead room
+// (join fails server-side, but the client's already navigated to it).
+const HANDLE_RE = /^[a-zA-Z0-9_-]{1,32}$/;
 
 export function WatchRoom({ handle }: { handle: string }) {
   const router = useRouter();
@@ -186,15 +189,16 @@ export function WatchRoom({ handle }: { handle: string }) {
   function handleSwitchSubmit(e: FormEvent) {
     e.preventDefault();
     const trimmed = switchInput.trim();
-    if (!HANDLE_RE.test(trimmed)) {
-      setSwitchError("Use apenas letras, números, - e _.");
+    const fullHandle = toRoomHandle(trimmed, switchIsPrivate);
+    if (!HANDLE_RE.test(fullHandle)) {
+      setSwitchError("Use de 1 a 32 letras, números, - e _.");
       return;
     }
     setSwitching(false);
     setSwitchInput("");
     setSwitchError(null);
     trackEvent("room_switch");
-    router.push(`/watch/${toRoomHandle(trimmed, switchIsPrivate)}`);
+    router.push(`/watch/${fullHandle}`);
   }
 
   if (!validHandle) {
