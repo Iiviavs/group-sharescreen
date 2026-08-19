@@ -48,9 +48,18 @@ export default function Home() {
 
   const hasStoredName = useHasStoredName();
 
+  // useAccountToken()/useHasStoredName() briefly report empty/false on the
+  // very first client paint (their useSyncExternalStore server snapshot),
+  // before correcting to the real localStorage-backed value — without this
+  // gate that one frame renders `restoring` as false for a logged-in
+  // account, flashing the "choose name" popups before flipping back.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   const registered = Boolean(state.name);
   const isAccount = Boolean(state.account);
-  const restoring = !registered && (resolvingAccount || (hasStoredName && !state.nameError));
+  const restoring =
+    !mounted || (!registered && (resolvingAccount || (hasStoredName && !state.nameError)));
   const previousNameRef = useRef(state.name);
 
   // Closes the rename form once the name actually changes (success or a

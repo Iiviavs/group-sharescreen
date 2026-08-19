@@ -92,6 +92,13 @@ export function WatchRoom({ handle }: { handle: string }) {
   const [focusedPeerId, setFocusedPeerId] = useState<string | null>(null);
   const previousNameRef = useRef(state.name);
 
+  // Same hydration-flash guard as page.tsx: useAccountToken()/
+  // useHasStoredName() briefly report empty/false on the very first client
+  // paint before correcting to the real localStorage-backed value, which
+  // would otherwise flash the "choose a name" form for a logged-in account.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   // Closes the rename popover once the name actually changes — covers both
   // success (server confirmed the new name) and a plain reconnect, without
   // needing to guess at exact timing.
@@ -148,9 +155,10 @@ export function WatchRoom({ handle }: { handle: string }) {
   // get stuck on this loading state forever instead of showing the ban
   // screen below.
   const restoring =
-    !state.name &&
-    (resolvingAccount || (hasStoredName && !state.nameError)) &&
-    state.status !== "banned";
+    !mounted ||
+    (!state.name &&
+      (resolvingAccount || (hasStoredName && !state.nameError)) &&
+      state.status !== "banned");
 
   useEffect(() => {
     if (!validHandle || !state.name) return;
