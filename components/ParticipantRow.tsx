@@ -1,7 +1,8 @@
 "use client";
 
 import { useSpeaking } from "@/lib/useSpeaking";
-import { MicIcon, MicOffIcon, ScreenIcon, SpeakerIcon, SpeakerMuteIcon } from "./icons";
+import { MicIcon, MicOffIcon, ScreenIcon } from "./icons";
+import { VolumeSlider } from "./VolumeSlider";
 
 export function ParticipantRow({
   name,
@@ -11,6 +12,8 @@ export function ParticipantRow({
   micStream,
   muted = false,
   onToggleMute,
+  volume = 1,
+  onVolumeChange,
 }: {
   name: string;
   isSelf?: boolean;
@@ -19,6 +22,8 @@ export function ParticipantRow({
   micStream?: MediaStream | null;
   muted?: boolean;
   onToggleMute?: () => void;
+  volume?: number;
+  onVolumeChange?: (volume: number) => void;
 }) {
   const speaking = useSpeaking(micOn ? micStream : null);
 
@@ -47,15 +52,16 @@ export function ParticipantRow({
           <MicOffIcon className="h-4 w-4 text-zinc-400 dark:text-zinc-600" />
         )}
         {sharing && <ScreenIcon className="h-4 w-4 text-emerald-500" />}
-        {!isSelf && onToggleMute && (
-          <button
-            type="button"
-            onClick={onToggleMute}
-            title={muted ? "Reativar áudio" : "Silenciar áudio"}
-            className="rounded p-1 transition hover:text-zinc-700 dark:hover:text-zinc-200"
-          >
-            {muted ? <SpeakerMuteIcon className="h-4 w-4" /> : <SpeakerIcon className="h-4 w-4" />}
-          </button>
+        {!isSelf && onVolumeChange && (
+          <VolumeSlider
+            value={volume}
+            label={`Volume do áudio de ${name}`}
+            onChange={onVolumeChange}
+            muted={muted}
+            onToggleMute={onToggleMute}
+            collapseOnIdle
+            className="text-zinc-400 dark:text-zinc-500"
+          />
         )}
       </span>
     </li>

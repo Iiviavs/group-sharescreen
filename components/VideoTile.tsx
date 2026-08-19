@@ -11,6 +11,7 @@ import {
   EyeIcon,
   EyeOffIcon,
 } from "@/components/icons";
+import { VolumeSlider } from "@/components/VolumeSlider";
 
 function noopSubscribe() {
   return () => {};
@@ -28,6 +29,8 @@ export function VideoTile({
   badge,
   muted = false,
   allowUnmute = true,
+  volume,
+  onVolumeChange,
   fill = false,
   onStopWatching,
   onDoubleClick,
@@ -37,6 +40,8 @@ export function VideoTile({
   badge?: string;
   muted?: boolean;
   allowUnmute?: boolean;
+  volume?: number;
+  onVolumeChange?: (volume: number) => void;
   // When true (the lone tile in the room), grow to fill the available
   // space instead of staying locked to a 16:9 card like the grid view.
   fill?: boolean;
@@ -50,17 +55,26 @@ export function VideoTile({
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isMuted, setIsMuted] = useState(muted);
+  const [internalVolume, setInternalVolume] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isPiP, setIsPiP] = useState(false);
+  // Video keeps showing the last frame's black backdrop until the stream
+  // actually has data flowing — surface that gap as a spinner instead of a
+  // blank black tile, and reset it whenever the stream is swapped out.
+  const [isVideoLoading, setIsVideoLoading] = useState(true);
   const pipSupported = useSyncExternalStore(noopSubscribe, getPipSupported, getPipSupportedServer);
 
   useEffect(() => {
+    setIsVideoLoading(true);
     if (videoRef.current) videoRef.current.srcObject = stream;
   }, [stream]);
 
   useEffect(() => {
-    if (videoRef.current) videoRef.current.muted = isMuted;
-  }, [isMuted]);
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = isMuted;
+    video.volume = Math.min(1, Math.max(0, volume ?? internalVolume));
+  }, [internalVolume, isMuted, volume]);
 
   useEffect(() => {
     function onFullscreenChange() {
@@ -109,6 +123,12 @@ export function VideoTile({
     }
   }
 
+  function handleVolumeChange(nextVolume: number) {
+    if (volume === undefined) setInternalVolume(nextVolume);
+    onVolumeChange?.(nextVolume);
+    setIsMuted(nextVolume === 0);
+  }
+
   return (
     <div
       ref={containerRef}
@@ -122,7 +142,18 @@ export function VideoTile({
         fill ? "h-full" : "aspect-video"
       }`}
     >
-      <video ref={videoRef} autoPlay playsInline className="h-full w-full object-contain bg-black" />
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        onLoadedData={() => setIsVideoLoading(false)}
+        className="h-full w-full object-contain bg-black"
+      />
+      {isVideoLoading && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/20 border-t-white/80" />
+        </div>
+      )}
       <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-linear-to-t from-black/85 to-transparent px-3 py-2">
         <span className="truncate text-sm font-medium text-white">{label}</span>
         {badge && (
@@ -132,6 +163,15 @@ export function VideoTile({
         )}
       </div>
       <div className="absolute right-2 top-2 flex flex-wrap items-center justify-end gap-2">
+        {allowUnmute && (
+          <VolumeSlider
+            value={volume ?? internalVolume}
+            label={`Volume da transmissão de ${label}`}
+            onChange={handleVolumeChange}
+            showIcon={false}
+            className="rounded-full bg-black/60 px-2 py-1 text-white"
+          />
+        )}
         {allowUnmute && (
           <button
             type="button"
