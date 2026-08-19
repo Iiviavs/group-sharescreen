@@ -9,7 +9,10 @@ import { trackEvent } from "@/lib/analytics";
 import { toRoomHandle, fetchPeopleOnline } from "@/lib/roomsApi";
 import { useAuth } from "@/lib/AuthContext";
 
-const HANDLE_RE = /^[a-zA-Z0-9_-]+$/;
+// Mirrors server/signaling.ts's HANDLE_RE — must match exactly, or a name
+// this lets through but the server rejects lands the user in a dead room
+// (join fails server-side, but the client's already navigated to it).
+const HANDLE_RE = /^[a-zA-Z0-9_-]{1,32}$/;
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
 const PEOPLE_COUNT_POLL_MS = 8000;
 
@@ -180,12 +183,13 @@ export default function Home() {
   function handleRoomSubmit(e: FormEvent) {
     e.preventDefault();
     const trimmed = roomInput.trim();
-    if (!HANDLE_RE.test(trimmed)) {
-      setRoomError("Use apenas letras, números, - e _.");
+    const fullHandle = toRoomHandle(trimmed, roomIsPrivate);
+    if (!HANDLE_RE.test(fullHandle)) {
+      setRoomError("Use de 1 a 32 letras, números, - e _.");
       return;
     }
     setRoomError(null);
-    router.push(`/watch/${toRoomHandle(trimmed, roomIsPrivate)}`);
+    router.push(`/watch/${fullHandle}`);
   }
 
   return (
