@@ -81,6 +81,8 @@ export function WatchRoom({ handle }: { handle: string }) {
   const [nameInput, setNameInput] = useState("");
   const [micsMuted, setMicsMuted] = useState(false);
   const [mutedPeerIds, setMutedPeerIds] = useState<Set<string>>(new Set());
+  const [peerVolumes, setPeerVolumes] = useState<Record<string, number>>({});
+  const [transmissionVolumes, setTransmissionVolumes] = useState<Record<string, number>>({});
   const [renaming, setRenaming] = useState(false);
   const [renameInput, setRenameInput] = useState("");
   const [qualityOpen, setQualityOpen] = useState(false);
@@ -112,6 +114,14 @@ export function WatchRoom({ handle }: { handle: string }) {
       else next.add(peerId);
       return next;
     });
+  }
+
+  function setPeerVolume(peerId: string, volume: number) {
+    setPeerVolumes((prev) => ({ ...prev, [peerId]: volume }));
+  }
+
+  function setTransmissionVolume(peerId: string, volume: number) {
+    setTransmissionVolumes((prev) => ({ ...prev, [peerId]: volume }));
   }
 
   async function handleCopyLink() {
@@ -677,7 +687,12 @@ export function WatchRoom({ handle }: { handle: string }) {
       )}
 
       {Object.entries(remoteMicStreams).map(([peerId, stream]) => (
-        <RemoteAudio key={peerId} stream={stream} muted={micsMuted || mutedPeerIds.has(peerId)} />
+        <RemoteAudio
+          key={peerId}
+          stream={stream}
+          muted={micsMuted || mutedPeerIds.has(peerId)}
+          volume={peerVolumes[peerId] ?? 1}
+        />
       ))}
 
       <div className="flex min-h-0 flex-1 flex-col gap-6 p-4 lg:flex-row">
@@ -756,6 +771,8 @@ export function WatchRoom({ handle }: { handle: string }) {
                       label={peerName}
                       badge="ao vivo · tela"
                       muted
+                      volume={transmissionVolumes[peerId] ?? 1}
+                      onVolumeChange={(volume) => setTransmissionVolume(peerId, volume)}
                       fill={isSingleTile}
                       onDoubleClick={() => setFocusedPeerId(peerId)}
                     />
@@ -781,6 +798,8 @@ export function WatchRoom({ handle }: { handle: string }) {
                       label={peerName}
                       badge="ao vivo · câmera"
                       muted
+                      volume={transmissionVolumes[peerId] ?? 1}
+                      onVolumeChange={(volume) => setTransmissionVolume(peerId, volume)}
                       fill={isSingleTile}
                       onDoubleClick={() => setFocusedPeerId(peerId)}
                     />
@@ -812,6 +831,8 @@ export function WatchRoom({ handle }: { handle: string }) {
                 micStream={remoteMicStreams[p.id]}
                 muted={micsMuted || mutedPeerIds.has(p.id)}
                 onToggleMute={() => togglePeerMute(p.id)}
+                volume={peerVolumes[p.id] ?? 1}
+                onVolumeChange={(volume) => setPeerVolume(p.id, volume)}
               />
             ))}
           </ul>

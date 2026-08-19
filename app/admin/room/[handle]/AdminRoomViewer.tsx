@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAdminToken, adminLogout } from "@/lib/adminApi";
@@ -14,6 +14,9 @@ import { ChatPanel } from "@/components/ChatPanel";
 export function AdminRoomViewer({ handle }: { handle: string }) {
   const router = useRouter();
   const token = useAdminToken();
+  const [mutedPeerIds, setMutedPeerIds] = useState<Set<string>>(new Set());
+  const [peerVolumes, setPeerVolumes] = useState<Record<string, number>>({});
+  const [transmissionVolumes, setTransmissionVolumes] = useState<Record<string, number>>({});
 
   const {
     status,
@@ -34,6 +37,23 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
     adminLogout();
     router.replace("/admin");
   }, [status, router]);
+
+  function togglePeerMute(peerId: string) {
+    setMutedPeerIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(peerId)) next.delete(peerId);
+      else next.add(peerId);
+      return next;
+    });
+  }
+
+  function setPeerVolume(peerId: string, volume: number) {
+    setPeerVolumes((prev) => ({ ...prev, [peerId]: volume }));
+  }
+
+  function setTransmissionVolume(peerId: string, volume: number) {
+    setTransmissionVolumes((prev) => ({ ...prev, [peerId]: volume }));
+  }
 
   if (!token) {
     return (
@@ -96,7 +116,12 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
       )}
 
       {Object.entries(micStreams).map(([peerId, stream]) => (
-        <RemoteAudio key={peerId} stream={stream} />
+        <RemoteAudio
+          key={peerId}
+          stream={stream}
+          muted={mutedPeerIds.has(peerId)}
+          volume={peerVolumes[peerId] ?? 1}
+        />
       ))}
 
       <div className="flex min-h-0 flex-1 flex-col gap-6 p-4 lg:flex-row">
@@ -128,6 +153,8 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
                     label={peerName}
                     badge="ao vivo"
                     muted
+                    volume={transmissionVolumes[peerId] ?? 1}
+                    onVolumeChange={(volume) => setTransmissionVolume(peerId, volume)}
                     fill={isSingleTile}
                     onStopWatching={() => stopWatchingScreenPeer(peerId)}
                   />
@@ -160,6 +187,10 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
                 micOn={p.mic}
                 sharing={p.sharing}
                 micStream={micStreams[p.id]}
+                muted={mutedPeerIds.has(p.id)}
+                onToggleMute={() => togglePeerMute(p.id)}
+                volume={peerVolumes[p.id] ?? 1}
+                onVolumeChange={(volume) => setPeerVolume(p.id, volume)}
               />
             ))}
             {peers.length === 0 && (
