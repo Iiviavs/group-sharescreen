@@ -820,6 +820,7 @@ export function WatchRoom({ handle }: { handle: string }) {
             messages={state.chatMessages}
             selfId={state.selfId}
             onSend={(text) => signalingClient.sendChatMessage(text)}
+            onSendGif={(url) => signalingClient.sendGif(url)}
           />
         </aside>
       </div>

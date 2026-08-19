@@ -2,6 +2,8 @@
 
 import { useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import type { ChatMessage } from "@/lib/signalingClient";
+import type { GifResult } from "@/app/api/giphy/search/route";
+import { GifPicker } from "@/components/GifPicker";
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
@@ -32,15 +34,19 @@ export function ChatPanel({
   messages,
   selfId,
   onSend,
+  onSendGif,
 }: {
   messages: ChatMessage[];
   selfId: string | null;
   // Omitted for a read-only viewer (the admin moderation view) — hides the
   // input form instead of sending into a room the viewer isn't a member of.
   onSend?: (text: string) => void;
+  onSendGif?: (url: string) => void;
 }) {
   const [input, setInput] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+  const gifButtonRef = useRef<HTMLButtonElement>(null);
   // Tracks whether we've already jumped to bottom for the current batch of
   // messages, so a room's preloaded history opens scrolled to the bottom
   // (like a real chat) instead of at the top where it first renders.
@@ -71,6 +77,11 @@ export function ChatPanel({
     setInput("");
   }
 
+  function handleGifSelect(gif: GifResult) {
+    setPickerOpen(false);
+    onSendGif?.(gif.url);
+  }
+
   return (
     <div className="mt-4 flex h-72 flex-col overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
       <h2 className="border-b border-zinc-200 px-3 py-2 text-sm font-semibold text-zinc-700 dark:border-zinc-800 dark:text-zinc-300">
@@ -97,7 +108,12 @@ export function ChatPanel({
                   </span>
                   <span className="text-xs text-zinc-400 dark:text-zinc-600">{formatTime(m.ts)}</span>
                 </div>
-                <p className="break-words text-zinc-800 dark:text-zinc-200">{linkifyText(m.text)}</p>
+                {m.kind === "gif" && m.url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={m.url} alt="GIF" className="mt-1 max-h-40 max-w-full rounded-md" />
+                ) : (
+                  <p className="break-words text-zinc-800 dark:text-zinc-200">{linkifyText(m.text)}</p>
+                )}
               </div>
             );
           })
@@ -105,7 +121,29 @@ export function ChatPanel({
       </div>
 
       {onSend && (
-        <form onSubmit={handleSubmit} className="flex gap-2 border-t border-zinc-200 p-2 dark:border-zinc-800">
+        <form
+          onSubmit={handleSubmit}
+          className="flex gap-2 border-t border-zinc-200 p-2 dark:border-zinc-800"
+        >
+          {pickerOpen && (
+            <GifPicker
+              anchorRef={gifButtonRef}
+              onSelect={handleGifSelect}
+              onClose={() => setPickerOpen(false)}
+            />
+          )}
+          {onSendGif && (
+            <button
+              ref={gifButtonRef}
+              type="button"
+              onClick={() => setPickerOpen((open) => !open)}
+              aria-label="Adicionar GIF"
+              aria-expanded={pickerOpen}
+              className="shrink-0 rounded-md border border-zinc-300 px-2.5 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              GIF
+            </button>
+          )}
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}

@@ -166,7 +166,9 @@ class AdminSignalingClient {
           id: msg.id as string,
           from: msg.from as string,
           name: msg.name as string,
-          text: msg.text as string,
+          kind: msg.kind === "gif" ? "gif" : "text",
+          text: (msg.text as string) ?? "",
+          url: typeof msg.url === "string" ? msg.url : undefined,
           ts: msg.ts as number,
         };
         this.setState({ chatMessages: [...this.state.chatMessages, chatMessage] });

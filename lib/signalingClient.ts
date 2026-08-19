@@ -21,7 +21,11 @@ export type ChatMessage = {
   id: string;
   from: string;
   name: string;
+  // Missing/anything other than "gif" (including messages persisted before
+  // this field existed) renders as plain text.
+  kind?: "text" | "gif";
   text: string;
+  url?: string;
   ts: number;
 };
 
@@ -317,7 +321,9 @@ class SignalingClient {
           id: msg.id as string,
           from: msg.from as string,
           name: msg.name as string,
-          text: msg.text as string,
+          kind: msg.kind === "gif" ? "gif" : "text",
+          text: (msg.text as string) ?? "",
+          url: typeof msg.url === "string" ? msg.url : undefined,
           ts: msg.ts as number,
         };
         const next = [...this.state.chatMessages, chatMessage];
@@ -373,6 +379,12 @@ class SignalingClient {
     const trimmed = text.trim();
     if (!trimmed) return;
     this.rawSend({ type: "chat", text: trimmed });
+  }
+
+  sendGif(url: string) {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+    this.rawSend({ type: "chat", kind: "gif", url: trimmed });
   }
 }
 
