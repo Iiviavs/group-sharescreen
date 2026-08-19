@@ -201,7 +201,7 @@ export default function Home() {
           GoLive
         </h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Compartilhe sua tela com quem estiver na mesma sala, com ou sem cadastro.
+          Compartilhe sua tela com quem estiver na mesma sala, sem cadastro.
         </p>
         <Link href="/rooms" className={`mt-3 inline-block ${linkButtonClass}`}>
           Ver salas públicas ativas
