@@ -109,7 +109,7 @@ export function ChatPanel({
                       isSelf ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-700 dark:text-zinc-300"
                     }`}
                   >
-                    {isSelf ? "Você" : m.name}
+                    {m.name}
                   </span>
                   <span className="text-xs text-zinc-400 dark:text-zinc-600">{formatTime(m.ts)}</span>
                 </div>
