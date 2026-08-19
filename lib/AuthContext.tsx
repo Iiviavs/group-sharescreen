@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -18,6 +19,7 @@ import {
   registerAccount,
   logoutAccount,
 } from "./accountApi";
+import { signalingClient, getStoredName } from "./signalingClient";
 
 type AuthContextValue = {
   // The logged-in account, or null once resolved to "no account" (guest, no
@@ -88,16 +90,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  // Turns a stored (or freshly obtained, via login()/register() above)
+  // account token into an actual signaling registration — lives here rather
+  // than in any one page so it also fires on a direct link straight into a
+  // room, or a reload of one, not just when the home page happens to mount
+  // first (it used to live only there, which left a logged-in account stuck
+  // on "Reconectando..." forever on any other route: signalingClient's own
+  // constructor deliberately skips auto-registering when an account token
+  // is present, expecting something else to resolve it — see its comment).
+  // Also reset on logout so a later login re-registers instead of being
+  // skipped as "already done" for a token that's no longer current.
+  const registeredForTokenRef = useRef<string | null>(null);
+
   const logout = useCallback(() => {
     logoutAccount();
     setAccount(null);
     setResolvedToken(null);
+    registeredForTokenRef.current = null;
+    signalingClient.logoutIdentity();
   }, []);
 
   // Only trust `account` once it was resolved for the token currently on
   // disk — otherwise it's either empty or leftover from a prior token.
   const resolvedAccount = accountToken && resolvedToken === accountToken ? account : null;
   const loading = Boolean(accountToken) && resolvedToken !== accountToken;
+
+  // Falls back to any stored guest name if the token turned out to be
+  // invalid/expired, mirroring what signalingClient's own constructor does
+  // when there's no token at all. Guarded by the ref above (not just the
+  // effect deps) so a later account refresh doesn't re-trigger a register()
+  // call for a token already connected with.
+  useEffect(() => {
+    if (!accountToken || loading) return;
+    if (registeredForTokenRef.current === accountToken) return;
+    registeredForTokenRef.current = accountToken;
+    if (resolvedAccount) {
+      signalingClient.register(resolvedAccount.displayName, accountToken);
+    } else {
+      const storedName = getStoredName();
+      if (storedName) signalingClient.register(storedName);
+    }
+  }, [accountToken, loading, resolvedAccount]);
 
   const value = useMemo<AuthContextValue>(
     () => ({ account: resolvedAccount, loading, login, register, logout, refresh }),

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signalingClient } from "@/lib/signalingClient";
 import { useSignaling, useHasStoredName } from "@/lib/useSignaling";
+import { useAuth } from "@/lib/AuthContext";
 import {
   useRoomMedia,
   useScreenShareMode,
@@ -35,6 +36,7 @@ export function WatchRoom({ handle }: { handle: string }) {
   const router = useRouter();
   const state = useSignaling();
   const hasStoredName = useHasStoredName();
+  const { loading: resolvingAccount } = useAuth();
   const validHandle = HANDLE_RE.test(handle);
   const screenShareMode = useScreenShareMode();
 
@@ -136,12 +138,19 @@ export function WatchRoom({ handle }: { handle: string }) {
     }
   }
 
-  // A stored name means the client is still (re)connecting/registering
-  // after a page reload — show a loading state instead of asking again.
-  // Excludes "banned": that connection attempt already resolved (rejected),
-  // so it's not actually still restoring and would otherwise get stuck on
-  // this loading state forever instead of showing the ban screen below.
-  const restoring = !state.name && hasStoredName && !state.nameError && state.status !== "banned";
+  // A stored guest name, or an account token still being resolved (see
+  // AuthContext's registration effect — it's what turns that resolved
+  // account into a signalingClient.register() call, including on a direct
+  // link straight into a room like this one), means the client is still
+  // (re)connecting/registering — show a loading state instead of asking
+  // again. Excludes "banned": that connection attempt already resolved
+  // (rejected), so it's not actually still restoring and would otherwise
+  // get stuck on this loading state forever instead of showing the ban
+  // screen below.
+  const restoring =
+    !state.name &&
+    (resolvingAccount || (hasStoredName && !state.nameError)) &&
+    state.status !== "banned";
 
   useEffect(() => {
     if (!validHandle || !state.name) return;

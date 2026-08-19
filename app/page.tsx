@@ -3,11 +3,10 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { signalingClient, getStoredName } from "@/lib/signalingClient";
+import { signalingClient } from "@/lib/signalingClient";
 import { useSignaling, useHasStoredName } from "@/lib/useSignaling";
 import { trackEvent } from "@/lib/analytics";
 import { toRoomHandle, fetchPeopleOnline } from "@/lib/roomsApi";
-import { useAccountToken } from "@/lib/accountApi";
 import { useAuth } from "@/lib/AuthContext";
 
 const HANDLE_RE = /^[a-zA-Z0-9_-]+$/;
@@ -31,8 +30,7 @@ type IdentityMode = "landing" | "guest" | "create" | "login";
 export default function Home() {
   const state = useSignaling();
   const router = useRouter();
-  const accountToken = useAccountToken();
-  const { account, loading: resolvingAccount, login, register, logout } = useAuth();
+  const { loading: resolvingAccount, login, register, logout } = useAuth();
 
   const [peopleOnline, setPeopleOnline] = useState<number | null>(null);
   const [roomInput, setRoomInput] = useState("");
@@ -64,28 +62,6 @@ export default function Home() {
     }
     previousNameRef.current = state.name;
   }, [state.name, changingName]);
-
-  // The single place that turns a stored (or freshly obtained, via
-  // login/create-account below) account token into an actual signaling
-  // registration — once AuthContext has resolved who the token belongs to,
-  // connects as that account's display name. Falls back to any stored guest
-  // name if the token turned out to be invalid/expired (AuthContext clears
-  // it itself), mirroring what signalingClient's own constructor does when
-  // there's no account token at all. Guarded by a ref (not just the effect
-  // deps) so a later account refresh doesn't re-trigger a register() call
-  // for a token we've already connected with.
-  const registeredForTokenRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!accountToken || resolvingAccount) return;
-    if (registeredForTokenRef.current === accountToken) return;
-    registeredForTokenRef.current = accountToken;
-    if (account) {
-      signalingClient.register(account.displayName, accountToken);
-    } else {
-      const storedName = getStoredName();
-      if (storedName) signalingClient.register(storedName);
-    }
-  }, [accountToken, resolvingAccount, account]);
 
   useEffect(() => {
     let cancelled = false;
@@ -181,8 +157,6 @@ export default function Home() {
 
   function handleLogout() {
     logout();
-    registeredForTokenRef.current = null;
-    signalingClient.logoutIdentity();
     resetIdentityForm();
   }
 
