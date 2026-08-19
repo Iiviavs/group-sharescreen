@@ -418,16 +418,28 @@ export default function Home() {
                   Sair
                 </button>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNameInput(state.name ?? "");
-                    setChangingName(true);
-                  }}
-                  className="font-medium underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-300"
-                >
-                  Trocar
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNameInput(state.name ?? "");
+                      setChangingName(true);
+                    }}
+                    className="font-medium underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-300"
+                  >
+                    Trocar
+                  </button>{" "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("create");
+                      setFormError(null);
+                    }}
+                    className="font-medium underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-300"
+                  >
+                    Criar conta
+                  </button>
+                </>
               )}
             </p>
             <label htmlFor="room" className={labelClass}>
