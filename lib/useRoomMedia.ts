@@ -6,7 +6,7 @@ import { trackEvent } from "./analytics";
 import { ICE_CONFIG } from "./iceConfig";
 import { captureNoiseSuppressedMic, setGraphSuppressionEnabled, type MicNoiseGraph } from "./rnnoise";
 
-type Channel = "screen" | "mic";
+type Channel = "screen" | "camera" | "mic";
 type ShareSource = "display" | "camera";
 
 type SignalData = {
@@ -150,7 +150,7 @@ function useBroadcastChannel(
   // current sender get updated in place instead of requiring a restart.
   videoQuality?: QualityPreset
 ) {
-  const eventPrefix = channel === "screen" ? "screen_share" : "mic";
+  const eventPrefix = channel === "mic" ? "mic" : `${channel}_share`;
   const [active, setActive] = useState(false);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
@@ -430,8 +430,8 @@ function useBroadcastChannel(
       setLocalStream(stream);
       setActive(true);
       setSource(requestedSource);
-      if (channel === "screen") signalingClient.setSharing(true);
-      else signalingClient.setMic(true);
+      if (channel === "mic") signalingClient.setMic(true);
+      else signalingClient.setSharing(true);
       trackEvent(`${eventPrefix}_start`);
       stream.getTracks().forEach((track) => track.addEventListener("ended", () => stop()));
       for (const peer of signalingClient.state.peers) {
@@ -634,8 +634,8 @@ function useBroadcastChannel(
       // re-announce our actual state so other peers' indicators don't go
       // stale.
       if (!activeRef.current) return;
-      if (channel === "screen") signalingClient.setSharing(true);
-      else signalingClient.setMic(true);
+      if (channel === "mic") signalingClient.setMic(true);
+      else signalingClient.setSharing(true);
     });
 
     return () => {
@@ -809,6 +809,33 @@ export function useRoomMedia(room: string) {
     screenQualityPreset
   );
 
+  const camera = useBroadcastChannel(
+    "camera",
+    room,
+    () => {
+      const effectiveResolution = smartQualityEnabledRef.current
+        ? throttledResolution(shareResolutionRef.current, peerCountRef.current)
+        : shareResolutionRef.current;
+      const dims = RESOLUTION_DIMENSIONS[effectiveResolution];
+      return navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: dims.width },
+          height: { ideal: dims.height },
+          frameRate: { ideal: shareFpsRef.current },
+          facingMode: "user",
+        },
+      });
+    },
+    () => hasCameraCapture(),
+    "Seu navegador não suporta câmera.",
+    "Não foi possível iniciar a câmera. Verifique as permissões do navegador.",
+    screenQualityPreset
+  );
+
+  useEffect(() => {
+    signalingClient.setSharing(screen.active || camera.active);
+  }, [screen.active, camera.active]);
+
   // Mirrors noiseSuppressionOn below without going stale inside the capture
   // closure, which useBroadcastChannel only ever calls once per mic start
   // (long after a later render could have updated a captured `const`).
@@ -850,13 +877,19 @@ export function useRoomMedia(room: string) {
   }, []);
 
   return {
-    isSharing: screen.active,
+    isSharing: screen.active || camera.active,
     startShare: screen.start,
     stopShare: screen.stop,
     localStream: screen.localStream,
     remoteStreams: screen.remoteStreams,
     shareError: screen.error,
     shareSource: screen.source,
+    isCameraSharing: camera.active,
+    startCameraShare: camera.start,
+    stopCameraShare: camera.stop,
+    localCameraStream: camera.localStream,
+    remoteCameraStreams: camera.remoteStreams,
+    cameraShareError: camera.error,
     stoppedPeers: screen.stoppedPeers,
     resumingPeers: screen.resumingPeers,
     stopWatchingPeer: screen.stopWatchingPeer,

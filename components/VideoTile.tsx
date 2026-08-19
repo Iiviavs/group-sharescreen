@@ -30,6 +30,7 @@ export function VideoTile({
   allowUnmute = true,
   fill = false,
   onStopWatching,
+  onDoubleClick,
 }: {
   stream: MediaStream;
   label: string;
@@ -44,6 +45,7 @@ export function VideoTile({
   // else's tile. Omitted for the local "Você" tile, which has nothing to
   // stop watching.
   onStopWatching?: () => void;
+  onDoubleClick?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -110,6 +112,7 @@ export function VideoTile({
   return (
     <div
       ref={containerRef}
+      onDoubleClick={onDoubleClick}
       className={`relative w-full overflow-hidden rounded-xl border border-white/10 bg-black ${
         // No min-height floor here: on a short viewport a fixed floor could
         // force this box taller than the space main actually has, which is
@@ -120,7 +123,7 @@ export function VideoTile({
       }`}
     >
       <video ref={videoRef} autoPlay playsInline className="h-full w-full object-contain bg-black" />
-      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-black/85 to-transparent px-3 py-2">
+      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-linear-to-t from-black/85 to-transparent px-3 py-2">
         <span className="truncate text-sm font-medium text-white">{label}</span>
         {badge && (
           <span className="rounded-full bg-red-500/90 px-2 py-0.5 text-xs font-semibold text-white">
