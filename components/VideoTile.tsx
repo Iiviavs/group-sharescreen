@@ -11,6 +11,7 @@ import {
   EyeIcon,
   EyeOffIcon,
 } from "@/components/icons";
+import { VolumeSlider } from "@/components/VolumeSlider";
 
 function noopSubscribe() {
   return () => {};
@@ -28,6 +29,8 @@ export function VideoTile({
   badge,
   muted = false,
   allowUnmute = true,
+  volume,
+  onVolumeChange,
   fill = false,
   onStopWatching,
   onDoubleClick,
@@ -37,6 +40,8 @@ export function VideoTile({
   badge?: string;
   muted?: boolean;
   allowUnmute?: boolean;
+  volume?: number;
+  onVolumeChange?: (volume: number) => void;
   // When true (the lone tile in the room), grow to fill the available
   // space instead of staying locked to a 16:9 card like the grid view.
   fill?: boolean;
@@ -50,6 +55,7 @@ export function VideoTile({
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isMuted, setIsMuted] = useState(muted);
+  const [internalVolume, setInternalVolume] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isPiP, setIsPiP] = useState(false);
   const pipSupported = useSyncExternalStore(noopSubscribe, getPipSupported, getPipSupportedServer);
@@ -59,8 +65,11 @@ export function VideoTile({
   }, [stream]);
 
   useEffect(() => {
-    if (videoRef.current) videoRef.current.muted = isMuted;
-  }, [isMuted]);
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = isMuted;
+    video.volume = Math.min(1, Math.max(0, volume ?? internalVolume));
+  }, [internalVolume, isMuted, volume]);
 
   useEffect(() => {
     function onFullscreenChange() {
@@ -109,6 +118,12 @@ export function VideoTile({
     }
   }
 
+  function handleVolumeChange(nextVolume: number) {
+    if (volume === undefined) setInternalVolume(nextVolume);
+    onVolumeChange?.(nextVolume);
+    setIsMuted(nextVolume === 0);
+  }
+
   return (
     <div
       ref={containerRef}
@@ -132,6 +147,15 @@ export function VideoTile({
         )}
       </div>
       <div className="absolute right-2 top-2 flex flex-wrap items-center justify-end gap-2">
+        {allowUnmute && (
+          <VolumeSlider
+            value={volume ?? internalVolume}
+            label={`Volume da transmissão de ${label}`}
+            onChange={handleVolumeChange}
+            showIcon={false}
+            className="rounded-full bg-black/60 px-2 py-1 text-white"
+          />
+        )}
         {allowUnmute && (
           <button
             type="button"

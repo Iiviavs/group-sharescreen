@@ -2,7 +2,15 @@
 
 import { useEffect, useRef } from "react";
 
-export function RemoteAudio({ stream, muted = false }: { stream: MediaStream; muted?: boolean }) {
+export function RemoteAudio({
+  stream,
+  muted = false,
+  volume = 1,
+}: {
+  stream: MediaStream;
+  muted?: boolean;
+  volume?: number;
+}) {
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
@@ -10,8 +18,11 @@ export function RemoteAudio({ stream, muted = false }: { stream: MediaStream; mu
   }, [stream]);
 
   useEffect(() => {
-    if (audioRef.current) audioRef.current.muted = muted;
-  }, [muted]);
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.muted = muted;
+    audio.volume = Math.min(1, Math.max(0, volume));
+  }, [muted, volume]);
 
   return <audio ref={audioRef} autoPlay className="sr-only" />;
 }
