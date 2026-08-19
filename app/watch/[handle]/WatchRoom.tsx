@@ -237,7 +237,11 @@ export function WatchRoom({ handle }: { handle: string }) {
           Você foi banido deste site.
         </p>
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Se você acredita que isso é um engano, entre em contato com um moderador.
+          Se você acredita que isso é um engano, abra um ticket em <a
+            href="https://discord.gg/nemtudo"
+            target="_blank"
+            className="text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-500 dark:hover:text-blue-400"
+          >discord.gg/nemtudo</a>
         </p>
       </div>
     );
@@ -338,9 +342,8 @@ export function WatchRoom({ handle }: { handle: string }) {
             <h1 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">{handle}</h1>
           </div>
           <span
-            className={`rounded-full px-2.5 py-1 text-xs font-medium text-white ${
-              isPrivateRoomHandle(handle) ? "bg-red-600" : "bg-emerald-600"
-            }`}
+            className={`rounded-full px-2.5 py-1 text-xs font-medium text-white ${isPrivateRoomHandle(handle) ? "bg-red-600" : "bg-emerald-600"
+              }`}
           >
             {isPrivateRoomHandle(handle) ? "Sala privada" : "Sala pública"}
           </span>
@@ -361,11 +364,10 @@ export function WatchRoom({ handle }: { handle: string }) {
           <button
             type="button"
             onClick={handleCopyLink}
-            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${
-              linkCopied
-                ? "border-emerald-600 text-emerald-600 dark:border-emerald-500 dark:text-emerald-500"
-                : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-            }`}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${linkCopied
+              ? "border-emerald-600 text-emerald-600 dark:border-emerald-500 dark:text-emerald-500"
+              : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+              }`}
           >
             {linkCopied ? (
               <CheckIcon className="h-4 w-4" />
@@ -407,9 +409,8 @@ export function WatchRoom({ handle }: { handle: string }) {
             onClick={toggleMic}
             title={isMicOn ? "Desativar microfone" : "Ativar microfone"}
             aria-label={isMicOn ? "Desativar microfone" : "Ativar microfone"}
-            className={`rounded-lg p-2 text-white transition ${
-              isMicOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
-            }`}
+            className={`rounded-lg p-2 text-white transition ${isMicOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
+              }`}
           >
             {isMicOn ? <MicIcon className="h-5 w-5" /> : <MicOffIcon className="h-5 w-5" />}
           </button>
@@ -428,9 +429,8 @@ export function WatchRoom({ handle }: { handle: string }) {
             aria-label={
               noiseSuppressionOn ? "Desativar supressão de ruído" : "Ativar supressão de ruído"
             }
-            className={`rounded-lg p-2 text-white transition disabled:cursor-not-allowed disabled:opacity-50 ${
-              noiseSuppressionOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-zinc-500 hover:bg-zinc-600"
-            }`}
+            className={`rounded-lg p-2 text-white transition disabled:cursor-not-allowed disabled:opacity-50 ${noiseSuppressionOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-zinc-500 hover:bg-zinc-600"
+              }`}
           >
             {noiseSuppressionOn ? (
               <NoiseSuppressionIcon className="h-5 w-5" />
@@ -444,9 +444,8 @@ export function WatchRoom({ handle }: { handle: string }) {
             onClick={toggleMicsMuted}
             title={micsMuted ? "Reativar microfones" : "Silenciar microfones"}
             aria-label={micsMuted ? "Reativar microfones" : "Silenciar microfones"}
-            className={`rounded-lg p-2 text-white transition ${
-              micsMuted ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
-            }`}
+            className={`rounded-lg p-2 text-white transition ${micsMuted ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
+              }`}
           >
             {micsMuted ? (
               <HeadphonesOffIcon className="h-5 w-5" />
@@ -745,71 +744,71 @@ export function WatchRoom({ handle }: { handle: string }) {
                     : "grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-3"
                 }
               >
-              {(!focusedPeerId || focusedPeerId === "self") && isSharing && localStream ? (
-                <div className={isSingleTile ? "relative h-full min-h-75" : "relative"}>
-                  <VideoTile
-                    stream={localStream}
-                    label="Você"
-                    badge={shareSource === "camera" ? "câmera" : "transmitindo"}
-                    muted
-                    allowUnmute={false}
-                    fill={isSingleTile}
-                    onDoubleClick={() => setFocusedPeerId("self")}
-                  />
-                  {localCameraStream && (
-                    <div className="absolute bottom-3 right-3 z-10 w-2/5 min-w-40 max-w-70 sm:w-1/4">
-                      <VideoTile
-                        stream={localCameraStream}
-                        label="Você"
-                        badge="câmera"
-                        muted
-                        allowUnmute={false}
-                      />
-                    </div>
-                  )}
-                </div>
-              ) : (
-                (!focusedPeerId || focusedPeerId === "self") && localCameraStream && (
-                  <VideoTile
-                    stream={localCameraStream}
-                    label="Você"
-                    badge="câmera"
-                    muted
-                    allowUnmute={false}
-                    fill={isSingleTile}
-                    onDoubleClick={() => setFocusedPeerId("self")}
-                  />
-                )
-              )}
-              {focusedScreenEntries.map(([peerId, stream]) => {
-                const peerName = state.peers.find((p) => p.id === peerId)?.name ?? "Alguém";
-                return (
-                  <div key={`screen-${peerId}`} className={isSingleTile ? "relative h-full min-h-75" : "relative"}>
+                {(!focusedPeerId || focusedPeerId === "self") && isSharing && localStream ? (
+                  <div className={isSingleTile ? "relative h-full min-h-75" : "relative"}>
                     <VideoTile
-                      stream={stream}
-                      label={peerName}
-                      badge="ao vivo · tela"
+                      stream={localStream}
+                      label="Você"
+                      badge={shareSource === "camera" ? "câmera" : "transmitindo"}
                       muted
-                      volume={transmissionVolumes[peerId] ?? 1}
-                      onVolumeChange={(volume) => setTransmissionVolume(peerId, volume)}
+                      allowUnmute={false}
                       fill={isSingleTile}
-                      onStopWatching={() => stopWatchingPeer(peerId)}
-                      onDoubleClick={() => setFocusedPeerId(peerId)}
+                      onDoubleClick={() => setFocusedPeerId("self")}
                     />
-                    {remoteCameraStreams[peerId] && (
+                    {localCameraStream && (
                       <div className="absolute bottom-3 right-3 z-10 w-2/5 min-w-40 max-w-70 sm:w-1/4">
                         <VideoTile
-                          stream={remoteCameraStreams[peerId]}
-                          label={peerName}
-                          badge="ao vivo · câmera"
+                          stream={localCameraStream}
+                          label="Você"
+                          badge="câmera"
                           muted
+                          allowUnmute={false}
                         />
                       </div>
                     )}
                   </div>
-                );
-              })}
-              {focusedCameraOnlyEntries.map(([peerId, stream]) => {
+                ) : (
+                  (!focusedPeerId || focusedPeerId === "self") && localCameraStream && (
+                    <VideoTile
+                      stream={localCameraStream}
+                      label="Você"
+                      badge="câmera"
+                      muted
+                      allowUnmute={false}
+                      fill={isSingleTile}
+                      onDoubleClick={() => setFocusedPeerId("self")}
+                    />
+                  )
+                )}
+                {focusedScreenEntries.map(([peerId, stream]) => {
+                  const peerName = state.peers.find((p) => p.id === peerId)?.name ?? "Alguém";
+                  return (
+                    <div key={`screen-${peerId}`} className={isSingleTile ? "relative h-full min-h-75" : "relative"}>
+                      <VideoTile
+                        stream={stream}
+                        label={peerName}
+                        badge="ao vivo · tela"
+                        muted
+                        volume={transmissionVolumes[peerId] ?? 1}
+                        onVolumeChange={(volume) => setTransmissionVolume(peerId, volume)}
+                        fill={isSingleTile}
+                        onStopWatching={() => stopWatchingPeer(peerId)}
+                        onDoubleClick={() => setFocusedPeerId(peerId)}
+                      />
+                      {remoteCameraStreams[peerId] && (
+                        <div className="absolute bottom-3 right-3 z-10 w-2/5 min-w-40 max-w-70 sm:w-1/4">
+                          <VideoTile
+                            stream={remoteCameraStreams[peerId]}
+                            label={peerName}
+                            badge="ao vivo · câmera"
+                            muted
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {focusedCameraOnlyEntries.map(([peerId, stream]) => {
                   const peerName = state.peers.find((p) => p.id === peerId)?.name ?? "Alguém";
                   return remoteStreams[peerId] ? null : (
                     <VideoTile
@@ -825,17 +824,17 @@ export function WatchRoom({ handle }: { handle: string }) {
                     />
                   );
                 })}
-              {stoppedEntries.map((peer) => (
-                <StoppedPeerTile
-                  key={`stopped-${peer.id}`}
-                  label={peer.name}
-                  fill={isSingleTile}
-                  onResume={() => resumeWatchingPeer(peer.id)}
-                />
-              ))}
-              {resumingEntries.map((peer) => (
-                <ResumingPeerTile key={`resuming-${peer.id}`} fill={isSingleTile} />
-              ))}
+                {stoppedEntries.map((peer) => (
+                  <StoppedPeerTile
+                    key={`stopped-${peer.id}`}
+                    label={peer.name}
+                    fill={isSingleTile}
+                    onResume={() => resumeWatchingPeer(peer.id)}
+                  />
+                ))}
+                {resumingEntries.map((peer) => (
+                  <ResumingPeerTile key={`resuming-${peer.id}`} fill={isSingleTile} />
+                ))}
               </div>
             </>
           )}
