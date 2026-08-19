@@ -7,6 +7,27 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
+const URL_PATTERN = /(https?:\/\/[^\s]+|www\.[^\s]+)/g;
+
+function linkifyText(text: string) {
+  const parts = text.split(URL_PATTERN);
+  return parts.map((part, i) => {
+    if (!part.match(URL_PATTERN)) return part;
+    const href = part.startsWith("www.") ? `https://${part}` : part;
+    return (
+      <a
+        key={i}
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="underline underline-offset-2 hover:text-zinc-950 dark:hover:text-white"
+      >
+        {part}
+      </a>
+    );
+  });
+}
+
 export function ChatPanel({
   messages,
   selfId,
@@ -76,7 +97,7 @@ export function ChatPanel({
                   </span>
                   <span className="text-xs text-zinc-400 dark:text-zinc-600">{formatTime(m.ts)}</span>
                 </div>
-                <p className="break-words text-zinc-800 dark:text-zinc-200">{m.text}</p>
+                <p className="break-words text-zinc-800 dark:text-zinc-200">{linkifyText(m.text)}</p>
               </div>
             );
           })
