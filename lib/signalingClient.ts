@@ -2,6 +2,7 @@
 
 import { trackEvent } from "./analytics";
 import type { Announcement } from "./announcement";
+import { getAccountToken } from "./accountApi";
 
 // `role: "moderator"` marks a moderator silently watching for moderation
 // (see server/signaling.ts's "admin-join") — present in the peer list so
@@ -29,11 +30,19 @@ export type ChatMessage = {
   ts: number;
 };
 
+// Echoed back by the server on "registered" (see server/signaling.ts) when
+// this connection presented a valid account JWT — null for a guest.
+export type RegisteredAccount = {
+  username: string;
+  flags: string[];
+};
+
 export type SignalingState = {
   status: SignalingStatus;
   selfId: string | null;
   name: string | null;
   nameError: string | null;
+  account: RegisteredAccount | null;
   room: string | null;
   peers: PeerInfo[];
   chatMessages: ChatMessage[];
@@ -65,6 +74,7 @@ const initialState: SignalingState = {
   selfId: null,
   name: null,
   nameError: null,
+  account: null,
   room: null,
   peers: [],
   chatMessages: [],
@@ -127,11 +137,21 @@ class SignalingClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
   private desiredName: string | null = null;
+  // The account JWT to (re)send with every "register" — null for a guest.
+  // Kept alongside desiredName so a reconnect re-authenticates the same way
+  // the original register() call did.
+  private desiredToken: string | null = null;
   private desiredRoom: string | null = null;
 
   state: SignalingState = initialState;
 
   constructor() {
+    // A stored account token takes over identity entirely — page.tsx
+    // resolves it to the account's display name (via accountApi.fetchMe)
+    // and calls register(name, token) itself, so auto-registering from the
+    // plain guest name here would just get immediately overwritten (or
+    // rejected as a name reserved by that very account).
+    if (getAccountToken()) return;
     const storedName = getStoredName();
     if (storedName) this.register(storedName);
   }
@@ -174,7 +194,12 @@ class SignalingClient {
       this.reconnectAttempts = 0;
       this.setState({ status: "open" });
       if (this.desiredName) {
-        this.rawSend({ type: "register", name: this.desiredName, clientId: getClientId() });
+        this.rawSend({
+          type: "register",
+          name: this.desiredName,
+          clientId: getClientId(),
+          token: this.desiredToken,
+        });
       }
     };
 
@@ -240,13 +265,25 @@ class SignalingClient {
       case "welcome":
         this.setState({ selfId: msg.id as string });
         break;
-      case "registered":
-        this.setState({ name: msg.name as string, nameError: null, selfId: msg.id as string });
-        setStoredName(msg.name as string);
+      case "registered": {
+        const account = (msg.account as RegisteredAccount | null) ?? null;
+        this.setState({
+          name: msg.name as string,
+          nameError: null,
+          selfId: msg.id as string,
+          account,
+        });
+        // A guest's name is remembered locally so it can be restored on
+        // the next visit; an account's isn't, since accountApi's own
+        // stored token is what drives auto-login next time (see the
+        // constructor above) and re-persisting it here would just leave a
+        // stale guest name behind after a logout.
+        if (!account) setStoredName(msg.name as string);
         setClientId(msg.id as string);
         trackEvent("name_registered");
         if (this.desiredRoom) this.rawSend({ type: "join", room: this.desiredRoom });
         break;
+      }
       case "register-error":
         this.setState({ nameError: msg.message as string });
         // If we already had a confirmed name, this was a rename attempt —
@@ -257,6 +294,7 @@ class SignalingClient {
           this.desiredName = this.state.name;
         } else {
           this.desiredName = null;
+          this.desiredToken = null;
           setStoredName(null);
         }
         trackEvent("name_register_error");
@@ -362,13 +400,34 @@ class SignalingClient {
     }
   }
 
-  register(name: string) {
+  // `token` is an account JWT (see accountApi.ts) — pass it when
+  // registering as a logged-in account so the server can verify the
+  // reserved-name check against the right owner; omit it (or pass
+  // null/undefined) for a plain guest name.
+  register(name: string, token?: string | null) {
     this.desiredName = name;
+    this.desiredToken = token ?? null;
     this.reconnectAttempts = 0;
     this.setState({ nameError: null });
     const wasOpen = this.ws && this.ws.readyState === WebSocket.OPEN;
     this.ensureSocket();
-    if (wasOpen) this.rawSend({ type: "register", name, clientId: getClientId() });
+    if (wasOpen) {
+      this.rawSend({ type: "register", name, clientId: getClientId(), token: this.desiredToken });
+    }
+  }
+
+  // Drops the current identity (guest name or account) entirely and closes
+  // the connection — used when someone logs out of their account, so the
+  // next register() (as a guest, or a different account) starts clean
+  // instead of the old name/room lingering in state.
+  logoutIdentity() {
+    this.desiredName = null;
+    this.desiredToken = null;
+    this.desiredRoom = null;
+    setStoredName(null);
+    this.ws?.close();
+    this.ws = null;
+    this.setState({ ...initialState });
   }
 
   joinRoom(room: string) {

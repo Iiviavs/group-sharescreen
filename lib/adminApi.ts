@@ -66,27 +66,30 @@ export function useAdminToken(): string | null {
   return useSyncExternalStore(subscribeAdminToken, getAdminToken, getAdminTokenServer);
 }
 
+// Admin is no longer a separate Basic-Auth credential — it's just a regular
+// account (see accountApi.ts / server/accountStore.ts) whose flags include
+// "ADMIN", so logging in here goes through the exact same /auth/login the
+// rest of the app uses. The admin token is still kept in its own
+// sessionStorage slot (not accountApi's localStorage one) so a moderator
+// session doesn't silently outlive the tab the way a regular viewer's does.
 export async function adminLogin(user: string, password: string): Promise<void> {
-  const res = await fetch(`${getSignalingHttpBase()}/admin/login`, {
+  const res = await fetch(`${getSignalingHttpBase()}/auth/login`, {
     method: "POST",
-    headers: { Authorization: `Basic ${btoa(`${user}:${password}`)}` },
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: user, password }),
   });
   if (!res.ok) throw new Error("Usuário ou senha inválidos.");
-  const data = (await res.json()) as { token: string };
+  const data = (await res.json()) as { token: string; account: { flags: string[] } };
+  if (!data.account.flags.includes("ADMIN")) {
+    throw new Error("Essa conta não tem permissão de administrador.");
+  }
   setAdminToken(data.token);
 }
 
 export function adminLogout() {
-  const token = getAdminToken();
+  // JWTs are stateless — there's nothing to revoke server-side, so logging
+  // out is just dropping the locally stored token.
   setAdminToken(null);
-  if (!token) return;
-  fetch(`${getSignalingHttpBase()}/admin/logout`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-  }).catch(() => {
-    // ignored - logging out is best-effort; clearing the local token above
-    // already prevents this tab from using it again either way.
-  });
 }
 
 export type AdminRoomPeer = {

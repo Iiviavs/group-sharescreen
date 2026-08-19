@@ -3,29 +3,62 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { signalingClient } from "@/lib/signalingClient";
+import { signalingClient, getStoredName } from "@/lib/signalingClient";
 import { useSignaling, useHasStoredName } from "@/lib/useSignaling";
 import { trackEvent } from "@/lib/analytics";
 import { toRoomHandle, fetchPeopleOnline } from "@/lib/roomsApi";
+import { useAccountToken, fetchMe, registerAccount, loginAccount, logoutAccount } from "@/lib/accountApi";
 
 const HANDLE_RE = /^[a-zA-Z0-9_-]+$/;
+const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
 const PEOPLE_COUNT_POLL_MS = 8000;
+
+const inputClass =
+  "rounded-lg border border-zinc-300 bg-white px-4 py-2.5 text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50";
+const primaryButtonClass =
+  "rounded-lg bg-zinc-950 px-4 py-2.5 font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200";
+const secondaryButtonClass =
+  "rounded-lg border border-zinc-300 px-4 py-2.5 font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900";
+const linkButtonClass =
+  "self-start text-sm font-medium underline underline-offset-2 text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100";
+const labelClass = "text-sm font-medium text-zinc-700 dark:text-zinc-300";
+
+// Pre-registration identity choice — "landing" is the two-button choice
+// itself, the other three are the forms each choice opens.
+type IdentityMode = "landing" | "guest" | "create" | "login";
 
 export default function Home() {
   const state = useSignaling();
   const router = useRouter();
+  const accountToken = useAccountToken();
 
   const [peopleOnline, setPeopleOnline] = useState<number | null>(null);
-  const [nameInput, setNameInput] = useState("");
   const [roomInput, setRoomInput] = useState("");
   const [roomError, setRoomError] = useState<string | null>(null);
   const [roomIsPrivate, setRoomIsPrivate] = useState(false);
+
+  const [mode, setMode] = useState<IdentityMode>("landing");
+  const [nameInput, setNameInput] = useState("");
   const [changingName, setChangingName] = useState(false);
+  const [username, setUsername] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [password, setPassword] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
   const hasStoredName = useHasStoredName();
-  const previousNameRef = useRef(state.name);
+  // Tracks which token the effect below has already resolved (via
+  // accountApi.fetchMe) — while it's behind the current accountToken (or
+  // null, on first load with a token already on disk), we don't yet know
+  // whether to auto-connect as that account, so the guest/create-account
+  // choice stays hidden behind "Reconectando...".
+  const [resolvedToken, setResolvedToken] = useState<string | null>(null);
+  const resolvingAccount = Boolean(accountToken) && resolvedToken !== accountToken;
 
   const registered = Boolean(state.name);
-  const restoring = !registered && hasStoredName && !state.nameError;
+  const isAccount = Boolean(state.account);
+  const restoring = !registered && (resolvingAccount || (hasStoredName && !state.nameError));
+  const previousNameRef = useRef(state.name);
 
   // Closes the rename form once the name actually changes (success or a
   // plain reconnect landing on the same name), without guessing at timing.
@@ -36,6 +69,35 @@ export default function Home() {
     }
     previousNameRef.current = state.name;
   }, [state.name, changingName]);
+
+  // The single place that turns a stored (or freshly obtained, via
+  // login/create-account below) account token into an actual signaling
+  // registration — resolves who the token belongs to and connects as that
+  // account's display name. Falls back to any stored guest name if the
+  // token turns out to be invalid/expired (fetchMe clears it itself),
+  // mirroring what signalingClient's own constructor does when there's no
+  // account token at all.
+  useEffect(() => {
+    if (!accountToken) return;
+    let cancelled = false;
+    fetchMe()
+      .then((account) => {
+        if (cancelled) return;
+        if (account) {
+          signalingClient.register(account.displayName, accountToken);
+        } else {
+          const storedName = getStoredName();
+          if (storedName) signalingClient.register(storedName);
+        }
+        setResolvedToken(accountToken);
+      })
+      .catch(() => {
+        if (!cancelled) setResolvedToken(accountToken);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accountToken]);
 
   useEffect(() => {
     let cancelled = false;
@@ -61,12 +123,78 @@ export default function Home() {
     };
   }, []);
 
-  function handleNameSubmit(e: FormEvent) {
+  function resetIdentityForm() {
+    setMode("landing");
+    setFormError(null);
+    setUsername("");
+    setDisplayName("");
+    setPassword("");
+  }
+
+  function handleGuestSubmit(e: FormEvent) {
+    e.preventDefault();
+    const trimmed = nameInput.trim();
+    if (!trimmed) return;
+    signalingClient.register(trimmed);
+  }
+
+  function handleRenameSubmit(e: FormEvent) {
     e.preventDefault();
     const trimmed = nameInput.trim();
     if (!trimmed || trimmed === state.name) return;
-    if (registered) trackEvent("name_change");
+    trackEvent("name_change");
     signalingClient.register(trimmed);
+  }
+
+  async function handleCreateSubmit(e: FormEvent) {
+    e.preventDefault();
+    setFormError(null);
+    const trimmedUser = username.trim();
+    const trimmedDisplay = displayName.trim();
+    if (!USERNAME_RE.test(trimmedUser)) {
+      setFormError("Usuário deve ter 3 a 20 letras, números ou _.");
+      return;
+    }
+    if (!trimmedDisplay) {
+      setFormError("Escolha um nome de exibição.");
+      return;
+    }
+    if (password.length < 6) {
+      setFormError("Senha deve ter ao menos 6 caracteres.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await registerAccount(trimmedUser, trimmedDisplay, password);
+      trackEvent("account_created");
+      // registerAccount stores the new token, which the effect above picks
+      // up and turns into a signaling registration — nothing more to do.
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Falha ao criar conta.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleLoginSubmit(e: FormEvent) {
+    e.preventDefault();
+    setFormError(null);
+    if (!username.trim() || !password) return;
+    setSubmitting(true);
+    try {
+      await loginAccount(username.trim(), password);
+      trackEvent("account_login");
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Usuário ou senha inválidos.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function handleLogout() {
+    logoutAccount();
+    signalingClient.logoutIdentity();
+    resetIdentityForm();
   }
 
   function handleRoomSubmit(e: FormEvent) {
@@ -93,21 +221,183 @@ export default function Home() {
           GoLive
         </h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Compartilhe sua tela com quem estiver na mesma sala, sem cadastro.
+          Compartilhe sua tela com quem estiver na mesma sala, com ou sem cadastro.
         </p>
-        <Link
-          href="/rooms"
-          className="mt-3 inline-block text-sm font-medium underline underline-offset-2 text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-        >
+        <Link href="/rooms" className={`mt-3 inline-block ${linkButtonClass}`}>
           Ver salas públicas ativas
         </Link>
 
         {restoring ? (
           <p className="mt-8 text-sm text-zinc-500 dark:text-zinc-400">Reconectando...</p>
-        ) : !registered || changingName ? (
-          <form onSubmit={handleNameSubmit} className="mt-8 flex flex-col gap-3">
-            <label htmlFor="name" className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              {registered ? "Novo nome" : "Escolha seu nome"}
+        ) : !registered ? (
+          <>
+            {mode === "landing" && (
+              <div className="mt-8 flex flex-col gap-3">
+                <button type="button" onClick={() => setMode("guest")} className={primaryButtonClass}>
+                  Entrar como convidado
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("create");
+                    setFormError(null);
+                  }}
+                  className={secondaryButtonClass}
+                >
+                  Criar uma conta
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("login");
+                    setFormError(null);
+                  }}
+                  className={`${linkButtonClass} self-center`}
+                >
+                  Já tenho uma conta
+                </button>
+              </div>
+            )}
+
+            {mode === "guest" && (
+              <form onSubmit={handleGuestSubmit} className="mt-8 flex flex-col gap-3">
+                <label htmlFor="name" className={labelClass}>
+                  Escolha seu nome
+                </label>
+                <input
+                  id="name"
+                  autoFocus
+                  value={nameInput}
+                  onChange={(e) => setNameInput(e.target.value)}
+                  maxLength={24}
+                  placeholder="Ex: Maria"
+                  className={inputClass}
+                />
+                {state.nameError && <p className="text-sm text-red-500">{state.nameError}</p>}
+                <div className="mt-2 flex gap-2">
+                  <button type="submit" disabled={!nameInput.trim()} className={`flex-1 ${primaryButtonClass}`}>
+                    Continuar
+                  </button>
+                  <button type="button" onClick={resetIdentityForm} className={secondaryButtonClass}>
+                    Voltar
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {mode === "create" && (
+              <form onSubmit={handleCreateSubmit} className="mt-8 flex flex-col gap-3">
+                <label htmlFor="username" className={labelClass}>
+                  Usuário
+                </label>
+                <input
+                  id="username"
+                  autoFocus
+                  autoComplete="username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  maxLength={20}
+                  placeholder="Ex: maria123"
+                  className={inputClass}
+                />
+                <label htmlFor="displayName" className={labelClass}>
+                  Nome de exibição
+                </label>
+                <input
+                  id="displayName"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  maxLength={24}
+                  placeholder="Ex: Maria"
+                  className={inputClass}
+                />
+                <label htmlFor="password" className={labelClass}>
+                  Senha
+                </label>
+                <input
+                  id="password"
+                  type="password"
+                  autoComplete="new-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className={inputClass}
+                />
+                {formError && <p className="text-sm text-red-500">{formError}</p>}
+                <div className="mt-2 flex gap-2">
+                  <button type="submit" disabled={submitting} className={`flex-1 ${primaryButtonClass}`}>
+                    {submitting ? "Criando..." : "Criar conta"}
+                  </button>
+                  <button type="button" onClick={resetIdentityForm} className={secondaryButtonClass}>
+                    Voltar
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("login");
+                    setFormError(null);
+                  }}
+                  className={linkButtonClass}
+                >
+                  Já tenho uma conta
+                </button>
+              </form>
+            )}
+
+            {mode === "login" && (
+              <form onSubmit={handleLoginSubmit} className="mt-8 flex flex-col gap-3">
+                <label htmlFor="loginUsername" className={labelClass}>
+                  Usuário
+                </label>
+                <input
+                  id="loginUsername"
+                  autoFocus
+                  autoComplete="username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className={inputClass}
+                />
+                <label htmlFor="loginPassword" className={labelClass}>
+                  Senha
+                </label>
+                <input
+                  id="loginPassword"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className={inputClass}
+                />
+                {formError && <p className="text-sm text-red-500">{formError}</p>}
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="submit"
+                    disabled={submitting || !username.trim() || !password}
+                    className={`flex-1 ${primaryButtonClass}`}
+                  >
+                    {submitting ? "Entrando..." : "Entrar"}
+                  </button>
+                  <button type="button" onClick={resetIdentityForm} className={secondaryButtonClass}>
+                    Voltar
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("create");
+                    setFormError(null);
+                  }}
+                  className={linkButtonClass}
+                >
+                  Criar uma conta
+                </button>
+              </form>
+            )}
+          </>
+        ) : changingName ? (
+          <form onSubmit={handleRenameSubmit} className="mt-8 flex flex-col gap-3">
+            <label htmlFor="name" className={labelClass}>
+              Novo nome
             </label>
             <input
               id="name"
@@ -116,31 +406,27 @@ export default function Home() {
               onChange={(e) => setNameInput(e.target.value)}
               maxLength={24}
               placeholder="Ex: Maria"
-              className="rounded-lg border border-zinc-300 bg-white px-4 py-2.5 text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+              className={inputClass}
             />
-            {state.nameError && (
-              <p className="text-sm text-red-500">{state.nameError}</p>
-            )}
+            {state.nameError && <p className="text-sm text-red-500">{state.nameError}</p>}
             <div className="mt-2 flex gap-2">
               <button
                 type="submit"
                 disabled={!nameInput.trim() || nameInput.trim() === state.name}
-                className="flex-1 rounded-lg bg-zinc-950 px-4 py-2.5 font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+                className={`flex-1 ${primaryButtonClass}`}
               >
-                {registered ? "Salvar nome" : "Confirmar nome"}
+                Salvar nome
               </button>
-              {registered && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setChangingName(false);
-                    setNameInput("");
-                  }}
-                  className="rounded-lg border border-zinc-300 px-4 py-2.5 font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                >
-                  Cancelar
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setChangingName(false);
+                  setNameInput("");
+                }}
+                className={secondaryButtonClass}
+              >
+                Cancelar
+              </button>
             </div>
           </form>
         ) : (
@@ -148,18 +434,28 @@ export default function Home() {
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
               Conectado como{" "}
               <span className="font-semibold text-zinc-900 dark:text-zinc-100">{state.name}</span>{" "}
-              <button
-                type="button"
-                onClick={() => {
-                  setNameInput(state.name ?? "");
-                  setChangingName(true);
-                }}
-                className="font-medium underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-300"
-              >
-                Trocar
-              </button>
+              {isAccount ? (
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="font-medium underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-300"
+                >
+                  Sair
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNameInput(state.name ?? "");
+                    setChangingName(true);
+                  }}
+                  className="font-medium underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-300"
+                >
+                  Trocar
+                </button>
+              )}
             </p>
-            <label htmlFor="room" className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+            <label htmlFor="room" className={labelClass}>
               Para qual sala você quer ir ou criar?
             </label>
             <input
@@ -168,7 +464,7 @@ export default function Home() {
               value={roomInput}
               onChange={(e) => setRoomInput(e.target.value)}
               placeholder="Ex: reuniao-time"
-              className="rounded-lg border border-zinc-300 bg-white px-4 py-2.5 text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+              className={inputClass}
             />
             <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
               <input
@@ -180,11 +476,7 @@ export default function Home() {
               Sala privada (não aparece na lista de salas públicas)
             </label>
             {roomError && <p className="text-sm text-red-500">{roomError}</p>}
-            <button
-              type="submit"
-              disabled={!roomInput.trim()}
-              className="mt-2 rounded-lg bg-zinc-950 px-4 py-2.5 font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
-            >
+            <button type="submit" disabled={!roomInput.trim()} className={`mt-2 ${primaryButtonClass}`}>
               Entrar na sala
             </button>
           </form>
