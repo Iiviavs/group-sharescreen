@@ -841,6 +841,12 @@ export function WatchRoom({ handle }: { handle: string }) {
         </main>
 
         <aside className="w-full shrink-0 lg:w-64">
+          {(state.status === "connecting" || state.status === "closed") && (
+            <p className="mb-1 flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-500">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+              Conectando...
+            </p>
+          )}
           <h2 className="mb-2 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
             Participantes
           </h2>
