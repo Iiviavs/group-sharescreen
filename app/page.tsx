@@ -25,7 +25,7 @@ const labelClass = "text-sm font-medium text-zinc-700 dark:text-zinc-300";
 
 // Pre-registration identity choice — "landing" is the two-button choice
 // itself, the other three are the forms each choice opens.
-type IdentityMode = "landing" | "guest" | "create" | "login";
+type IdentityMode = "landing" | "create" | "login";
 
 export default function Home() {
   const state = useSignaling();
@@ -300,10 +300,29 @@ export default function Home() {
         ) : !registered ? (
           <>
             {mode === "landing" && (
-              <div className="mt-8 flex flex-col gap-3">
-                <button type="button" onClick={() => setMode("guest")} className={primaryButtonClass}>
-                  Entrar como convidado
-                </button>
+              <form onSubmit={handleGuestSubmit} className="mt-8 flex flex-col gap-3">
+                <label htmlFor="name" className={labelClass}>
+                  Seu nome
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    id="name"
+                    autoFocus
+                    value={nameInput}
+                    onChange={(e) => setNameInput(e.target.value)}
+                    maxLength={24}
+                    placeholder="Ex: Maria"
+                    className={`min-w-0 flex-1 ${inputClass}`}
+                  />
+                  <button
+                    type="submit"
+                    disabled={!nameInput.trim()}
+                    className={`shrink-0 ${primaryButtonClass}`}
+                  >
+                    Continuar
+                  </button>
+                </div>
+                {state.nameError && <p className="text-sm text-red-500">{state.nameError}</p>}
                 <button
                   type="button"
                   onClick={() => {
@@ -324,32 +343,6 @@ export default function Home() {
                 >
                   Já tenho uma conta
                 </button>
-              </div>
-            )}
-
-            {mode === "guest" && (
-              <form onSubmit={handleGuestSubmit} className="mt-8 flex flex-col gap-3">
-                <label htmlFor="name" className={labelClass}>
-                  Escolha seu nome
-                </label>
-                <input
-                  id="name"
-                  autoFocus
-                  value={nameInput}
-                  onChange={(e) => setNameInput(e.target.value)}
-                  maxLength={24}
-                  placeholder="Ex: Maria"
-                  className={inputClass}
-                />
-                {state.nameError && <p className="text-sm text-red-500">{state.nameError}</p>}
-                <div className="mt-2 flex gap-2">
-                  <button type="submit" disabled={!nameInput.trim()} className={`flex-1 ${primaryButtonClass}`}>
-                    Continuar
-                  </button>
-                  <button type="button" onClick={resetIdentityForm} className={secondaryButtonClass}>
-                    Voltar
-                  </button>
-                </div>
               </form>
             )}
           </>
