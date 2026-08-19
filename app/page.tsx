@@ -229,6 +229,111 @@ export default function Home() {
 
         {restoring ? (
           <p className="mt-8 text-sm text-zinc-500 dark:text-zinc-400">Reconectando...</p>
+        ) : mode === "create" ? (
+          <form onSubmit={handleCreateSubmit} className="mt-8 flex flex-col gap-3">
+            <label htmlFor="username" className={labelClass}>
+              Usuário
+            </label>
+            <input
+              id="username"
+              autoFocus
+              autoComplete="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              maxLength={20}
+              placeholder="Ex: maria123"
+              className={inputClass}
+            />
+            <label htmlFor="displayName" className={labelClass}>
+              Nome de exibição
+            </label>
+            <input
+              id="displayName"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              maxLength={24}
+              placeholder="Ex: Maria"
+              className={inputClass}
+            />
+            <label htmlFor="password" className={labelClass}>
+              Senha
+            </label>
+            <input
+              id="password"
+              type="password"
+              autoComplete="new-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className={inputClass}
+            />
+            {formError && <p className="text-sm text-red-500">{formError}</p>}
+            <div className="mt-2 flex gap-2">
+              <button type="submit" disabled={submitting} className={`flex-1 ${primaryButtonClass}`}>
+                {submitting ? "Criando..." : "Criar conta"}
+              </button>
+              <button type="button" onClick={resetIdentityForm} className={secondaryButtonClass}>
+                Voltar
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setMode("login");
+                setFormError(null);
+              }}
+              className={linkButtonClass}
+            >
+              Já tenho uma conta
+            </button>
+          </form>
+        ) : mode === "login" ? (
+          <form onSubmit={handleLoginSubmit} className="mt-8 flex flex-col gap-3">
+            <label htmlFor="loginUsername" className={labelClass}>
+              Usuário
+            </label>
+            <input
+              id="loginUsername"
+              autoFocus
+              autoComplete="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className={inputClass}
+            />
+            <label htmlFor="loginPassword" className={labelClass}>
+              Senha
+            </label>
+            <input
+              id="loginPassword"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className={inputClass}
+            />
+            {formError && <p className="text-sm text-red-500">{formError}</p>}
+            <div className="mt-2 flex gap-2">
+              <button
+                type="submit"
+                disabled={submitting || !username.trim() || !password}
+                className={`flex-1 ${primaryButtonClass}`}
+              >
+                {submitting ? "Entrando..." : "Entrar"}
+              </button>
+              <button type="button" onClick={resetIdentityForm} className={secondaryButtonClass}>
+                Voltar
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setMode("create");
+                setFormError(null);
+              }}
+              className={linkButtonClass}
+            >
+              Criar uma conta
+            </button>
+          </form>
         ) : !registered ? (
           <>
             {mode === "landing" && (
@@ -284,115 +389,6 @@ export default function Home() {
                 </div>
               </form>
             )}
-
-            {mode === "create" && (
-              <form onSubmit={handleCreateSubmit} className="mt-8 flex flex-col gap-3">
-                <label htmlFor="username" className={labelClass}>
-                  Usuário
-                </label>
-                <input
-                  id="username"
-                  autoFocus
-                  autoComplete="username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  maxLength={20}
-                  placeholder="Ex: maria123"
-                  className={inputClass}
-                />
-                <label htmlFor="displayName" className={labelClass}>
-                  Nome de exibição
-                </label>
-                <input
-                  id="displayName"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  maxLength={24}
-                  placeholder="Ex: Maria"
-                  className={inputClass}
-                />
-                <label htmlFor="password" className={labelClass}>
-                  Senha
-                </label>
-                <input
-                  id="password"
-                  type="password"
-                  autoComplete="new-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className={inputClass}
-                />
-                {formError && <p className="text-sm text-red-500">{formError}</p>}
-                <div className="mt-2 flex gap-2">
-                  <button type="submit" disabled={submitting} className={`flex-1 ${primaryButtonClass}`}>
-                    {submitting ? "Criando..." : "Criar conta"}
-                  </button>
-                  <button type="button" onClick={resetIdentityForm} className={secondaryButtonClass}>
-                    Voltar
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode("login");
-                    setFormError(null);
-                  }}
-                  className={linkButtonClass}
-                >
-                  Já tenho uma conta
-                </button>
-              </form>
-            )}
-
-            {mode === "login" && (
-              <form onSubmit={handleLoginSubmit} className="mt-8 flex flex-col gap-3">
-                <label htmlFor="loginUsername" className={labelClass}>
-                  Usuário
-                </label>
-                <input
-                  id="loginUsername"
-                  autoFocus
-                  autoComplete="username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className={inputClass}
-                />
-                <label htmlFor="loginPassword" className={labelClass}>
-                  Senha
-                </label>
-                <input
-                  id="loginPassword"
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className={inputClass}
-                />
-                {formError && <p className="text-sm text-red-500">{formError}</p>}
-                <div className="mt-2 flex gap-2">
-                  <button
-                    type="submit"
-                    disabled={submitting || !username.trim() || !password}
-                    className={`flex-1 ${primaryButtonClass}`}
-                  >
-                    {submitting ? "Entrando..." : "Entrar"}
-                  </button>
-                  <button type="button" onClick={resetIdentityForm} className={secondaryButtonClass}>
-                    Voltar
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode("create");
-                    setFormError(null);
-                  }}
-                  className={linkButtonClass}
-                >
-                  Criar uma conta
-                </button>
-              </form>
-            )}
           </>
         ) : changingName ? (
           <form onSubmit={handleRenameSubmit} className="mt-8 flex flex-col gap-3">
@@ -428,6 +424,18 @@ export default function Home() {
                 Cancelar
               </button>
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                setChangingName(false);
+                setNameInput("");
+                setMode("create");
+                setFormError(null);
+              }}
+              className={linkButtonClass}
+            >
+              Ou crie uma conta
+            </button>
           </form>
         ) : (
           <form onSubmit={handleRoomSubmit} className="mt-8 flex flex-col gap-3">
