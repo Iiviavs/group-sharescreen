@@ -52,9 +52,14 @@ export function VideoTile({
   const [isMuted, setIsMuted] = useState(muted);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isPiP, setIsPiP] = useState(false);
+  // Video keeps showing the last frame's black backdrop until the stream
+  // actually has data flowing — surface that gap as a spinner instead of a
+  // blank black tile, and reset it whenever the stream is swapped out.
+  const [isVideoLoading, setIsVideoLoading] = useState(true);
   const pipSupported = useSyncExternalStore(noopSubscribe, getPipSupported, getPipSupportedServer);
 
   useEffect(() => {
+    setIsVideoLoading(true);
     if (videoRef.current) videoRef.current.srcObject = stream;
   }, [stream]);
 
@@ -122,7 +127,18 @@ export function VideoTile({
         fill ? "h-full" : "aspect-video"
       }`}
     >
-      <video ref={videoRef} autoPlay playsInline className="h-full w-full object-contain bg-black" />
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        onLoadedData={() => setIsVideoLoading(false)}
+        className="h-full w-full object-contain bg-black"
+      />
+      {isVideoLoading && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/20 border-t-white/80" />
+        </div>
+      )}
       <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-linear-to-t from-black/85 to-transparent px-3 py-2">
         <span className="truncate text-sm font-medium text-white">{label}</span>
         {badge && (
