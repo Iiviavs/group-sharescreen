@@ -3,33 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev:web": "next dev",
-    "dev:signaling": "tsx watch server/index.ts",
-    "dev": "concurrently -n web,signaling -c blue,magenta \"npm:dev:web\" \"npm:dev:signaling\"",
+    "dev": "next dev",
     "build": "next build",
-    "start:web": "next start",
-    "start:signaling": "tsx server/index.ts",
-    "start": "concurrently -n web,signaling -c blue,magenta \"npm:start:web\" \"npm:start:signaling\"",
+    "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
-    "@fastify/cors": "^11.3.0",
-    "@fastify/websocket": "^11.3.0",
     "@sapphi-red/web-noise-suppressor": "^0.4.0",
-    "concurrently": "^10.0.5",
-    "fastify": "^5.12.0",
     "next": "16.3.1",
-    "prom-client": "^15.1.3",
     "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "tsx": "^4.23.12"
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@types/ws": "^8.18.1",
     "eslint": "^9",
     "eslint-config-next": "16.3.1",
     "tailwindcss": "^4",

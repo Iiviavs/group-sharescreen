@@ -36,9 +36,6 @@ yarn-error.log*
 # vercel
 .vercel
 
-# persisted room chat history (server/signaling.ts)
-/server/data/
-
 # typescript
 *.tsbuildinfo
 next-env.d.ts
