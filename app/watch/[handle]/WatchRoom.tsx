@@ -757,6 +757,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                       badge="ao vivo · tela"
                       muted
                       fill={isSingleTile}
+                      onStopWatching={() => stopWatchingPeer(peerId)}
                       onDoubleClick={() => setFocusedPeerId(peerId)}
                     />
                     {remoteCameraStreams[peerId] && (
@@ -786,6 +787,17 @@ export function WatchRoom({ handle }: { handle: string }) {
                     />
                   );
                 })}
+              {stoppedEntries.map((peer) => (
+                <StoppedPeerTile
+                  key={`stopped-${peer.id}`}
+                  label={peer.name}
+                  fill={isSingleTile}
+                  onResume={() => resumeWatchingPeer(peer.id)}
+                />
+              ))}
+              {resumingEntries.map((peer) => (
+                <ResumingPeerTile key={`resuming-${peer.id}`} fill={isSingleTile} />
+              ))}
               </div>
             </>
           )}
