@@ -14,3 +14,6 @@ https://goliveapi.nemtudo.me
 
 Se você gosta de estatísticas assim como eu, tem o Grafana público:
 https://stats.nemtudo.me/public-dashboards/9be4846ec8774ff5888baa7d33862ccc
+
+Tutorial:
+https://x.com/NemTudo_/status/2089763840959414477
