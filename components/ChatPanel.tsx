@@ -35,6 +35,7 @@ export function ChatPanel({
   selfId,
   onSend,
   onSendGif,
+  blockedMessage,
 }: {
   messages: ChatMessage[];
   selfId: string | null;
@@ -42,6 +43,10 @@ export function ChatPanel({
   // input form instead of sending into a room the viewer isn't a member of.
   onSend?: (text: string) => void;
   onSendGif?: (url: string) => void;
+  // Set when the server rejected the last message for containing a banned
+  // word (see signalingClient's chatBlockedMessage) — shown once, right
+  // above the input, and cleared by the client on the next send attempt.
+  blockedMessage?: string | null;
 }) {
   const [input, setInput] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -119,6 +124,12 @@ export function ChatPanel({
           })
         )}
       </div>
+
+      {blockedMessage && (
+        <p className="border-t border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-600 dark:border-red-900 dark:bg-red-950/40 dark:text-red-400">
+          {blockedMessage}
+        </p>
+      )}
 
       {onSend && (
         <form

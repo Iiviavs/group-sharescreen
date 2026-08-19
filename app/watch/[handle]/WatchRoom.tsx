@@ -138,7 +138,10 @@ export function WatchRoom({ handle }: { handle: string }) {
 
   // A stored name means the client is still (re)connecting/registering
   // after a page reload — show a loading state instead of asking again.
-  const restoring = !state.name && hasStoredName && !state.nameError;
+  // Excludes "banned": that connection attempt already resolved (rejected),
+  // so it's not actually still restoring and would otherwise get stuck on
+  // this loading state forever instead of showing the ban screen below.
+  const restoring = !state.name && hasStoredName && !state.nameError && state.status !== "banned";
 
   useEffect(() => {
     if (!validHandle || !state.name) return;
@@ -220,6 +223,22 @@ export function WatchRoom({ handle }: { handle: string }) {
         >
           Usar esta aba
         </button>
+      </div>
+    );
+  }
+
+  // The server rejected every future connection attempt from this IP — see
+  // server/signaling.ts's BANNED_CLOSE_CODE. Unlike "superseded" above,
+  // there's no action the user can take from here.
+  if (state.status === "banned") {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 px-4 text-center">
+        <p className="text-lg font-medium text-zinc-900 dark:text-zinc-100">
+          Você foi banido deste site.
+        </p>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          Se você acredita que isso é um engano, entre em contato com um moderador.
+        </p>
       </div>
     );
   }
@@ -854,6 +873,7 @@ export function WatchRoom({ handle }: { handle: string }) {
             selfId={state.selfId}
             onSend={(text) => signalingClient.sendChatMessage(text)}
             onSendGif={(url) => signalingClient.sendGif(url)}
+            blockedMessage={state.chatBlockedMessage}
           />
         </aside>
       </div>

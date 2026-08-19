@@ -89,7 +89,13 @@ export function adminLogout() {
   });
 }
 
-export type AdminRoomPeer = { id: string; name: string | null; sharing: boolean; mic: boolean };
+export type AdminRoomPeer = {
+  id: string;
+  name: string | null;
+  sharing: boolean;
+  mic: boolean;
+  ip: string;
+};
 
 export type AdminRoom = {
   handle: string;
@@ -176,4 +182,83 @@ export async function clearAnnouncement(): Promise<void> {
     throw new Error("unauthorized");
   }
   if (!res.ok) throw new Error(`Falha ao remover aviso (status ${res.status})`);
+}
+
+// Shared by every admin fetch below: attaches the bearer token, treats a 401
+// as a signal to drop the stored token (mirrors fetchAdminRooms above), and
+// throws with the server's own error message when one is provided.
+async function adminFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getAdminToken();
+  if (!token) throw new Error("unauthorized");
+  const res = await fetch(`${getSignalingHttpBase()}${path}`, {
+    ...init,
+    headers: { ...(init?.headers ?? {}), Authorization: `Bearer ${token}` },
+  });
+  if (res.status === 401) {
+    setAdminToken(null);
+    throw new Error("unauthorized");
+  }
+  if (res.status === 204) return undefined as T;
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(
+      (data && typeof data === "object" && "error" in data && String(data.error)) ||
+        `Falha na requisição (status ${res.status})`
+    );
+  }
+  return res.json() as Promise<T>;
+}
+
+export type AdminStats = {
+  connectedSockets: number;
+  peopleOnline: number;
+  sharingCount: number;
+  publicRooms: number;
+  privateRooms: number;
+  bannedIps: number;
+  bannedWords: number;
+  mongo: { enabled: boolean; connected: boolean };
+};
+
+export async function fetchAdminStats(): Promise<AdminStats> {
+  return adminFetch<AdminStats>("/admin/stats");
+}
+
+export type IpBan = {
+  ip: string;
+  reason: string;
+  createdAt: number;
+  expiresAt: number | null;
+};
+
+export async function fetchBans(): Promise<IpBan[]> {
+  const data = await adminFetch<{ bans: IpBan[] }>("/admin/bans");
+  return data.bans;
+}
+
+export async function banIp(input: { ip: string; reason: string; durationMinutes?: number }): Promise<IpBan> {
+  const data = await adminFetch<{ ban: IpBan }>("/admin/bans", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return data.ban;
+}
+
+export async function unbanIp(ip: string): Promise<void> {
+  await adminFetch<void>(`/admin/bans/${encodeURIComponent(ip)}`, { method: "DELETE" });
+}
+
+export async function fetchBannedWords(): Promise<string[]> {
+  const data = await adminFetch<{ words: string[] }>("/admin/banned-words");
+  return data.words;
+}
+
+export async function setBannedWords(words: string[]): Promise<string[]> {
+  const data = await adminFetch<{ words: string[] }>("/admin/banned-words", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ words }),
+  });
+  return data.words;
 }

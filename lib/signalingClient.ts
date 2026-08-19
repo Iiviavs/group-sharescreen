@@ -15,7 +15,7 @@ export type PeerInfo = {
   role?: "moderator";
 };
 
-export type SignalingStatus = "idle" | "connecting" | "open" | "closed" | "superseded";
+export type SignalingStatus = "idle" | "connecting" | "open" | "closed" | "superseded" | "banned";
 
 export type ChatMessage = {
   id: string;
@@ -42,6 +42,11 @@ export type SignalingState = {
   // broadcastToAll), which also fires once right after "welcome" for a
   // fresh connection so a page opened while one's active still sees it.
   announcement: Announcement | null;
+  // Set when the server rejected our last chat message for containing a
+  // banned word (see server/signaling.ts's "chat-blocked") — cleared as
+  // soon as another send is attempted, so it's a one-shot warning rather
+  // than a persistent banner.
+  chatBlockedMessage: string | null;
 };
 
 type Listener = () => void;
@@ -52,6 +57,8 @@ const NAME_STORAGE_KEY = "sharescreen:name";
 const CLIENT_ID_STORAGE_KEY = "sharescreen:clientId";
 // Mirrors server/signaling.ts's SUPERSEDED_CLOSE_CODE.
 const SUPERSEDED_CLOSE_CODE = 4000;
+// Mirrors server/signaling.ts's BANNED_CLOSE_CODE.
+const BANNED_CLOSE_CODE = 4003;
 
 const initialState: SignalingState = {
   status: "idle",
@@ -62,6 +69,7 @@ const initialState: SignalingState = {
   peers: [],
   chatMessages: [],
   announcement: null,
+  chatBlockedMessage: null,
 };
 
 // Cap on retained chat history per room, to keep memory bounded in a
@@ -200,6 +208,14 @@ class SignalingClient {
         this.setState({ status: "superseded" });
         return;
       }
+      // Mirrors the superseded case above: reconnecting would just get
+      // rejected again immediately (the ban is checked on every "/ws"
+      // upgrade), so stop retrying and surface it instead of looking stuck.
+      if (event.code === BANNED_CLOSE_CODE) {
+        this.desiredName = null;
+        this.setState({ status: "banned" });
+        return;
+      }
       this.setState({ status: "closed" });
       this.scheduleReconnect();
     };
@@ -316,6 +332,9 @@ class SignalingClient {
       case "announcement":
         this.setState({ announcement: (msg.announcement as Announcement | null) ?? null });
         break;
+      case "chat-blocked":
+        this.setState({ chatBlockedMessage: (msg.message as string) ?? "Mensagem bloqueada." });
+        break;
       case "chat-message": {
         const chatMessage: ChatMessage = {
           id: msg.id as string,
@@ -378,6 +397,7 @@ class SignalingClient {
   sendChatMessage(text: string) {
     const trimmed = text.trim();
     if (!trimmed) return;
+    this.setState({ chatBlockedMessage: null });
     this.rawSend({ type: "chat", text: trimmed });
   }
 
