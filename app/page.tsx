@@ -104,6 +104,12 @@ export default function Home() {
     setPassword("");
   }
 
+  function openCreateMode() {
+    setMode("create");
+    setFormError(null);
+    setDisplayName(state.name ?? "");
+  }
+
   function handleGuestSubmit(e: FormEvent) {
     e.preventDefault();
     const trimmed = nameInput.trim();
@@ -299,10 +305,7 @@ export default function Home() {
             </div>
             <button
               type="button"
-              onClick={() => {
-                setMode("create");
-                setFormError(null);
-              }}
+              onClick={openCreateMode}
               className={linkButtonClass}
             >
               Criar uma conta
@@ -334,14 +337,7 @@ export default function Home() {
                   </button>
                 </div>
                 {state.nameError && <p className="text-sm text-red-500">{state.nameError}</p>}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode("create");
-                    setFormError(null);
-                  }}
-                  className={secondaryButtonClass}
-                >
+                <button type="button" onClick={openCreateMode} className={secondaryButtonClass}>
                   Criar uma conta
                 </button>
                 <button
@@ -396,8 +392,7 @@ export default function Home() {
               onClick={() => {
                 setChangingName(false);
                 setNameInput("");
-                setMode("create");
-                setFormError(null);
+                openCreateMode();
               }}
               className={linkButtonClass}
             >
@@ -431,10 +426,7 @@ export default function Home() {
                   </button>{" "}
                   <button
                     type="button"
-                    onClick={() => {
-                      setMode("create");
-                      setFormError(null);
-                    }}
+                    onClick={openCreateMode}
                     className="font-medium underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-300"
                   >
                     Criar conta
