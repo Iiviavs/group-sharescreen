@@ -260,6 +260,25 @@ function startPeerAdaptiveBitrateMonitor(
   return () => clearInterval(id);
 }
 
+// How far apart (in ms) openSendPCsStaggered spaces out opening sendPCs to
+// many peers at once — see its own doc comment for why. 150ms means a
+// 50-person room's initial burst spreads across ~7.5s instead of landing in
+// a single instant, so it no longer clusters entirely inside one
+// wsSignalLimiter window (server/rateLimiter.ts) or spikes the encoder for
+// every peer's addTrack/createOffer at the same moment.
+const STAGGER_MS = 150;
+
+// If a sendPC hasn't reached "connected" within this long, treat it as dead
+// and retry — see openSendPC's doc comment on why this exists *in addition
+// to* the connectionState === "failed" handler below it: a silently-dropped
+// offer/ICE candidate (see the wsSignalLimiter doc comment on the server)
+// never makes the connection transition to "failed" at all, since ICE never
+// even started on the other end — it just sits at "new"/"connecting"
+// forever. Generous enough to cover the stagger delay above (up to ~7.5s
+// for the last peer in a 50-person burst) plus normal ICE/TURN negotiation
+// time on a slow link.
+const CONNECT_TIMEOUT_MS = 15_000;
+
 // Shared connection-management for a single media channel (screen share or
 // mic), broadcast from this client to every peer in the room. Each channel
 // gets its own set of peer connections and its own signaling namespace so
@@ -316,6 +335,18 @@ function useBroadcastChannel(
   // startPeerAdaptiveBitrateMonitor). Keyed by peerId; called when the sendPC
   // for that peer closes so the setInterval is always torn down with the PC.
   const sendPCMonitors = useRef<Map<string, () => void>>(new Map());
+  // Pending timers scheduled by openSendPCsStaggered — cleared in stop() so
+  // a share that already ended never opens a late connection.
+  const staggerTimers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  // Peers with a staggered open already scheduled but not yet attempted —
+  // stops the peer-list-driven reconnect subscription below (which re-scans
+  // on *every* signaling state change, not just peer-list changes) from
+  // queuing the same still-waiting peer again and again.
+  const pendingStaggeredPeers = useRef<Set<string>>(new Set());
+  // Per-peer "never finished connecting" timers — see CONNECT_TIMEOUT_MS's
+  // doc comment. Cleared in closeSendPC (covers the retry/failure paths) and
+  // in stop() (covers a deliberate stop before one ever fires).
+  const connectTimeouts = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
 
   const clearStopped = useCallback((peerId: string) => {
@@ -358,6 +389,9 @@ function useBroadcastChannel(
     sendPCMonitors.current.get(peerId)?.();
     sendPCMonitors.current.delete(peerId);
     pendingSendCandidates.current.delete(peerId);
+    const connectTimeout = connectTimeouts.current.get(peerId);
+    if (connectTimeout) clearTimeout(connectTimeout);
+    connectTimeouts.current.delete(peerId);
   }, []);
 
 
@@ -488,8 +522,25 @@ function useBroadcastChannel(
           }, 4000);
         } else if (pc.connectionState === "closed") {
           closeSendPC(peerId);
+        } else if (pc.connectionState === "connected") {
+          const connectTimeout = connectTimeouts.current.get(peerId);
+          if (connectTimeout) clearTimeout(connectTimeout);
+          connectTimeouts.current.delete(peerId);
         }
       };
+      // Backstop for a silently-dropped offer/ICE candidate (see
+      // CONNECT_TIMEOUT_MS's doc comment) — connectionState never reaches
+      // "failed" on its own for that case, so nothing above would ever
+      // retry it without this.
+      connectTimeouts.current.set(
+        peerId,
+        setTimeout(() => {
+          if (sendPCs.current.get(peerId) === pc && pc.connectionState !== "connected") {
+            closeSendPC(peerId);
+            scheduleSendRetry(peerId);
+          }
+        }, CONNECT_TIMEOUT_MS)
+      );
       pc.createOffer()
         .then(async (offer) => {
           if (sendPCs.current.get(peerId) !== pc) return;
@@ -519,6 +570,31 @@ function useBroadcastChannel(
   useEffect(() => {
     openSendPCRef.current = openSendPC;
   }, [openSendPC]);
+
+  // Opens sendPCs to many peers spread out over time (see STAGGER_MS's doc
+  // comment) instead of all in the same instant — used for the initial
+  // "start sharing into an already-full room" burst and for the peer-list-
+  // driven reconnect loop below, the two places that could otherwise hand
+  // openSendPC a whole room's worth of peers at once. A single peer joining
+  // normally (the common case) just gets one immediately-firing timer, so
+  // this changes nothing about how fast that feels.
+  const openSendPCsStaggered = useCallback(
+    (peerIds: string[]) => {
+      const toSchedule = peerIds.filter(
+        (id) => !sendPCs.current.has(id) && !pendingStaggeredPeers.current.has(id)
+      );
+      toSchedule.forEach((peerId, index) => {
+        pendingStaggeredPeers.current.add(peerId);
+        const timer = setTimeout(() => {
+          staggerTimers.current.delete(timer);
+          pendingStaggeredPeers.current.delete(peerId);
+          if (activeRef.current) openSendPC(peerId);
+        }, index * STAGGER_MS);
+        staggerTimers.current.add(timer);
+      });
+    },
+    [openSendPC]
+  );
 
   // Lets the broadcaster change resolution/fps/bitrate mid-share to react to
   // a room bogging down, instead of having to stop and restart the whole
@@ -558,6 +634,13 @@ function useBroadcastChannel(
     setSource(undefined);
     for (const cleanup of sendPCMonitors.current.values()) cleanup();
     sendPCMonitors.current.clear();
+    // Nothing still pending from openSendPCsStaggered should open once this
+    // share has already ended.
+    for (const timer of staggerTimers.current) clearTimeout(timer);
+    staggerTimers.current.clear();
+    pendingStaggeredPeers.current.clear();
+    for (const timeout of connectTimeouts.current.values()) clearTimeout(timeout);
+    connectTimeouts.current.clear();
     for (const [peerId, pc] of sendPCs.current) {
       signalingClient.sendSignal(peerId, { channel, role: "broadcaster", kind: "stop" });
       pc.close();
@@ -596,9 +679,10 @@ function useBroadcastChannel(
       else signalingClient.setSharing(true);
       trackEvent(`${eventPrefix}_start`);
       stream.getTracks().forEach((track) => track.addEventListener("ended", () => stop()));
-      for (const peer of signalingClient.state.peers) {
-        openSendPC(peer.id);
-      }
+      // Staggered (see STAGGER_MS's doc comment) — starting a share into an
+      // already-large room is exactly the burst that used to overwhelm the
+      // signaling rate limit and leave some viewers' connections stuck.
+      openSendPCsStaggered(signalingClient.state.peers.map((peer) => peer.id));
     } catch {
       setError(failureMessage);
       trackEvent(`${eventPrefix}_error`);
@@ -610,7 +694,7 @@ function useBroadcastChannel(
     failureMessage,
     channel,
     eventPrefix,
-    openSendPC,
+    openSendPCsStaggered,
     stop,
   ]);
 
@@ -767,12 +851,16 @@ function useBroadcastChannel(
     });
 
     const unsubscribeState = signalingClient.subscribe(() => {
+      // Staggered (see STAGGER_MS's doc comment) — this fires on *every*
+      // signaling state change (chat, mic toggles, etc.), not just peer-list
+      // ones, so a big room re-scans this often; openSendPCsStaggered's own
+      // pendingStaggeredPeers dedup is what keeps that from re-queuing a
+      // peer that's already waiting on its first attempt.
       if (activeRef.current) {
-        for (const peer of signalingClient.state.peers) {
-          if (!sendPCs.current.has(peer.id) && !viewerPausedPeers.current.has(peer.id)) {
-            openSendPC(peer.id);
-          }
-        }
+        const readyPeerIds = signalingClient.state.peers
+          .filter((peer) => !viewerPausedPeers.current.has(peer.id))
+          .map((peer) => peer.id);
+        openSendPCsStaggered(readyPeerIds);
       }
     });
 
@@ -818,6 +906,7 @@ function useBroadcastChannel(
     channel,
     openRecvPC,
     openSendPC,
+    openSendPCsStaggered,
     closeSendPC,
     closeRecvPC,
     closeRecvPCFully,
