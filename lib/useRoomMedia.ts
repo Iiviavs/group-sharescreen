@@ -860,7 +860,7 @@ export function useRoomMedia(room: string) {
   // state (same pattern as noiseSuppressionOnRef below) because capture()
   // only runs once per share start and would otherwise close over a stale
   // value from whatever render happened to create it.
-  const [shareResolution, setShareResolutionState] = useState<ShareResolution>("720p");
+  const [shareResolution, setShareResolutionState] = useState<ShareResolution>("1080p");
   const [shareFps, setShareFpsState] = useState<ShareFps>(30);
   const [shareBitrate, setShareBitrateState] = useState<ShareBitrate>("medium");
   // On by default: automatically steps resolution/bitrate down as the room
