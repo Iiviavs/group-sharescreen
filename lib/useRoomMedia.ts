@@ -5,6 +5,12 @@ import { signalingClient } from "./signalingClient";
 import { trackEvent } from "./analytics";
 import { ICE_CONFIG } from "./iceConfig";
 import { captureNoiseSuppressedMic, setGraphSuppressionEnabled, type MicNoiseGraph } from "./rnnoise";
+import {
+  getStoredMicOn,
+  getStoredNoiseSuppressionOn,
+  setStoredMicOn,
+  setStoredNoiseSuppressionOn,
+} from "./mediaPreferences";
 
 type Channel = "screen" | "camera" | "mic";
 type ShareSource = "display" | "camera";
@@ -22,9 +28,17 @@ type SignalData = {
 // a big room that upload is often the actual bottleneck, so letting the
 // broadcaster trade resolution/fps/bitrate down independently is the one
 // lever that helps without a server-side media relay.
-export type ShareResolution = "1080p" | "720p" | "480p" | "360p";
-export type ShareFps = 15 | 24 | 30 | 60;
-export type ShareBitrate = "low" | "medium" | "high";
+// "1440p" (2K), 120fps, and (below) the "ultra" bitrate are account-only —
+// see the relevant SHARE_*_OPTIONS' `accountOnly` flag and WatchRoom.tsx,
+// which lists them for a guest as disabled options ("conta necessária")
+// rather than letting one be selected. Nothing in this file itself checks
+// account status: a guest simply never has a code path that could set any
+// of these values, since a disabled <option> can't be chosen.
+export type ShareResolution = "1440p" | "1080p" | "720p" | "480p" | "360p";
+export type ShareFps = 15 | 24 | 30 | 60 | 120;
+// "ultra" is account-only — see SHARE_BITRATE_OPTIONS' `accountOnly` flag
+// and its doc comment above ShareResolution/ShareFps for the same pattern.
+export type ShareBitrate = "low" | "medium" | "high" | "ultra";
 
 type QualityPreset = {
   width: number;
@@ -34,6 +48,7 @@ type QualityPreset = {
 };
 
 const RESOLUTION_DIMENSIONS: Record<ShareResolution, { width: number; height: number }> = {
+  "1440p": { width: 2560, height: 1440 },
   "1080p": { width: 1920, height: 1080 },
   "720p": { width: 1280, height: 720 },
   "480p": { width: 854, height: 480 },
@@ -44,30 +59,35 @@ const BITRATE_KBPS: Record<ShareBitrate, number> = {
   low: 700,
   medium: 2000,
   high: 4000,
+  ultra: 8000,
 };
 
 // Mesh upload cost grows with every extra viewer, so past a few people in
 // the room the sender's bitrate is throttled down automatically instead of
 // letting the browser keep trying to push the full preset to everyone.
 // Presets that are already conservative have little slack to give up, so
-// they hold out longer before cutting anything; "high" has the most room to
-// spare and starts giving it up first.
+// they hold out longer before cutting anything; "ultra" has the most room
+// to spare (and the heaviest upload cost per peer to begin with) and starts
+// giving it up first.
 const THROTTLE_START_PEERS: Record<ShareBitrate, number> = {
   low: 6,
   medium: 4,
   high: 3,
+  ultra: 3,
 };
 // kbps shed per peer beyond the start threshold.
 const THROTTLE_STEP_KBPS: Record<ShareBitrate, number> = {
   low: 40,
   medium: 120,
   high: 250,
+  ultra: 400,
 };
 // Never throttled below this, no matter how crowded the room gets.
 const THROTTLE_FLOOR_KBPS: Record<ShareBitrate, number> = {
   low: 350,
   medium: 800,
   high: 1200,
+  ultra: 1500,
 };
 
 function throttledBitrateKbps(preset: ShareBitrate, peerCount: number): number {
@@ -79,13 +99,16 @@ function throttledBitrateKbps(preset: ShareBitrate, peerCount: number): number {
   return Math.max(THROTTLE_FLOOR_KBPS[preset], reduced);
 }
 
-const RESOLUTION_ORDER: ShareResolution[] = ["1080p", "720p", "480p", "360p"];
+const RESOLUTION_ORDER: ShareResolution[] = ["1440p", "1080p", "720p", "480p", "360p"];
 
 // Same idea as the bitrate throttle, one tier at a time: each peer-count
 // threshold in the list drops resolution one more step. A preset that's
 // already low starts from a shorter (or empty) list, so it takes more
-// people in the room before it has anything left to give up.
+// people in the room before it has anything left to give up. 1440p steps
+// down sooner than 1080p — it's a heavier encode to begin with, on top of
+// mesh P2P already uploading one full copy per viewer.
 const RESOLUTION_STEP_DOWN_PEERS: Record<ShareResolution, number[]> = {
+  "1440p": [2, 6, 10, 14],
   "1080p": [3, 10, 14],
   "720p": [6, 12],
   "480p": [8],
@@ -105,33 +128,136 @@ function getPeerCountServer() {
   return 0;
 }
 
-export const SHARE_RESOLUTION_OPTIONS: { value: ShareResolution; label: string }[] = [
+// `accountOnly` — WatchRoom.tsx still lists these for a guest (so the
+// picker itself advertises they exist), but renders them as a disabled
+// option suffixed "(conta necessária)" instead of a selectable one.
+export const SHARE_RESOLUTION_OPTIONS: { value: ShareResolution; label: string; accountOnly?: boolean }[] = [
+  { value: "1440p", label: "2K (1440p)", accountOnly: true },
   { value: "1080p", label: "1080p" },
   { value: "720p", label: "720p" },
   { value: "480p", label: "480p" },
   { value: "360p", label: "360p" },
 ];
 
-export const SHARE_FPS_OPTIONS: { value: ShareFps; label: string }[] = [
+export const SHARE_FPS_OPTIONS: { value: ShareFps; label: string; accountOnly?: boolean }[] = [
   { value: 15, label: "15 fps" },
   { value: 24, label: "24 fps" },
   { value: 30, label: "30 fps" },
   { value: 60, label: "60 fps" },
+  { value: 120, label: "120 fps", accountOnly: true },
 ];
 
-export const SHARE_BITRATE_OPTIONS: { value: ShareBitrate; label: string }[] = [
+export const SHARE_BITRATE_OPTIONS: { value: ShareBitrate; label: string; accountOnly?: boolean }[] = [
   { value: "low", label: "Bitrate baixo (~700 kbps)" },
   { value: "medium", label: "Bitrate médio (~2 Mbps)" },
   { value: "high", label: "Bitrate alto (~4 Mbps)" },
+  { value: "ultra", label: "Bitrate ultra (~8 Mbps)", accountOnly: true },
 ];
 
-function applySenderBitrate(sender: RTCRtpSender, maxBitrateKbps: number | undefined) {
+// Updated sender helper: also controls resolution scale-down and degradation mode.
+// For screen sharing, "maintain-resolution" keeps text and UI crisp by preferring
+// frame-rate drops over blurry pixels when the encoder is under pressure.
+function applySenderBitrateAndScale(
+  sender: RTCRtpSender,
+  maxBitrateKbps: number | undefined,
+  scaleResolutionDownBy: number = 1.0
+) {
   if (!maxBitrateKbps) return;
   const params = sender.getParameters();
   const encodings = params.encodings && params.encodings.length > 0 ? params.encodings : [{}];
-  encodings[0].maxBitrate = maxBitrateKbps * 1000;
+  encodings[0].maxBitrate = Math.round(maxBitrateKbps * 1000);
+  encodings[0].scaleResolutionDownBy = scaleResolutionDownBy;
+  // Prefer dropping frame rate over blurring resolution when bandwidth is tight.
+  // This keeps screen-share text readable even during congestion.
+  params.degradationPreference = "maintain-resolution";
   params.encodings = encodings;
   sender.setParameters(params).catch(() => {});
+}
+
+// Prefer VP9 > AV1 > H264 > VP8 for ~30–50% bandwidth savings over VP8 at
+// equivalent quality. Falls back gracefully on browsers that don't support
+// setCodecPreferences or that lack a given codec entirely.
+function applyVideoCodecPreferences(transceiver: RTCRtpTransceiver) {
+  if (typeof RTCRtpSender.getCapabilities !== "function") return;
+  const capabilities = RTCRtpSender.getCapabilities("video");
+  if (!capabilities?.codecs) return;
+  const order = ["video/VP9", "video/AV1", "video/H264", "video/VP8"];
+  const sorted = [...capabilities.codecs].sort((a, b) => {
+    const ia = order.indexOf(a.mimeType);
+    const ib = order.indexOf(b.mimeType);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+  try {
+    transceiver.setCodecPreferences(sorted);
+  } catch {
+    // Ignored — some older browser versions reject the call entirely.
+  }
+}
+
+// Stats-driven adaptive bitrate controller for a single sender. Polls
+// `remote-inbound-rtp` every 2 s and backs the bitrate off when the peer
+// reports congestion (high packet-loss or RTT), then gradually recovers once
+// the link is healthy again. Operates per peer-connection so a single slow
+// viewer doesn't degrade everyone else's stream.
+//
+// Returns a cleanup function; call it when the peer connection closes.
+function startPeerAdaptiveBitrateMonitor(
+  pc: RTCPeerConnection,
+  sender: RTCRtpSender,
+  baseBitrateKbps: number
+): () => void {
+  // Per-peer mutable state — deliberately not React state so updates are
+  // synchronous inside the interval without triggering re-renders.
+  let currentKbps = baseBitrateKbps;
+  let scaleDown = 1.0;
+  let healthyStreak = 0;
+
+  const id = setInterval(async () => {
+    // Don't poke a dead connection — both guards needed because some browsers
+    // leave `connectionState` at "disconnected" rather than "failed"/"closed".
+    if (pc.connectionState !== "connected") return;
+    if (sender.track === null) return;
+
+    let fractionLost = 0;
+    let rtt = 0;
+    try {
+      const stats = await pc.getStats(sender.track);
+      stats.forEach((report) => {
+        if (report.type === "remote-inbound-rtp" && report.kind === "video") {
+          const remoteReport = report as { fractionLost?: number; roundTripTime?: number };
+          fractionLost = remoteReport.fractionLost ?? 0;
+          rtt = remoteReport.roundTripTime ?? 0;
+        }
+      });
+    } catch {
+      return; // getStats can throw if the pc is in a transitional state.
+    }
+
+    if (fractionLost > 0.04 || rtt > 0.35) {
+      // Congestion detected — back off 25 %, floor at 250 kbps.
+      healthyStreak = 0;
+      currentKbps = Math.max(250, Math.round(currentKbps * 0.75));
+      // If bitrate is already very constrained, also downscale resolution to
+      // give the encoder headroom — half-res at low bitrate beats full-res
+      // encoded badly (macro-blocking, freezes).
+      scaleDown = currentKbps < 500 ? 2.0 : currentKbps < 900 ? 1.5 : 1.0;
+      applySenderBitrateAndScale(sender, currentKbps, scaleDown);
+    } else if (fractionLost <= 0.01 && rtt < 0.2) {
+      // Link is healthy — cautiously ramp back up (15 % per clean streak of 3).
+      healthyStreak++;
+      if (healthyStreak >= 3 && currentKbps < baseBitrateKbps) {
+        currentKbps = Math.min(baseBitrateKbps, Math.round(currentKbps * 1.15));
+        scaleDown = currentKbps >= baseBitrateKbps * 0.8 ? 1.0 : 1.25;
+        applySenderBitrateAndScale(sender, currentKbps, scaleDown);
+        healthyStreak = 0;
+      }
+    } else {
+      // Neutral zone — reset streak so recovery only happens after a clean run.
+      healthyStreak = 0;
+    }
+  }, 2000);
+
+  return () => clearInterval(id);
 }
 
 // Shared connection-management for a single media channel (screen share or
@@ -186,6 +312,11 @@ function useBroadcastChannel(
   // peer-list-driven reconnect loop below so it doesn't just re-open a sendPC
   // that was deliberately paused the moment anyone else joins/leaves the room.
   const viewerPausedPeers = useRef<Set<string>>(new Set());
+  // Cleanup functions for per-peer adaptive bitrate monitors (see
+  // startPeerAdaptiveBitrateMonitor). Keyed by peerId; called when the sendPC
+  // for that peer closes so the setInterval is always torn down with the PC.
+  const sendPCMonitors = useRef<Map<string, () => void>>(new Map());
+
 
   const clearStopped = useCallback((peerId: string) => {
     setStoppedPeers((prev) => {
@@ -223,8 +354,12 @@ function useBroadcastChannel(
       pc.close();
       sendPCs.current.delete(peerId);
     }
+    // Stop the per-peer adaptive bitrate monitor if one is running.
+    sendPCMonitors.current.get(peerId)?.();
+    sendPCMonitors.current.delete(peerId);
     pendingSendCandidates.current.delete(peerId);
   }, []);
+
 
   const closeRecvPC = useCallback(
     (peerId: string) => {
@@ -306,7 +441,20 @@ function useBroadcastChannel(
       sendPCs.current.set(peerId, pc);
       stream.getTracks().forEach((track) => {
         const sender = pc.addTrack(track, stream);
-        if (track.kind === "video") applySenderBitrate(sender, videoQualityRef.current?.maxBitrateKbps);
+        if (track.kind === "video") {
+          const transceivers = pc.getTransceivers();
+          const transceiver = transceivers.find((t) => t.sender === sender);
+          if (transceiver) applyVideoCodecPreferences(transceiver);
+
+          const baseBitrate = videoQualityRef.current?.maxBitrateKbps;
+          applySenderBitrateAndScale(sender, baseBitrate, 1.0);
+
+          if (baseBitrate) {
+            sendPCMonitors.current.get(peerId)?.();
+            const cleanup = startPeerAdaptiveBitrateMonitor(pc, sender, baseBitrate);
+            sendPCMonitors.current.set(peerId, cleanup);
+          }
+        }
       });
       pc.onicecandidate = (e) => {
         if (e.candidate) {
@@ -387,9 +535,16 @@ function useBroadcastChannel(
         frameRate: { ideal: videoQuality.frameRate },
       })
       .catch(() => {});
-    for (const pc of sendPCs.current.values()) {
+    for (const [peerId, pc] of sendPCs.current) {
       const sender = pc.getSenders().find((s) => s.track?.kind === "video");
-      if (sender) applySenderBitrate(sender, videoQuality.maxBitrateKbps);
+      if (sender) {
+        applySenderBitrateAndScale(sender, videoQuality.maxBitrateKbps, 1.0);
+        if (videoQuality.maxBitrateKbps) {
+          sendPCMonitors.current.get(peerId)?.();
+          const cleanup = startPeerAdaptiveBitrateMonitor(pc, sender, videoQuality.maxBitrateKbps);
+          sendPCMonitors.current.set(peerId, cleanup);
+        }
+      }
     }
   }, [videoQuality]);
 
@@ -401,6 +556,8 @@ function useBroadcastChannel(
     localStreamRef.current = null;
     setLocalStream(null);
     setSource(undefined);
+    for (const cleanup of sendPCMonitors.current.values()) cleanup();
+    sendPCMonitors.current.clear();
     for (const [peerId, pc] of sendPCs.current) {
       signalingClient.sendSignal(peerId, { channel, role: "broadcaster", kind: "stop" });
       pc.close();
@@ -425,6 +582,11 @@ function useBroadcastChannel(
     }
     try {
       const stream = await capture(requestedSource);
+      // Give the browser encoder a hint: screen shares prioritize sharp detail
+      // (text/UI readability), camera shares prioritize smooth motion.
+      stream.getVideoTracks().forEach((track) => {
+        track.contentHint = channel === "screen" ? "detail" : "motion";
+      });
       localStreamRef.current = stream;
       activeRef.current = true;
       setLocalStream(stream);
@@ -457,6 +619,15 @@ function useBroadcastChannel(
       const pc = new RTCPeerConnection(ICE_CONFIG);
       recvPCs.current.set(peerId, pc);
       pc.ontrack = (e) => {
+        // Smooth out network jitter for viewers with fluctuating or high-latency
+        // connections (absorbs micro-bursts without causing frame freezes).
+        if (e.receiver && "playoutDelayHint" in e.receiver) {
+          try {
+            (e.receiver as RTCRtpReceiver & { playoutDelayHint?: number }).playoutDelayHint = 0.1;
+          } catch {
+            // Ignored on unsupported browsers
+          }
+        }
         setRemoteStreams((prev) => ({ ...prev, [peerId]: e.streams[0] }));
         clearResuming(peerId);
       };
@@ -718,7 +889,7 @@ export function useRoomMedia(room: string) {
   // state (same pattern as noiseSuppressionOnRef below) because capture()
   // only runs once per share start and would otherwise close over a stale
   // value from whatever render happened to create it.
-  const [shareResolution, setShareResolutionState] = useState<ShareResolution>("720p");
+  const [shareResolution, setShareResolutionState] = useState<ShareResolution>("1080p");
   const [shareFps, setShareFpsState] = useState<ShareFps>(30);
   const [shareBitrate, setShareBitrateState] = useState<ShareBitrate>("medium");
   // On by default: automatically steps resolution/bitrate down as the room
@@ -839,8 +1010,10 @@ export function useRoomMedia(room: string) {
   // Mirrors noiseSuppressionOn below without going stale inside the capture
   // closure, which useBroadcastChannel only ever calls once per mic start
   // (long after a later render could have updated a captured `const`).
-  const noiseSuppressionOnRef = useRef(true);
-  const [noiseSuppressionOn, setNoiseSuppressionOnState] = useState(true);
+  // Seeded from localStorage so a returning visitor's last choice carries
+  // over instead of resetting to "on" every reload.
+  const noiseSuppressionOnRef = useRef(getStoredNoiseSuppressionOn());
+  const [noiseSuppressionOn, setNoiseSuppressionOnState] = useState(getStoredNoiseSuppressionOn);
   // Non-null only while the mic is active AND RNNoise actually loaded —
   // used both to reroute the live audio graph on toggle and to tell the UI
   // whether suppression is really in effect right now.
@@ -864,14 +1037,28 @@ export function useRoomMedia(room: string) {
   );
 
   const toggleMic = useCallback(() => {
+    const next = !mic.active;
+    setStoredMicOn(next);
     if (mic.active) mic.stop();
     else mic.start();
   }, [mic]);
+
+  // Restores a returning visitor's mic-on preference — fires on mount and
+  // again after a room switch (the mic itself always stops on a room
+  // change, same as screen/camera share, so without this it would silently
+  // stay off instead of carrying over like noise suppression/mute do).
+  // Only ever reads the persisted value once per room; a manual toggle
+  // afterwards is respected instead of being fought on the next render.
+  useEffect(() => {
+    if (getStoredMicOn()) mic.start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room]);
 
   const toggleNoiseSuppression = useCallback(() => {
     const next = !noiseSuppressionOnRef.current;
     noiseSuppressionOnRef.current = next;
     setNoiseSuppressionOnState(next);
+    setStoredNoiseSuppressionOn(next);
     setGraphSuppressionEnabled(micGraphRef.current, next);
     trackEvent(next ? "noise_suppression_on" : "noise_suppression_off");
   }, []);

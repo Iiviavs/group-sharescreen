@@ -12,6 +12,7 @@ export type Account = {
   updatedAt: number;
 };
 
+
 const TOKEN_STORAGE_KEY = "sharescreen:accountToken";
 
 // localStorage (not sessionStorage) — unlike the admin token in

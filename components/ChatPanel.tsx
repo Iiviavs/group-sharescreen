@@ -4,17 +4,42 @@ import { useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import type { ChatMessage } from "@/lib/signalingClient";
 import type { GifResult } from "@/app/api/giphy/search/route";
 import { GifPicker } from "@/components/GifPicker";
+import { withGuestSuffix } from "@/lib/displayName";
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
 const URL_PATTERN = /(https?:\/\/[^\s]+|www\.[^\s]+)/g;
+// "@Name" mentions — letters/numbers/underscore covers every display name
+// this app accepts, \p{L}/\p{N} (Unicode-aware) so an accented name like
+// "@José" still highlights correctly.
+const MENTION_PATTERN = /@[\p{L}\p{N}_]+/gu;
+
+// Splits a plain-text (non-URL) segment on "@mentions" and colors just that
+// token blue — visible to every reader, not only the person being
+// mentioned, so a mention reads as a mention for the whole room.
+function highlightMentions(text: string, keyPrefix: string) {
+  const parts = text.split(MENTION_PATTERN);
+  const mentions = text.match(MENTION_PATTERN) ?? [];
+  const out: (string | React.ReactNode)[] = [];
+  parts.forEach((part, i) => {
+    if (part) out.push(part);
+    if (i < mentions.length) {
+      out.push(
+        <span key={`${keyPrefix}-${i}`} className="font-medium text-blue-600 dark:text-blue-400">
+          {mentions[i]}
+        </span>
+      );
+    }
+  });
+  return out;
+}
 
 function linkifyText(text: string) {
   const parts = text.split(URL_PATTERN);
   return parts.map((part, i) => {
-    if (!part.match(URL_PATTERN)) return part;
+    if (!part.match(URL_PATTERN)) return highlightMentions(part, `mention-${i}`);
     const href = part.startsWith("www.") ? `https://${part}` : part;
     return (
       <a
@@ -33,12 +58,18 @@ function linkifyText(text: string) {
 export function ChatPanel({
   messages,
   selfId,
+  selfName,
   onSend,
   onSendGif,
   blockedMessage,
+  heightClassName = "h-72",
 }: {
   messages: ChatMessage[];
   selfId: string | null;
+  // Used to detect "@YourName" mentions for the yellow highlight below —
+  // omitted for the admin moderation view, which has no identity of its own
+  // in the room it's watching.
+  selfName?: string | null;
   // Omitted for a read-only viewer (the admin moderation view) — hides the
   // input form instead of sending into a room the viewer isn't a member of.
   onSend?: (text: string) => void;
@@ -47,6 +78,10 @@ export function ChatPanel({
   // word (see signalingClient's chatBlockedMessage) — shown once, right
   // above the input, and cleared by the client on the next send attempt.
   blockedMessage?: string | null;
+  // Lets a caller give this a taller box than the default fixed 18rem — e.g.
+  // WatchRoom.tsx's mobile tab view, where chat is the sole content of its
+  // pane instead of one of several things stacked in a shared sidebar.
+  heightClassName?: string;
 }) {
   const [input, setInput] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -88,7 +123,10 @@ export function ChatPanel({
   }
 
   return (
-    <div className="mt-4 flex h-72 flex-col overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
+    <div
+      className={`mt-4 mb-4 flex ${heightClassName} flex-col overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800`}
+      style={{ minHeight: "245px" }}
+    >
       <h2 className="border-b border-zinc-200 px-3 py-2 text-sm font-semibold text-zinc-700 dark:border-zinc-800 dark:text-zinc-300">
         Chat
       </h2>
@@ -101,15 +139,23 @@ export function ChatPanel({
         ) : (
           messages.map((m) => {
             const isSelf = m.from === selfId;
+            const isMention =
+              !!selfName &&
+              m.kind !== "gif" &&
+              m.text.toLowerCase().includes(`@${selfName}`.toLowerCase());
             return (
-              <div key={m.id} className="text-sm">
+              <div
+                key={m.id}
+                className={`-mx-1.5 rounded-md px-1.5 py-1 text-sm ${
+                  isMention ? "bg-yellow-200 dark:bg-blue-500/25" : ""
+                }`}
+              >
                 <div className="flex items-baseline gap-1.5">
                   <span
-                    className={`font-medium ${
-                      isSelf ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-700 dark:text-zinc-300"
-                    }`}
+                    className={`font-medium ${isSelf ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-700 dark:text-zinc-300"
+                      }`}
                   >
-                    {m.name}
+                    {withGuestSuffix(m.name, m.isGuest)}
                   </span>
                   <span className="text-xs text-zinc-400 dark:text-zinc-600">{formatTime(m.ts)}</span>
                 </div>

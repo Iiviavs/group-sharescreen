@@ -5,7 +5,7 @@ import { adminSignalingClient, type AdminPeerInfo } from "./adminClient";
 import type { ChatMessage } from "./signalingClient";
 import { ICE_CONFIG } from "./iceConfig";
 
-type Channel = "screen" | "mic";
+type Channel = "screen" | "camera" | "mic";
 
 type SignalData = {
   channel?: Channel;
@@ -234,11 +234,16 @@ export type AdminRoomViewerState = {
   chatMessages: ChatMessage[];
   selfId: string | null;
   screenStreams: Record<string, MediaStream>;
+  cameraStreams: Record<string, MediaStream>;
   micStreams: Record<string, MediaStream>;
   stoppedScreenPeers: Set<string>;
   resumingScreenPeers: Set<string>;
   stopWatchingScreenPeer: (peerId: string) => void;
   resumeWatchingScreenPeer: (peerId: string) => void;
+  stoppedCameraPeers: Set<string>;
+  resumingCameraPeers: Set<string>;
+  stopWatchingCameraPeer: (peerId: string) => void;
+  resumeWatchingCameraPeer: (peerId: string) => void;
 };
 
 // Joins `room` as a silent moderator (see server/signaling.ts's
@@ -253,6 +258,7 @@ export function useAdminRoomViewer(room: string, token: string | null): AdminRoo
   }, [room, token]);
 
   const screen = useAdminChannel("screen");
+  const camera = useAdminChannel("camera");
   const mic = useAdminChannel("mic");
 
   const [state, setState] = useState(adminSignalingClient.getSnapshot());
@@ -272,10 +278,15 @@ export function useAdminRoomViewer(room: string, token: string | null): AdminRoo
     chatMessages: state.chatMessages,
     selfId: state.selfId,
     screenStreams: screen.remoteStreams,
+    cameraStreams: camera.remoteStreams,
     micStreams: mic.remoteStreams,
     stoppedScreenPeers: screen.stoppedPeers,
     resumingScreenPeers: screen.resumingPeers,
     stopWatchingScreenPeer: screen.stopWatchingPeer,
     resumeWatchingScreenPeer: screen.resumeWatchingPeer,
+    stoppedCameraPeers: camera.stoppedPeers,
+    resumingCameraPeers: camera.resumingPeers,
+    stopWatchingCameraPeer: camera.stopWatchingPeer,
+    resumeWatchingCameraPeer: camera.resumeWatchingPeer,
   };
 }

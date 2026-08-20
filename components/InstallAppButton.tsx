@@ -1,0 +1,142 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { trackEvent } from "@/lib/analytics";
+import { DownloadIcon, ShareIcon } from "@/components/icons";
+
+// Fired by Chromium browsers (Chrome/Edge on Android, desktop Chrome) when
+// the page meets PWA installability criteria (manifest + icons + served
+// over https — see app/manifest.ts and layout.tsx's `metadata.manifest`).
+// Not a DOM-lib-standard event yet, hence the manual typing.
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
+
+const DISMISSED_STORAGE_KEY = "sharescreen:installPromptDismissed";
+
+function isStandalone(): boolean {
+  if (typeof window === "undefined") return false;
+  // iOS Safari never fires/matches the standard media query — it exposes
+  // its own `navigator.standalone` instead.
+  return (
+    window.matchMedia?.("(display-mode: standalone)").matches === true ||
+    (window.navigator as unknown as { standalone?: boolean }).standalone === true
+  );
+}
+
+function isIos(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /iphone|ipad|ipod/i.test(navigator.userAgent);
+}
+
+// Small floating, dismissible control for "install GoLive as an app" — a
+// deliberate explicit affordance rather than relying on visitors to notice
+// the browser's own (easy to miss) install icon. Android/Chrome gets a real
+// one-tap install via beforeinstallprompt; iOS Safari has no such API, so it
+// gets instructions for the manual "Share > Add to Home Screen" flow
+// instead. Once installed (running standalone) or dismissed, it stays gone
+// (localStorage) — this is a one-time nudge, not a recurring nag.
+export function InstallAppButton() {
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [showIosHint, setShowIosHint] = useState(false);
+  // Starts hidden — both branches below only ever reveal it from an effect
+  // (after checking localStorage/standalone/platform), so there's no
+  // server/client render mismatch and no flash of a control that's about to
+  // disappear anyway.
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (isStandalone()) return;
+    try {
+      if (window.localStorage.getItem(DISMISSED_STORAGE_KEY) === "true") return;
+    } catch {
+      // ignored - localStorage may be unavailable (private mode, quota, etc.)
+    }
+
+    if (isIos()) {
+      // Deferred one tick via setTimeout (imperceptible) rather than
+      // calling setState synchronously in the effect body — matches
+      // AnnouncementBanner.tsx's identical "reveal something after checking
+      // an external source once on mount" pattern.
+      const id = setTimeout(() => {
+        setShowIosHint(true);
+        setVisible(true);
+      }, 0);
+      return () => clearTimeout(id);
+    }
+
+    // Android/Chrome/Edge: wait for the browser to actually confirm
+    // installability instead of showing a button that might not do
+    // anything — preventDefault suppresses the browser's own mini-infobar
+    // so this control is the only prompt shown.
+    function onBeforeInstallPrompt(e: Event) {
+      e.preventDefault();
+      setDeferredPrompt(e as BeforeInstallPromptEvent);
+      setVisible(true);
+    }
+    window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+    return () => window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+  }, []);
+
+  function dismiss() {
+    setVisible(false);
+    try {
+      window.localStorage.setItem(DISMISSED_STORAGE_KEY, "true");
+    } catch {
+      // ignored - localStorage may be unavailable (private mode, quota, etc.)
+    }
+  }
+
+  async function handleInstallClick() {
+    if (!deferredPrompt) return;
+    trackEvent("install_app_prompt_shown");
+    await deferredPrompt.prompt();
+    const choice = await deferredPrompt.userChoice;
+    setDeferredPrompt(null);
+    trackEvent("install_app_prompt_result", { outcome: choice.outcome });
+    // Either way there's nothing left to prompt — a real browser install
+    // prompt can only be triggered once per deferred event.
+    dismiss();
+  }
+
+  if (!visible) return null;
+
+  return (
+    <div className="fixed inset-x-4 bottom-4 z-40 mx-auto flex max-w-sm items-center gap-3 rounded-xl border border-black/10 bg-white p-3 shadow-lg dark:border-white/10 dark:bg-zinc-900 sm:inset-x-auto sm:right-4">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-950 text-white dark:bg-zinc-50 dark:text-zinc-950">
+        <DownloadIcon className="h-5 w-5" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold text-zinc-950 dark:text-zinc-50">Instalar o GoLive</p>
+        {showIosHint ? (
+          <p className="mt-0.5 flex flex-wrap items-center gap-1 text-xs text-zinc-600 dark:text-zinc-400">
+            Toque em
+            <ShareIcon className="h-3.5 w-3.5 shrink-0" />
+            e depois em &quot;Adicionar à Tela de Início&quot;
+          </p>
+        ) : (
+          <p className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">Acesso rápido, direto da tela inicial.</p>
+        )}
+      </div>
+      {!showIosHint && (
+        <button
+          type="button"
+          onClick={handleInstallClick}
+          className="shrink-0 rounded-lg bg-zinc-950 px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90 dark:bg-zinc-50 dark:text-zinc-950"
+        >
+          Instalar
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={dismiss}
+        aria-label="Fechar"
+        title="Fechar"
+        className="shrink-0 text-lg leading-none text-zinc-400 transition hover:text-zinc-700 dark:hover:text-zinc-200"
+      >
+        ×
+      </button>
+    </div>
+  );
+}

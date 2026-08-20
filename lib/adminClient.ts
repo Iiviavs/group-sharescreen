@@ -4,7 +4,19 @@ import type { ChatMessage } from "./signalingClient";
 
 const WS_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || "ws://localhost:4000/ws";
 
-export type AdminPeerInfo = { id: string; name: string; sharing: boolean; mic: boolean };
+export type AdminPeerInfo = {
+  id: string;
+  name: string;
+  sharing: boolean;
+  mic: boolean;
+  // Stable per-account/per-guest identity (see server/signaling.ts's
+  // stableUserId) — same field WatchRoom's PeerInfo carries, used the same
+  // way here to key persisted per-peer volume dials across reconnects.
+  userId?: string;
+  // Same field/meaning as WatchRoom's PeerInfo.isGuest — see its doc
+  // comment in signalingClient.ts.
+  isGuest?: boolean;
+};
 
 export type AdminClientStatus = "idle" | "connecting" | "open" | "closed" | "unauthorized";
 
@@ -40,6 +52,15 @@ class AdminSignalingClient {
   private ws: WebSocket | null = null;
   private listeners = new Set<Listener>();
   private signalListeners = new Set<SignalListener>();
+  // Mirrors signalingClient.ts's reconnect-with-backoff — the original
+  // version here never retried at all, so any brief network hiccup left a
+  // moderator stuck on "Conectando..." forever until they manually left and
+  // reopened the viewer (this is most of what read as "a tela demora mais
+  // pra carregar").
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempts = 0;
+  private desiredRoom: string | null = null;
+  private desiredToken: string | null = null;
 
   state: AdminClientState = initialState;
 
@@ -62,10 +83,21 @@ class AdminSignalingClient {
 
   connect(room: string, token: string) {
     if (typeof window === "undefined") return;
-    this.disconnect();
+    this.desiredRoom = room;
+    this.desiredToken = token;
+    this.reconnectAttempts = 0;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.openSocket();
+  }
+
+  private openSocket() {
+    this.closeSocket();
     this.setState({
       status: "connecting",
-      room,
+      room: this.desiredRoom,
       peers: [],
       chatMessages: [],
       selfId: null,
@@ -76,8 +108,9 @@ class AdminSignalingClient {
     this.ws = ws;
 
     ws.onopen = () => {
+      this.reconnectAttempts = 0;
       this.setState({ status: "open" });
-      ws.send(JSON.stringify({ type: "admin-join", room, token }));
+      ws.send(JSON.stringify({ type: "admin-join", room: this.desiredRoom, token: this.desiredToken }));
     };
 
     ws.onmessage = (event) => {
@@ -91,18 +124,45 @@ class AdminSignalingClient {
     };
 
     ws.onclose = () => {
-      if (this.state.status !== "unauthorized") this.setState({ status: "closed" });
+      if (this.state.status === "unauthorized") return;
+      this.setState({ status: "closed" });
+      this.scheduleReconnect();
     };
 
     ws.onerror = () => ws.close();
   }
 
-  disconnect() {
+  private scheduleReconnect() {
+    if (this.reconnectTimer || !this.desiredRoom || !this.desiredToken) return;
+    const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 10000);
+    this.reconnectAttempts += 1;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.openSocket();
+    }, delay);
+  }
+
+  // Closes the socket without treating it as a dropped connection — used
+  // both by an intentional disconnect() and internally before opening a
+  // fresh one, so neither ever schedules a spurious reconnect for a close
+  // this client itself initiated.
+  private closeSocket() {
     if (this.ws) {
       const ws = this.ws;
       this.ws = null;
+      ws.onclose = null;
       ws.close();
     }
+  }
+
+  disconnect() {
+    this.desiredRoom = null;
+    this.desiredToken = null;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.closeSocket();
     this.setState(initialState);
   }
 
@@ -121,14 +181,18 @@ class AdminSignalingClient {
         break;
       case "peer-joined": {
         const alreadyKnown = this.state.peers.some((p) => p.id === msg.id);
+        const userId = typeof msg.userId === "string" ? msg.userId : undefined;
+        const isGuest = Boolean(msg.isGuest);
         this.setState({
           peers: alreadyKnown
             ? this.state.peers.map((p) =>
-                p.id === msg.id ? { ...p, name: msg.name as string, sharing: false, mic: false } : p
+                p.id === msg.id
+                  ? { ...p, name: msg.name as string, sharing: false, mic: false, userId, isGuest }
+                  : p
               )
             : [
                 ...this.state.peers,
-                { id: msg.id as string, name: msg.name as string, sharing: false, mic: false },
+                { id: msg.id as string, name: msg.name as string, sharing: false, mic: false, userId, isGuest },
               ],
         });
         break;
@@ -166,6 +230,7 @@ class AdminSignalingClient {
           id: msg.id as string,
           from: msg.from as string,
           name: msg.name as string,
+          isGuest: Boolean(msg.isGuest),
           kind: msg.kind === "gif" ? "gif" : "text",
           text: (msg.text as string) ?? "",
           url: typeof msg.url === "string" ? msg.url : undefined,
@@ -175,9 +240,15 @@ class AdminSignalingClient {
         break;
       }
       case "error":
+        // Not worth retrying — an admin token that was rejected once (bad
+        // token, insufficient flags) will be rejected again identically, so
+        // this drops the desired room/token to stop scheduleReconnect from
+        // ever firing for it instead of looping forever against a
+        // connection that can never succeed.
+        this.desiredRoom = null;
+        this.desiredToken = null;
         this.setState({ status: "unauthorized", error: (msg.message as string) ?? "Não autorizado." });
-        this.ws?.close();
-        this.ws = null;
+        this.closeSocket();
         break;
       default:
         break;

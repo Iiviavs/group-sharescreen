@@ -7,6 +7,7 @@ import { VolumeSlider } from "./VolumeSlider";
 export function ParticipantRow({
   name,
   isSelf = false,
+  isGuest = false,
   micOn,
   sharing,
   micStream,
@@ -17,6 +18,7 @@ export function ParticipantRow({
 }: {
   name: string;
   isSelf?: boolean;
+  isGuest?: boolean;
   micOn: boolean;
   sharing: boolean;
   micStream?: MediaStream | null;
@@ -43,6 +45,7 @@ export function ParticipantRow({
         }`}
       >
         {name}
+        {isGuest && <span className="font-normal text-zinc-500"> (guest)</span>}
         {isSelf && <span className="font-normal text-zinc-500"> (você)</span>}
       </span>
       <span className="flex shrink-0 items-center gap-2 text-zinc-400 dark:text-zinc-500">
