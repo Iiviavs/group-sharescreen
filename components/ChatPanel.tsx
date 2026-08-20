@@ -10,11 +10,35 @@ function formatTime(ts: number): string {
 }
 
 const URL_PATTERN = /(https?:\/\/[^\s]+|www\.[^\s]+)/g;
+// "@Name" mentions — letters/numbers/underscore covers every display name
+// this app accepts, \p{L}/\p{N} (Unicode-aware) so an accented name like
+// "@José" still highlights correctly.
+const MENTION_PATTERN = /@[\p{L}\p{N}_]+/gu;
+
+// Splits a plain-text (non-URL) segment on "@mentions" and colors just that
+// token blue — visible to every reader, not only the person being
+// mentioned, so a mention reads as a mention for the whole room.
+function highlightMentions(text: string, keyPrefix: string) {
+  const parts = text.split(MENTION_PATTERN);
+  const mentions = text.match(MENTION_PATTERN) ?? [];
+  const out: (string | React.ReactNode)[] = [];
+  parts.forEach((part, i) => {
+    if (part) out.push(part);
+    if (i < mentions.length) {
+      out.push(
+        <span key={`${keyPrefix}-${i}`} className="font-medium text-blue-600 dark:text-blue-400">
+          {mentions[i]}
+        </span>
+      );
+    }
+  });
+  return out;
+}
 
 function linkifyText(text: string) {
   const parts = text.split(URL_PATTERN);
   return parts.map((part, i) => {
-    if (!part.match(URL_PATTERN)) return part;
+    if (!part.match(URL_PATTERN)) return highlightMentions(part, `mention-${i}`);
     const href = part.startsWith("www.") ? `https://${part}` : part;
     return (
       <a
