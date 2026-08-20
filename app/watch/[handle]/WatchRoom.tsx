@@ -468,6 +468,42 @@ export function WatchRoom({ handle }: { handle: string }) {
     );
   }
 
+  // Ran out of automatic retries resolving a Turnstile challenge for this
+  // join (see signalingClient.ts's performJoin/MAX_JOIN_RETRIES) — unlike
+  // "banned" above, this is usually transient (network blip, ad blocker
+  // interfering with the challenge script), so offer a manual retry instead
+  // of a dead end.
+  if (state.joinError) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 px-4 text-center">
+        <p className="text-lg font-medium text-zinc-900 dark:text-zinc-100">
+          Não foi possível entrar na sala.
+        </p>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">{state.joinError}</p>
+        <button
+          type="button"
+          onClick={() => signalingClient.joinRoom(handle)}
+          className="rounded-lg bg-zinc-950 px-4 py-2.5 font-medium text-white transition hover:bg-zinc-800 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+        >
+          Tentar novamente
+        </button>
+      </div>
+    );
+  }
+
+  // Registered but the "join" for this room hasn't resolved into a
+  // "room-state" yet — covers the (usually sub-second) time spent resolving
+  // a Turnstile token before the join is even sent. Without this the room
+  // UI below would render immediately with an empty peer list, looking
+  // joined when it isn't yet.
+  if (!state.room) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
+        <p className="text-zinc-600 dark:text-zinc-400">Entrando na sala...</p>
+      </div>
+    );
+  }
+
   // Moderator "ghost" peers (see server/signaling.ts's admin-join) ride the
   // same peer list so their WebRTC connections get set up transparently,
   // but must never show up to real participants — filtered out here rather
