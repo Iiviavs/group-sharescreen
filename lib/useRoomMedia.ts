@@ -28,8 +28,14 @@ type SignalData = {
 // a big room that upload is often the actual bottleneck, so letting the
 // broadcaster trade resolution/fps/bitrate down independently is the one
 // lever that helps without a server-side media relay.
-export type ShareResolution = "1080p" | "720p" | "480p" | "360p";
-export type ShareFps = 15 | 24 | 30 | 60;
+// "1440p" (2K) and 120fps are account-only — see SHARE_RESOLUTION_OPTIONS/
+// SHARE_FPS_OPTIONS' `accountOnly` flag and WatchRoom.tsx, which lists them
+// for a guest as disabled options ("conta necessária") rather than letting
+// one be selected. Nothing in this file itself checks account status: a
+// guest simply never has a code path that could set either value, since a
+// disabled <option> can't be chosen.
+export type ShareResolution = "1440p" | "1080p" | "720p" | "480p" | "360p";
+export type ShareFps = 15 | 24 | 30 | 60 | 120;
 export type ShareBitrate = "low" | "medium" | "high";
 
 type QualityPreset = {
@@ -40,6 +46,7 @@ type QualityPreset = {
 };
 
 const RESOLUTION_DIMENSIONS: Record<ShareResolution, { width: number; height: number }> = {
+  "1440p": { width: 2560, height: 1440 },
   "1080p": { width: 1920, height: 1080 },
   "720p": { width: 1280, height: 720 },
   "480p": { width: 854, height: 480 },
@@ -85,13 +92,16 @@ function throttledBitrateKbps(preset: ShareBitrate, peerCount: number): number {
   return Math.max(THROTTLE_FLOOR_KBPS[preset], reduced);
 }
 
-const RESOLUTION_ORDER: ShareResolution[] = ["1080p", "720p", "480p", "360p"];
+const RESOLUTION_ORDER: ShareResolution[] = ["1440p", "1080p", "720p", "480p", "360p"];
 
 // Same idea as the bitrate throttle, one tier at a time: each peer-count
 // threshold in the list drops resolution one more step. A preset that's
 // already low starts from a shorter (or empty) list, so it takes more
-// people in the room before it has anything left to give up.
+// people in the room before it has anything left to give up. 1440p steps
+// down sooner than 1080p — it's a heavier encode to begin with, on top of
+// mesh P2P already uploading one full copy per viewer.
 const RESOLUTION_STEP_DOWN_PEERS: Record<ShareResolution, number[]> = {
+  "1440p": [2, 6, 10, 14],
   "1080p": [3, 10, 14],
   "720p": [6, 12],
   "480p": [8],
@@ -111,18 +121,23 @@ function getPeerCountServer() {
   return 0;
 }
 
-export const SHARE_RESOLUTION_OPTIONS: { value: ShareResolution; label: string }[] = [
+// `accountOnly` — WatchRoom.tsx still lists these for a guest (so the
+// picker itself advertises they exist), but renders them as a disabled
+// option suffixed "(conta necessária)" instead of a selectable one.
+export const SHARE_RESOLUTION_OPTIONS: { value: ShareResolution; label: string; accountOnly?: boolean }[] = [
+  { value: "1440p", label: "2K (1440p)", accountOnly: true },
   { value: "1080p", label: "1080p" },
   { value: "720p", label: "720p" },
   { value: "480p", label: "480p" },
   { value: "360p", label: "360p" },
 ];
 
-export const SHARE_FPS_OPTIONS: { value: ShareFps; label: string }[] = [
+export const SHARE_FPS_OPTIONS: { value: ShareFps; label: string; accountOnly?: boolean }[] = [
   { value: 15, label: "15 fps" },
   { value: 24, label: "24 fps" },
   { value: 30, label: "30 fps" },
   { value: 60, label: "60 fps" },
+  { value: 120, label: "120 fps", accountOnly: true },
 ];
 
 export const SHARE_BITRATE_OPTIONS: { value: ShareBitrate; label: string }[] = [

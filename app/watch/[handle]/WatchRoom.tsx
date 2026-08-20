@@ -42,6 +42,7 @@ import {
   SpeakerIcon,
   SpeakerMuteIcon,
   MoreIcon,
+  ChevronUpIcon,
 } from "@/components/icons";
 import { MdHome } from "react-icons/md";
 
@@ -164,6 +165,24 @@ export function WatchRoom({ handle }: { handle: string }) {
   // via this tab switcher instead of being stacked in one long scroll — see
   // the aside below. Unused (both always shown) from lg up.
   const [mobileTab, setMobileTab] = useState<"participants" | "chat">("participants");
+  // Below lg, this pane starts collapsed to just its tab bar (+ the ad card)
+  // so the video area gets nearly the whole screen — tapping a tab expands
+  // it back up over the video instead of it defaulting open and burying the
+  // transmissions the way the plain always-expanded tabs did. Unused (the
+  // pane is just always expanded) from lg up.
+  const [drawerExpanded, setDrawerExpanded] = useState(false);
+
+  // Tapping the tab that's already open collapses the drawer back down;
+  // tapping the other one switches to it (opening the drawer if it wasn't
+  // already).
+  function selectMobileTab(tab: "participants" | "chat") {
+    if (mobileTab === tab && drawerExpanded) {
+      setDrawerExpanded(false);
+    } else {
+      setMobileTab(tab);
+      setDrawerExpanded(true);
+    }
+  }
   const previousNameRef = useRef(state.name);
 
   // Same hydration-flash guard as page.tsx: useAccountToken()/
@@ -660,8 +679,13 @@ export function WatchRoom({ handle }: { handle: string }) {
                             className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
                           >
                             {SHARE_RESOLUTION_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
+                              <option
+                                key={opt.value}
+                                value={opt.value}
+                                disabled={opt.accountOnly && !state.account}
+                              >
                                 {opt.label}
+                                {opt.accountOnly && !state.account ? " (conta necessária)" : ""}
                               </option>
                             ))}
                           </select>
@@ -681,8 +705,13 @@ export function WatchRoom({ handle }: { handle: string }) {
                             className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
                           >
                             {SHARE_FPS_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
+                              <option
+                                key={opt.value}
+                                value={opt.value}
+                                disabled={opt.accountOnly && !state.account}
+                              >
                                 {opt.label}
+                                {opt.accountOnly && !state.account ? " (conta necessária)" : ""}
                               </option>
                             ))}
                           </select>
@@ -1034,14 +1063,19 @@ export function WatchRoom({ handle }: { handle: string }) {
           )}
         </main>
 
-        {/* Capped and independently scrollable on small screens — without a
-            bound here, participants/chat/the ad card could outgrow the
-            space actually left below the video area and end up visually
-            stacked wrong (the ad landing over the chat) instead of just
-            being reachable by scrolling within this pane. Uncapped again
-            from lg: on, where it already gets a fixed height matching
-            <main> via lg:h-full. */}
-        <aside className="flex w-full max-h-[65vh] shrink-0 flex-col overflow-y-auto lg:h-full lg:max-h-none lg:w-64">
+        {/* Below lg, this starts collapsed to just its tab bar (+ the ad
+            card) — no max-height needed, it just sizes to that little
+            content, so <main> (flex-1) claims almost the entire screen for
+            video. Tapping a tab expands it (see drawerExpanded/
+            selectMobileTab) and only *then* does it grow to max-h-[60vh],
+            rising up over the video from the bottom rather than sitting
+            permanently on top of it. From lg: on it's uncapped and fixed to
+            <main>'s height via lg:h-full, exactly like before — the tab
+            bar/expand state doesn't exist at that width. */}
+        <aside
+          className={`flex w-full shrink-0 flex-col overflow-y-auto lg:h-full lg:max-h-none lg:w-64 ${drawerExpanded ? "max-h-[60vh]" : ""
+            }`}
+        >
           {(state.status === "connecting" || state.status === "closed") && (
             <p className="mb-1 flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-500">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
@@ -1059,67 +1093,79 @@ export function WatchRoom({ handle }: { handle: string }) {
           <div className="mb-2 flex gap-1 lg:hidden">
             <button
               type="button"
-              onClick={() => setMobileTab("participants")}
-              className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition ${mobileTab === "participants"
+              onClick={() => selectMobileTab("participants")}
+              className={`flex flex-1 items-center justify-center gap-1 rounded-lg px-3 py-1.5 text-sm font-medium transition ${mobileTab === "participants" && drawerExpanded
                 ? "bg-zinc-950 text-white dark:bg-zinc-50 dark:text-zinc-950"
                 : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
                 }`}
             >
               Participantes ({peerCount})
+              {mobileTab === "participants" && (
+                <ChevronUpIcon
+                  className={`h-3.5 w-3.5 shrink-0 transition-transform ${drawerExpanded ? "" : "rotate-180"}`}
+                />
+              )}
             </button>
             <button
               type="button"
-              onClick={() => setMobileTab("chat")}
-              className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition ${mobileTab === "chat"
+              onClick={() => selectMobileTab("chat")}
+              className={`flex flex-1 items-center justify-center gap-1 rounded-lg px-3 py-1.5 text-sm font-medium transition ${mobileTab === "chat" && drawerExpanded
                 ? "bg-zinc-950 text-white dark:bg-zinc-50 dark:text-zinc-950"
                 : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
                 }`}
             >
               Chat
+              {mobileTab === "chat" && (
+                <ChevronUpIcon
+                  className={`h-3.5 w-3.5 shrink-0 transition-transform ${drawerExpanded ? "" : "rotate-180"}`}
+                />
+              )}
             </button>
           </div>
 
-          <div className={`${mobileTab === "participants" ? "block" : "hidden"} lg:block`}>
-            <h2 className="mb-2 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
-              Participantes
-            </h2>
-            <ul className="flex flex-col gap-1.5">
-              <ParticipantRow
-                name={state.name}
-                isSelf
-                micOn={isMicOn}
-                sharing={isSharing}
-                micStream={localMicStream}
-              />
-              {visiblePeers.map((p) => {
-                const volumeKey = p.userId ?? p.id;
-                return (
-                  <ParticipantRow
-                    key={p.id}
-                    name={p.name}
-                    micOn={p.mic}
-                    sharing={p.sharing}
-                    micStream={remoteMicStreams[p.id]}
-                    muted={micsMuted || mutedPeerIds.has(p.id)}
-                    onToggleMute={() => togglePeerMute(p.id)}
-                    volume={peerVolumes[volumeKey] ?? 1}
-                    onVolumeChange={(volume) => setPeerVolume(volumeKey, volume)}
-                  />
-                );
-              })}
-            </ul>
-          </div>
+          <div className={`${drawerExpanded ? "block" : "hidden"} lg:block`}>
+            <div className={`${mobileTab === "participants" ? "block" : "hidden"} lg:block`}>
+              <h2 className="mb-2 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+                Participantes ({peerCount})
+              </h2>
+              <ul className="flex flex-col gap-1.5">
+                <ParticipantRow
+                  name={state.name}
+                  isSelf
+                  micOn={isMicOn}
+                  sharing={isSharing}
+                  micStream={localMicStream}
+                />
+                {visiblePeers.map((p) => {
+                  const volumeKey = p.userId ?? p.id;
+                  return (
+                    <ParticipantRow
+                      key={p.id}
+                      name={p.name}
+                      micOn={p.mic}
+                      sharing={p.sharing}
+                      micStream={remoteMicStreams[p.id]}
+                      muted={micsMuted || mutedPeerIds.has(p.id)}
+                      onToggleMute={() => togglePeerMute(p.id)}
+                      volume={peerVolumes[volumeKey] ?? 1}
+                      onVolumeChange={(volume) => setPeerVolume(volumeKey, volume)}
+                    />
+                  );
+                })}
+              </ul>
+            </div>
 
-          <div className={`${mobileTab === "chat" ? "block" : "hidden"} lg:block`}>
-            <ChatPanel
-              messages={state.chatMessages}
-              selfId={state.selfId}
-              selfName={state.name}
-              onSend={(text) => signalingClient.sendChatMessage(text)}
-              onSendGif={(url) => signalingClient.sendGif(url)}
-              blockedMessage={state.chatBlockedMessage}
-              heightClassName="h-[55vh] lg:h-72"
-            />
+            <div className={`${mobileTab === "chat" ? "block" : "hidden"} lg:block`}>
+              <ChatPanel
+                messages={state.chatMessages}
+                selfId={state.selfId}
+                selfName={state.name}
+                onSend={(text) => signalingClient.sendChatMessage(text)}
+                onSendGif={(url) => signalingClient.sendGif(url)}
+                blockedMessage={state.chatBlockedMessage}
+                heightClassName="h-[55vh] lg:h-72"
+              />
+            </div>
           </div>
 
           <PartnerCard />
