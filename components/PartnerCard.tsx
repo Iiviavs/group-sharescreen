@@ -100,6 +100,16 @@ export function PartnerCard() {
   const [statsOpen, setStatsOpen] = useState(false);
   const [showingExample, setShowingExample] = useState(false);
   const [customizerOpen, setCustomizerOpen] = useState(false);
+  // Below lg, this starts collapsed to just a slim title bar — full-size,
+  // it was eating a big enough chunk of a phone's height (image, multi-line
+  // description, two buttons) to fight the room's own video/chat for space.
+  // Tapping the bar expands it back to the full card. Ignored (always
+  // expanded) from lg: on, same as the participants/chat drawer in
+  // WatchRoom.tsx — see its collapsed/expanded reasoning for why this
+  // pattern beats just shrinking things responsively: a phone screen is
+  // short enough that even a "compact" card still costs real space by
+  // default, so it should cost none until asked for.
+  const [collapsed, setCollapsed] = useState(true);
 
   // Initial value, over plain HTTP — respects the server's "show nothing
   // X% of the time" roll (see server/signaling.ts's GET /partner and
@@ -211,6 +221,24 @@ export function PartnerCard() {
 
   return (
     <div className="relative mt-auto w-full shrink-0">
+      <button
+        type="button"
+        onClick={() => setCollapsed((c) => !c)}
+        aria-expanded={!collapsed}
+        className="mb-1.5 flex w-full items-center justify-between gap-2 rounded-lg bg-zinc-100 px-3 py-1.5 text-left text-xs font-medium text-zinc-600 transition hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 lg:hidden"
+      >
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="shrink-0 rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide dark:bg-white/10">
+            Patrocinado
+          </span>
+          <span className="truncate">{displayData.title}</span>
+        </span>
+        <ChevronUpIcon
+          className={`h-3.5 w-3.5 shrink-0 transition-transform ${collapsed ? "rotate-180" : ""}`}
+        />
+      </button>
+
+      <div className={`${collapsed ? "hidden" : "block"} lg:block`}>
       {statsOpen && showOnlineWidget && (
         <div className="absolute inset-x-0 bottom-full z-10 mb-2 rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-950">
           <p className="text-xs text-zinc-600 dark:text-zinc-400">
@@ -262,7 +290,7 @@ export function PartnerCard() {
       )}
 
       <div
-        className="w-full overflow-hidden rounded-lg border border-zinc-200 p-4 dark:border-zinc-800"
+        className="w-full overflow-hidden rounded-lg border border-zinc-200 p-3 dark:border-zinc-800 sm:p-4"
         style={{
           backgroundColor: data.backgroundColor ?? "#ffffff",
           color: data.textColor ?? "#18181b",
@@ -293,12 +321,14 @@ export function PartnerCard() {
           <img
             src={displayData.imageUrl}
             alt=""
-            className="mb-2 max-h-32 w-full rounded-lg object-cover"
+            className="mb-2 max-h-20 w-full rounded-lg object-cover sm:max-h-32"
           />
         )}
 
         <p className="text-sm font-semibold">{displayData.title}</p>
-        <p className="mt-1 whitespace-pre-line text-xs opacity-80">{displayData.description}</p>
+        <p className="mt-1 line-clamp-3 whitespace-pre-line text-xs opacity-80 sm:line-clamp-none">
+          {displayData.description}
+        </p>
 
         <a
           href={displayData.buttonUrl}
@@ -333,6 +363,7 @@ export function PartnerCard() {
             Ver exemplo de anúncio
           </button>
         )}
+      </div>
       </div>
 
       {customizerOpen && (
