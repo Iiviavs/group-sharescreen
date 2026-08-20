@@ -30,6 +30,7 @@ import { RemoteAudio } from "@/components/RemoteAudio";
 import { ParticipantRow } from "@/components/ParticipantRow";
 import { ChatPanel } from "@/components/ChatPanel";
 import { PartnerCard } from "@/components/PartnerCard";
+import { withGuestSuffix } from "@/lib/displayName";
 import {
   MicIcon,
   MicOffIcon,
@@ -1012,7 +1013,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                 )}
                 {focusedScreenEntries.map(([peerId, stream]) => {
                   const peer = state.peers.find((p) => p.id === peerId);
-                  const peerName = peer?.name ?? "Alguém";
+                  const peerName = withGuestSuffix(peer?.name ?? "Alguém", peer?.isGuest);
                   const volumeKey = peer?.userId ?? peerId;
                   return (
                     <VideoTile
@@ -1031,7 +1032,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                 })}
                 {focusedCameraEntries.map(([peerId, stream]) => {
                   const peer = state.peers.find((p) => p.id === peerId);
-                  const peerName = peer?.name ?? "Alguém";
+                  const peerName = withGuestSuffix(peer?.name ?? "Alguém", peer?.isGuest);
                   const volumeKey = peer?.userId ?? peerId;
                   return (
                     <VideoTile
@@ -1050,7 +1051,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                 {stoppedEntries.map((peer) => (
                   <StoppedPeerTile
                     key={`stopped-${peer.id}`}
-                    label={peer.name}
+                    label={withGuestSuffix(peer.name, peer.isGuest)}
                     fill={isSingleTile}
                     onResume={() => resumeWatchingPeer(peer.id)}
                   />
@@ -1132,6 +1133,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                 <ParticipantRow
                   name={state.name}
                   isSelf
+                  isGuest={!state.account}
                   micOn={isMicOn}
                   sharing={isSharing}
                   micStream={localMicStream}
@@ -1142,6 +1144,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                     <ParticipantRow
                       key={p.id}
                       name={p.name}
+                      isGuest={p.isGuest}
                       micOn={p.mic}
                       sharing={p.sharing}
                       micStream={remoteMicStreams[p.id]}

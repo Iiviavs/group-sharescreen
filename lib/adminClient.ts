@@ -13,6 +13,9 @@ export type AdminPeerInfo = {
   // stableUserId) — same field WatchRoom's PeerInfo carries, used the same
   // way here to key persisted per-peer volume dials across reconnects.
   userId?: string;
+  // Same field/meaning as WatchRoom's PeerInfo.isGuest — see its doc
+  // comment in signalingClient.ts.
+  isGuest?: boolean;
 };
 
 export type AdminClientStatus = "idle" | "connecting" | "open" | "closed" | "unauthorized";
@@ -179,16 +182,17 @@ class AdminSignalingClient {
       case "peer-joined": {
         const alreadyKnown = this.state.peers.some((p) => p.id === msg.id);
         const userId = typeof msg.userId === "string" ? msg.userId : undefined;
+        const isGuest = Boolean(msg.isGuest);
         this.setState({
           peers: alreadyKnown
             ? this.state.peers.map((p) =>
                 p.id === msg.id
-                  ? { ...p, name: msg.name as string, sharing: false, mic: false, userId }
+                  ? { ...p, name: msg.name as string, sharing: false, mic: false, userId, isGuest }
                   : p
               )
             : [
                 ...this.state.peers,
-                { id: msg.id as string, name: msg.name as string, sharing: false, mic: false, userId },
+                { id: msg.id as string, name: msg.name as string, sharing: false, mic: false, userId, isGuest },
               ],
         });
         break;
@@ -226,6 +230,7 @@ class AdminSignalingClient {
           id: msg.id as string,
           from: msg.from as string,
           name: msg.name as string,
+          isGuest: Boolean(msg.isGuest),
           kind: msg.kind === "gif" ? "gif" : "text",
           text: (msg.text as string) ?? "",
           url: typeof msg.url === "string" ? msg.url : undefined,

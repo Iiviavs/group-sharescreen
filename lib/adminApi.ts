@@ -106,6 +106,7 @@ export type AdminRoomPeer = {
   sharing: boolean;
   mic: boolean;
   ip: string;
+  isGuest: boolean;
 };
 
 export type AdminRoom = {

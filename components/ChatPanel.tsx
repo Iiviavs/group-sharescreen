@@ -4,6 +4,7 @@ import { useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import type { ChatMessage } from "@/lib/signalingClient";
 import type { GifResult } from "@/app/api/giphy/search/route";
 import { GifPicker } from "@/components/GifPicker";
+import { withGuestSuffix } from "@/lib/displayName";
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
@@ -154,7 +155,7 @@ export function ChatPanel({
                     className={`font-medium ${isSelf ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-700 dark:text-zinc-300"
                       }`}
                   >
-                    {m.name}
+                    {withGuestSuffix(m.name, m.isGuest)}
                   </span>
                   <span className="text-xs text-zinc-400 dark:text-zinc-600">{formatTime(m.ts)}</span>
                 </div>

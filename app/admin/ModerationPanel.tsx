@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { fetchAdminRooms, banIp, type AdminRoom } from "@/lib/adminApi";
+import { withGuestSuffix } from "@/lib/displayName";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -138,7 +139,7 @@ export function ModerationPanel() {
                         className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400"
                       >
                         <span>
-                          {p.name ?? "sem nome"}
+                          {withGuestSuffix(p.name ?? "sem nome", p.isGuest)}
                           {p.sharing ? " · tela" : ""}
                           {p.mic ? " · mic" : ""}
                           <span className="ml-1.5 font-mono text-zinc-400 dark:text-zinc-500">{p.ip}</span>

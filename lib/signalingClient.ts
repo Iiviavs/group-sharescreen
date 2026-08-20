@@ -20,6 +20,12 @@ export type PeerInfo = {
   // stays the same across reloads for the same person. Undefined only for a
   // peer sent by an older server version that doesn't send it yet.
   userId?: string;
+  // Not logged into a registered account (see server/signaling.ts's
+  // peerSummary) — every name-displaying UI (ParticipantRow, VideoTile
+  // labels, ChatPanel) renders this as a "(guest)" suffix via
+  // lib/displayName.ts. Undefined only for a peer sent by an older server
+  // version that doesn't send it yet — treated the same as `false`.
+  isGuest?: boolean;
 };
 
 export type SignalingStatus = "idle" | "connecting" | "open" | "closed" | "superseded" | "banned";
@@ -28,6 +34,9 @@ export type ChatMessage = {
   id: string;
   from: string;
   name: string;
+  // See PeerInfo.isGuest's doc comment — captured per-message at send time
+  // (see server/signaling.ts's "chat" handler), same as `name`.
+  isGuest?: boolean;
   // Missing/anything other than "gif" (including messages persisted before
   // this field existed) renders as plain text.
   kind?: "text" | "gif";
@@ -449,16 +458,17 @@ class SignalingClient {
         const alreadyKnown = this.state.peers.some((p) => p.id === msg.id);
         const role = msg.role === "moderator" ? "moderator" : undefined;
         const userId = typeof msg.userId === "string" ? msg.userId : undefined;
+        const isGuest = Boolean(msg.isGuest);
         this.setState({
           peers: alreadyKnown
             ? this.state.peers.map((p) =>
                 p.id === msg.id
-                  ? { ...p, name: msg.name as string, sharing: false, mic: false, role, userId }
+                  ? { ...p, name: msg.name as string, sharing: false, mic: false, role, userId, isGuest }
                   : p
               )
             : [
                 ...this.state.peers,
-                { id: msg.id as string, name: msg.name as string, sharing: false, mic: false, role, userId },
+                { id: msg.id as string, name: msg.name as string, sharing: false, mic: false, role, userId, isGuest },
               ],
         });
         break;
@@ -514,6 +524,7 @@ class SignalingClient {
           id: msg.id as string,
           from: msg.from as string,
           name: msg.name as string,
+          isGuest: Boolean(msg.isGuest),
           kind: msg.kind === "gif" ? "gif" : "text",
           text: (msg.text as string) ?? "",
           url: typeof msg.url === "string" ? msg.url : undefined,
