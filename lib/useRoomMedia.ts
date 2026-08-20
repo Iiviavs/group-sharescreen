@@ -28,15 +28,17 @@ type SignalData = {
 // a big room that upload is often the actual bottleneck, so letting the
 // broadcaster trade resolution/fps/bitrate down independently is the one
 // lever that helps without a server-side media relay.
-// "1440p" (2K) and 120fps are account-only — see SHARE_RESOLUTION_OPTIONS/
-// SHARE_FPS_OPTIONS' `accountOnly` flag and WatchRoom.tsx, which lists them
-// for a guest as disabled options ("conta necessária") rather than letting
-// one be selected. Nothing in this file itself checks account status: a
-// guest simply never has a code path that could set either value, since a
-// disabled <option> can't be chosen.
+// "1440p" (2K), 120fps, and (below) the "ultra" bitrate are account-only —
+// see the relevant SHARE_*_OPTIONS' `accountOnly` flag and WatchRoom.tsx,
+// which lists them for a guest as disabled options ("conta necessária")
+// rather than letting one be selected. Nothing in this file itself checks
+// account status: a guest simply never has a code path that could set any
+// of these values, since a disabled <option> can't be chosen.
 export type ShareResolution = "1440p" | "1080p" | "720p" | "480p" | "360p";
 export type ShareFps = 15 | 24 | 30 | 60 | 120;
-export type ShareBitrate = "low" | "medium" | "high";
+// "ultra" is account-only — see SHARE_BITRATE_OPTIONS' `accountOnly` flag
+// and its doc comment above ShareResolution/ShareFps for the same pattern.
+export type ShareBitrate = "low" | "medium" | "high" | "ultra";
 
 type QualityPreset = {
   width: number;
@@ -57,30 +59,35 @@ const BITRATE_KBPS: Record<ShareBitrate, number> = {
   low: 700,
   medium: 2000,
   high: 4000,
+  ultra: 8000,
 };
 
 // Mesh upload cost grows with every extra viewer, so past a few people in
 // the room the sender's bitrate is throttled down automatically instead of
 // letting the browser keep trying to push the full preset to everyone.
 // Presets that are already conservative have little slack to give up, so
-// they hold out longer before cutting anything; "high" has the most room to
-// spare and starts giving it up first.
+// they hold out longer before cutting anything; "ultra" has the most room
+// to spare (and the heaviest upload cost per peer to begin with) and starts
+// giving it up first.
 const THROTTLE_START_PEERS: Record<ShareBitrate, number> = {
   low: 6,
   medium: 4,
   high: 3,
+  ultra: 3,
 };
 // kbps shed per peer beyond the start threshold.
 const THROTTLE_STEP_KBPS: Record<ShareBitrate, number> = {
   low: 40,
   medium: 120,
   high: 250,
+  ultra: 400,
 };
 // Never throttled below this, no matter how crowded the room gets.
 const THROTTLE_FLOOR_KBPS: Record<ShareBitrate, number> = {
   low: 350,
   medium: 800,
   high: 1200,
+  ultra: 1500,
 };
 
 function throttledBitrateKbps(preset: ShareBitrate, peerCount: number): number {
@@ -140,10 +147,11 @@ export const SHARE_FPS_OPTIONS: { value: ShareFps; label: string; accountOnly?: 
   { value: 120, label: "120 fps", accountOnly: true },
 ];
 
-export const SHARE_BITRATE_OPTIONS: { value: ShareBitrate; label: string }[] = [
+export const SHARE_BITRATE_OPTIONS: { value: ShareBitrate; label: string; accountOnly?: boolean }[] = [
   { value: "low", label: "Bitrate baixo (~700 kbps)" },
   { value: "medium", label: "Bitrate médio (~2 Mbps)" },
   { value: "high", label: "Bitrate alto (~4 Mbps)" },
+  { value: "ultra", label: "Bitrate ultra (~8 Mbps)", accountOnly: true },
 ];
 
 // Updated sender helper: also controls resolution scale-down and degradation mode.

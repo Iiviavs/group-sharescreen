@@ -732,8 +732,13 @@ export function WatchRoom({ handle }: { handle: string }) {
                             className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
                           >
                             {SHARE_BITRATE_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
+                              <option
+                                key={opt.value}
+                                value={opt.value}
+                                disabled={opt.accountOnly && !state.account}
+                              >
                                 {opt.label}
+                                {opt.accountOnly && !state.account ? " (conta necessária)" : ""}
                               </option>
                             ))}
                           </select>
