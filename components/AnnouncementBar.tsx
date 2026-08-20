@@ -41,28 +41,32 @@ export function AnnouncementBar({
       style={{ backgroundColor: preset.bg, color: preset.text }}
     >
       <p className="min-w-0 flex-1 break-words">{announcement.text}</p>
-      <div className="flex shrink-0 items-center gap-3">
-        <button
-          type="button"
-          onClick={handleButtonClick}
-          className="rounded-md border px-3 py-1.5 text-xs font-semibold transition hover:opacity-80"
-          style={{ borderColor: preset.text, color: preset.text }}
-        >
-          {announcement.buttonLabel}
-        </button>
-        {announcement.dismissible && onDismiss && (
-          <button
-            type="button"
-            onClick={onDismiss}
-            aria-label="Fechar aviso"
-            title="Fechar aviso"
-            className="text-lg leading-none opacity-80 transition hover:opacity-100"
-            style={{ color: preset.text }}
-          >
-            ×
-          </button>
-        )}
-      </div>
+      {(announcement.hasButton || (announcement.dismissible && onDismiss)) && (
+        <div className="flex shrink-0 items-center gap-3">
+          {announcement.hasButton && (
+            <button
+              type="button"
+              onClick={handleButtonClick}
+              className="rounded-md border px-3 py-1.5 text-xs font-semibold transition hover:opacity-80"
+              style={{ borderColor: preset.text, color: preset.text }}
+            >
+              {announcement.buttonLabel}
+            </button>
+          )}
+          {announcement.dismissible && onDismiss && (
+            <button
+              type="button"
+              onClick={onDismiss}
+              aria-label="Fechar aviso"
+              title="Fechar aviso"
+              className="text-lg leading-none opacity-80 transition hover:opacity-100"
+              style={{ color: preset.text }}
+            >
+              ×
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

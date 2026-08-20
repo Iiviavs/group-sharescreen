@@ -2,9 +2,15 @@
 
 import { useSyncExternalStore } from "react";
 import { getSignalingHttpBase } from "./roomsApi";
-import type { Announcement, AnnouncementButtonAction, AnnouncementColor } from "./announcement";
+import type {
+  Announcement,
+  AnnouncementButtonAction,
+  AnnouncementColor,
+  AnnouncementSound,
+  AnnouncementVisibility,
+} from "./announcement";
 
-export type { Announcement, AnnouncementButtonAction, AnnouncementColor };
+export type { Announcement, AnnouncementButtonAction, AnnouncementColor, AnnouncementSound, AnnouncementVisibility };
 
 const TOKEN_STORAGE_KEY = "sharescreen:adminToken";
 
@@ -124,7 +130,18 @@ export async function fetchAdminRooms(signal?: AbortSignal): Promise<AdminRoom[]
   return data.rooms;
 }
 
-export async function fetchCurrentAnnouncement(signal?: AbortSignal): Promise<Announcement | null> {
+export type AnnouncementStats = {
+  views: number;
+  buttonClicks: number;
+  xClicks: number;
+};
+
+export type AnnouncementState = {
+  announcement: Announcement | null;
+  stats: AnnouncementStats | null;
+};
+
+export async function fetchCurrentAnnouncement(signal?: AbortSignal): Promise<AnnouncementState> {
   const token = getAdminToken();
   if (!token) throw new Error("unauthorized");
   const res = await fetch(`${getSignalingHttpBase()}/admin/announcement`, {
@@ -136,25 +153,37 @@ export async function fetchCurrentAnnouncement(signal?: AbortSignal): Promise<An
     throw new Error("unauthorized");
   }
   if (!res.ok) throw new Error(`Falha ao carregar aviso (status ${res.status})`);
-  const data = (await res.json()) as { announcement: Announcement | null };
-  return data.announcement;
+  return (await res.json()) as AnnouncementState;
 }
 
 export type SendAnnouncementInput = {
+  // Optional custom id — server generates one when omitted. Ignored by
+  // editAnnouncement below (an edit always keeps the active announcement's
+  // existing id).
+  id?: string;
   text: string;
+  hasButton: boolean;
+  // The four fields below are only validated/used server-side when
+  // hasButton is true.
   buttonLabel: string;
   buttonAction: AnnouncementButtonAction;
   // Required unless buttonAction is "reload".
   buttonUrl?: string;
   color: AnnouncementColor;
   dismissible: boolean;
+  visibility: AnnouncementVisibility;
+  sound: AnnouncementSound;
+  persistent: boolean;
 };
 
-export async function sendAnnouncement(input: SendAnnouncementInput): Promise<Announcement> {
+async function postOrPutAnnouncement(
+  method: "POST" | "PUT",
+  input: SendAnnouncementInput | (Omit<SendAnnouncementInput, "id"> & { id: string })
+): Promise<AnnouncementState> {
   const token = getAdminToken();
   if (!token) throw new Error("unauthorized");
   const res = await fetch(`${getSignalingHttpBase()}/admin/announcement`, {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(input),
   });
@@ -166,11 +195,26 @@ export async function sendAnnouncement(input: SendAnnouncementInput): Promise<An
     const data = await res.json().catch(() => null);
     throw new Error(
       (data && typeof data === "object" && "error" in data && String(data.error)) ||
-        `Falha ao enviar aviso (status ${res.status})`
+        `Falha ao salvar aviso (status ${res.status})`
     );
   }
-  const data = (await res.json()) as { announcement: Announcement };
-  return data.announcement;
+  return (await res.json()) as AnnouncementState;
+}
+
+export async function sendAnnouncement(input: SendAnnouncementInput): Promise<AnnouncementState> {
+  return postOrPutAnnouncement("POST", input);
+}
+
+// Edits the currently active announcement in place — same id, accumulated
+// stats preserved, version bumped (see server/signaling.ts's PUT handler).
+// `id` must match the currently active announcement's id (a stale/mismatched
+// one is rejected with a 409, surfaced as a thrown error) so a second admin
+// tab can't silently clobber an announcement someone else already replaced.
+export async function editAnnouncement(
+  id: string,
+  input: Omit<SendAnnouncementInput, "id">
+): Promise<AnnouncementState> {
+  return postOrPutAnnouncement("PUT", { ...input, id });
 }
 
 export async function clearAnnouncement(): Promise<void> {

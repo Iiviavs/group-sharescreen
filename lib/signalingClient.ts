@@ -62,8 +62,25 @@ export type SignalingState = {
   // Site-wide banner, independent of room — null when none is active. Set
   // from the server's "announcement" push (see server/signaling.ts's
   // broadcastToAll), which also fires once right after "welcome" for a
-  // fresh connection so a page opened while one's active still sees it.
+  // fresh connection so a page opened while one's active still sees it
+  // (only when the announcement's visibility is "all" — see the server).
   announcement: Announcement | null;
+  // Whether the *most recent* "announcement" delivery was a live one (this
+  // connection was already open when it was sent/edited) rather than a
+  // catch-up delivery to a freshly opened connection — mirrors the
+  // server's `live` flag on that message. Read alongside `announcement` by
+  // AnnouncementBanner.tsx to decide whether to play the "live-only" sound.
+  announcementLive: boolean;
+  // Bumped every time an "announcement" message is actually processed
+  // (whatever its value, including a clear). A "visibility: online-only"
+  // announcement is, *by design*, never pushed to a fresh connection at
+  // all (see the server), so `announcement` can legitimately stay `null`
+  // here forever even while one is genuinely active — this counter is what
+  // lets AnnouncementBanner.tsx's localStorage fallback tell "nothing's
+  // arrived yet, so I don't actually know" apart from "a message arrived
+  // and it said null," which is the only case that should make it drop its
+  // cached persistent announcement.
+  announcementSeq: number;
   // Set when the server rejected our last chat message for containing a
   // banned word (see server/signaling.ts's "chat-blocked") — cleared as
   // soon as another send is attempted, so it's a one-shot warning rather
@@ -107,6 +124,8 @@ const initialState: SignalingState = {
   peers: [],
   chatMessages: [],
   announcement: null,
+  announcementLive: false,
+  announcementSeq: 0,
   chatBlockedMessage: null,
 };
 
@@ -194,6 +213,11 @@ class SignalingClient {
   // the original register() call did.
   private desiredToken: string | null = null;
   private desiredRoom: string | null = null;
+  // Set by connect() below — lets a connection stay open (and reconnect
+  // after a drop, see scheduleReconnect) purely to receive site-wide pushes
+  // like the announcement banner, for a visitor who hasn't registered a name
+  // yet and so has no desiredName of their own.
+  private wantsConnection = false;
 
   state: SignalingState = initialState;
 
@@ -303,7 +327,7 @@ class SignalingClient {
   }
 
   private scheduleReconnect() {
-    if (this.reconnectTimer || !this.desiredName) return;
+    if (this.reconnectTimer || (!this.desiredName && !this.wantsConnection)) return;
     const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 10000);
     this.reconnectAttempts += 1;
     this.reconnectTimer = setTimeout(() => {
@@ -456,7 +480,11 @@ class SignalingClient {
         );
         break;
       case "announcement":
-        this.setState({ announcement: (msg.announcement as Announcement | null) ?? null });
+        this.setState({
+          announcement: (msg.announcement as Announcement | null) ?? null,
+          announcementLive: Boolean(msg.live),
+          announcementSeq: this.state.announcementSeq + 1,
+        });
         break;
       case "chat-blocked":
         this.setState({ chatBlockedMessage: (msg.message as string) ?? "Mensagem bloqueada." });
@@ -486,6 +514,18 @@ class SignalingClient {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
     }
+  }
+
+  // Opens (and, unlike a bare connection made only as a side effect of
+  // register(), keeps reconnecting — see wantsConnection/scheduleReconnect)
+  // a connection with no name/room attached — used by AnnouncementBanner.tsx
+  // so even a brand new visitor who hasn't registered a name yet still opens
+  // a socket and can receive the site-wide announcement push. A no-op if a
+  // connection is already open/connecting or about to be, e.g. because
+  // register() already ran.
+  connect() {
+    this.wantsConnection = true;
+    this.ensureSocket();
   }
 
   // `token` is an account JWT (see accountApi.ts) — pass it when
@@ -560,6 +600,22 @@ class SignalingClient {
     const trimmed = url.trim();
     if (!trimmed) return;
     this.rawSend({ type: "chat", kind: "gif", url: trimmed });
+  }
+
+  // Real engagement signals for the admin panel's live announcement stats
+  // (see server/signaling.ts's announcementStats) — AnnouncementBanner.tsx
+  // is the only caller, and only for whatever announcement it's actually
+  // displaying right now.
+  reportAnnouncementView(id: string) {
+    this.rawSend({ type: "announcement-view", id });
+  }
+
+  reportAnnouncementButtonClick(id: string) {
+    this.rawSend({ type: "announcement-button-click", id });
+  }
+
+  reportAnnouncementXClick(id: string) {
+    this.rawSend({ type: "announcement-x-click", id });
   }
 }
 
