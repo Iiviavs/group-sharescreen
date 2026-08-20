@@ -217,6 +217,15 @@ export function WatchRoom({ handle }: { handle: string }) {
   if (restoring) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
+        {<>
+
+          <h2 style={{ color: "#ff2828", maxWidth: "500px" }}>Site fora do ar momentâneamente!!</h2>
+          <h2 style={{ color: "#ff6767", maxWidth: "500px" }}>A API foi reiniciar pra atualizar e não consegue mais ligar por ter mais de 2000 pessoas tentando reconectar.</h2>
+          <h2 style={{ color: "#ff6767", maxWidth: "500px" }}>Eu tô programando um sistema de balanceamento de carga. Aguentaí que já volta</h2>
+          <h2 style={{ color: "#ff6767", maxWidth: "500px" }}>Deve voltar em uns 10 minutos</h2>
+          <h2 style={{ color: "#67c7ff", maxWidth: "500px" }}>Para atualizações/sugestões/etc entre no meu Discord: <Link style={{ color: "#00ff00" }} href={"https://go.nemtudo.me/golive-nemtudodiscord"} target="_blank">discord.gg/nemtudo</Link></h2>
+        </>
+        }
         <p className="text-zinc-600 dark:text-zinc-400">Reconectando...</p>
       </div>
     );
