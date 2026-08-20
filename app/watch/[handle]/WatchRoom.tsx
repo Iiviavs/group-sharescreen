@@ -217,7 +217,7 @@ export function WatchRoom({ handle }: { handle: string }) {
   if (restoring) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
-        {<>
+        {false && <>
 
           <h2 style={{ color: "#ff2828", maxWidth: "500px", fontSize: "1.3rem" }}>Site fora do ar momentâneamente!!</h2>
           <h2 style={{ color: "#ff6767", maxWidth: "500px" }}>A API foi reiniciar pra atualizar e não consegue mais ligar por ter mais de 2000 pessoas tentando reconectar.</h2>
