@@ -84,8 +84,12 @@ export function AnnouncementBanner() {
 
   // Runs once, client-only, after hydration — see cachedPersistent's doc
   // comment above for why this can't just be the useState initializer.
+  // Deferred one tick via setTimeout (imperceptible) rather than calling
+  // setCachedPersistent synchronously in the effect body — same reasoning
+  // as the cache-sync effect right below.
   useEffect(() => {
-    setCachedPersistent(getStoredPersistentAnnouncement());
+    const id = setTimeout(() => setCachedPersistent(getStoredPersistentAnnouncement()), 0);
+    return () => clearTimeout(id);
   }, []);
 
   // Keeps the localStorage cache in sync with every real "announcement"
@@ -95,18 +99,25 @@ export function AnnouncementBanner() {
   // announcementSeq rather than liveAnnouncement itself, since the latter
   // going back to `null` doesn't distinguish "a message just said so" from
   // "no message has arrived at all" (see the `announcement` derivation
-  // above) — only the former should touch the cache.
+  // above) — only the former should touch the cache. The actual state write
+  // is deferred via setTimeout (not called synchronously in the effect
+  // body) so this stays a "react to an external change" effect rather than
+  // a synchronous render-triggering one; the ref guard above (not React
+  // state) is what actually prevents re-entrance and can run synchronously.
   const lastHandledSeq = useRef(0);
   useEffect(() => {
     if (state.announcementSeq === 0 || state.announcementSeq === lastHandledSeq.current) return;
     lastHandledSeq.current = state.announcementSeq;
-    if (liveAnnouncement && liveAnnouncement.persistent) {
-      storePersistentAnnouncement(liveAnnouncement);
-      setCachedPersistent(liveAnnouncement);
-    } else {
-      clearStoredPersistentAnnouncement();
-      setCachedPersistent(null);
-    }
+    const id = setTimeout(() => {
+      if (liveAnnouncement && liveAnnouncement.persistent) {
+        storePersistentAnnouncement(liveAnnouncement);
+        setCachedPersistent(liveAnnouncement);
+      } else {
+        clearStoredPersistentAnnouncement();
+        setCachedPersistent(null);
+      }
+    }, 0);
+    return () => clearTimeout(id);
   }, [state.announcementSeq, liveAnnouncement]);
 
   useEffect(() => {

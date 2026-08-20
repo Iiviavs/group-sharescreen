@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fetchPeopleOnline, getSignalingHttpBase } from "@/lib/roomsApi";
 import { trackEvent } from "@/lib/analytics";
+import { useSignaling } from "@/lib/useSignaling";
+import { signalingClient } from "@/lib/signalingClient";
 import { ArrowLeftIcon, ChartIcon, ChevronUpIcon } from "@/components/icons";
 import { PartnerAdCustomizer, type AdForm } from "@/components/PartnerAdCustomizer";
 
@@ -14,15 +16,24 @@ const PEOPLE_COUNT_POLL_MS = 8000;
 // filter on those words, and this card would otherwise get silently hidden
 // for a chunk of visitors.
 type PartnerCardData = {
+  // Only present for a real, backend-sourced ad (server/signaling.ts's
+  // publicPartner always includes it) — never on FALLBACK_PARTNER/
+  // EXAMPLE_PARTNER below, which is what tells them apart for view/click
+  // reporting (see the effects below) and expiration.
+  id?: string;
   title: string;
   description: string;
   imageUrl?: string | null;
   buttonLabel: string;
   buttonUrl: string;
-  backgroundColor?: string;
-  textColor?: string;
-  buttonBackgroundColor?: string;
-  buttonTextColor?: string;
+  backgroundColor?: string | null;
+  textColor?: string | null;
+  buttonBackgroundColor?: string | null;
+  buttonTextColor?: string | null;
+  // epoch ms; null/absent = never expires. Drives the expiration effect
+  // below, which removes the card the instant this passes without waiting
+  // for a reload or a live update.
+  expiresAt?: number | null;
 };
 
 async function fetchPartner(signal?: AbortSignal): Promise<PartnerCardData | null> {
@@ -32,9 +43,10 @@ async function fetchPartner(signal?: AbortSignal): Promise<PartnerCardData | nul
   return data.partner;
 }
 
-// Shown whenever the /partner API has nothing configured (null response, or
-// the request itself failing) — a house ad for this site's own Discord
-// instead of an empty slot.
+// Shown whenever there's no real partner ad to display — either the site
+// has none active at all, or this request landed on the server's "show
+// nothing X% of the time" roll (see server/signaling.ts's GET /partner) —
+// a house ad for this site's own Discord instead of an empty slot.
 const FALLBACK_PARTNER: PartnerCardData = {
   title: "Anuncie aqui pra todo mundo!",
   description: "Esse site é visitado por mais de 10 mil por dia!\n\nAbra um ticket no meu Discord e vamos combinar um anúncio",
@@ -81,6 +93,7 @@ const CUSTOMIZER_STARTING_POINT: AdForm = {
 // api, props, tracked events) rather than "ad" so it doesn't get swept up by
 // ad-blocker filter lists that key off that word.
 export function PartnerCard() {
+  const signalingState = useSignaling();
   const [partner, setPartner] = useState<PartnerCardData | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [peopleOnline, setPeopleOnline] = useState<number | null>(null);
@@ -88,6 +101,11 @@ export function PartnerCard() {
   const [showingExample, setShowingExample] = useState(false);
   const [customizerOpen, setCustomizerOpen] = useState(false);
 
+  // Initial value, over plain HTTP — respects the server's "show nothing
+  // X% of the time" roll (see server/signaling.ts's GET /partner and
+  // partnerStore.ts's emptyPercent). A live socket update (the effect
+  // below) always overrides this once one arrives, since that path
+  // deliberately never rolls that percentage — see its own comment.
   useEffect(() => {
     const controller = new AbortController();
     fetchPartner(controller.signal)
@@ -103,6 +121,56 @@ export function PartnerCard() {
       });
     return () => controller.abort();
   }, []);
+
+  // Live updates while this card stays mounted — pushed by the server after
+  // every admin create/edit/delete (see broadcastPartnerUpdate), so an
+  // already-open tab updates immediately instead of only on its next
+  // reload. `partnerSeq` (see signalingClient.ts) is what tells "a live
+  // update actually arrived, and it's authoritative" apart from "nothing's
+  // arrived yet, the HTTP fetch above is still the freshest thing we know"
+  // — both would otherwise look identical as a bare `partner: null`.
+  const lastHandledPartnerSeq = useRef(0);
+  useEffect(() => {
+    if (signalingState.partnerSeq === 0 || signalingState.partnerSeq === lastHandledPartnerSeq.current) {
+      return;
+    }
+    lastHandledPartnerSeq.current = signalingState.partnerSeq;
+    setPartner(signalingState.partner);
+    setLoaded(true);
+  }, [signalingState.partnerSeq, signalingState.partner]);
+
+  // Removes an expired ad the instant it expires, without waiting for a
+  // reload or a live update to do it — falls back to the house ad exactly
+  // like any other "no partner active" state.
+  useEffect(() => {
+    if (!partner?.expiresAt) return;
+    // Already-expired (remaining <= 0) still goes through setTimeout rather
+    // than calling setPartner synchronously right here — deferring it to a
+    // callback (even a same-tick one) keeps this a pure "schedule a
+    // reaction," not a synchronous state write during the effect itself.
+    const remaining = Math.max(0, partner.expiresAt - Date.now());
+    const timer = setTimeout(() => setPartner(null), remaining);
+    return () => clearTimeout(timer);
+  }, [partner]);
+
+  // Views only count for a genuinely visible tab — same reasoning as
+  // AnnouncementBanner.tsx's identical guard — and only for a real,
+  // backend-sourced ad (never the fallback/example ones, which have no id
+  // and aren't things the admin is tracking engagement for).
+  const reportedViewIds = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const id = partner?.id;
+    if (!id) return;
+    function maybeReportView() {
+      if (document.visibilityState !== "visible") return;
+      if (reportedViewIds.current.has(id!)) return;
+      reportedViewIds.current.add(id!);
+      signalingClient.reportPartnerView(id!);
+    }
+    maybeReportView();
+    document.addEventListener("visibilitychange", maybeReportView);
+    return () => document.removeEventListener("visibilitychange", maybeReportView);
+  }, [partner]);
 
   // Only meaningful for the house ad below (a real, paid partner slot isn't
   // the place for the site's own stats plug) — skipped entirely once a real
@@ -236,12 +304,13 @@ export function PartnerCard() {
           href={displayData.buttonUrl}
           target="_blank"
           rel="noopener noreferrer"
-          onClick={() =>
+          onClick={() => {
+            if (!isFallback && data.id) signalingClient.reportPartnerClick(data.id);
             trackEvent("partner_card_clicked", {
               fallback: isFallback,
               example: isFallback && showingExample,
-            })
-          }
+            });
+          }}
           className="mt-3 block rounded-lg px-3 py-2 text-center text-sm font-semibold transition hover:opacity-90"
           style={{
             backgroundColor: displayData.buttonBackgroundColor ?? "#18181b",

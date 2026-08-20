@@ -2,6 +2,7 @@
 
 import { trackEvent } from "./analytics";
 import type { Announcement } from "./announcement";
+import type { Partner } from "./partner";
 import { getAccountToken } from "./accountApi";
 
 // `role: "moderator"` marks a moderator silently watching for moderation
@@ -81,6 +82,17 @@ export type SignalingState = {
   // and it said null," which is the only case that should make it drop its
   // cached persistent announcement.
   announcementSeq: number;
+  // Sidebar partner-ad slot (see components/PartnerCard.tsx and
+  // server/signaling.ts's broadcastPartnerUpdate) — unlike `announcement`,
+  // this is *never* pushed automatically on connect; PartnerCard.tsx always
+  // fetches its initial value over plain HTTP (GET /partner, which is where
+  // the "show nothing X% of the time" roll happens) and only uses this for
+  // *live* updates while already mounted. `partnerSeq` (mirrors
+  // announcementSeq) is what lets it tell "no live update has arrived, keep
+  // showing what HTTP gave me" apart from "a live update arrived and it
+  // said null" — both look identical as a bare `partner: null` otherwise.
+  partner: Partner | null;
+  partnerSeq: number;
   // Set when the server rejected our last chat message for containing a
   // banned word (see server/signaling.ts's "chat-blocked") — cleared as
   // soon as another send is attempted, so it's a one-shot warning rather
@@ -126,6 +138,8 @@ const initialState: SignalingState = {
   announcement: null,
   announcementLive: false,
   announcementSeq: 0,
+  partner: null,
+  partnerSeq: 0,
   chatBlockedMessage: null,
 };
 
@@ -486,6 +500,12 @@ class SignalingClient {
           announcementSeq: this.state.announcementSeq + 1,
         });
         break;
+      case "partner":
+        this.setState({
+          partner: (msg.partner as Partner | null) ?? null,
+          partnerSeq: this.state.partnerSeq + 1,
+        });
+        break;
       case "chat-blocked":
         this.setState({ chatBlockedMessage: (msg.message as string) ?? "Mensagem bloqueada." });
         break;
@@ -616,6 +636,16 @@ class SignalingClient {
 
   reportAnnouncementXClick(id: string) {
     this.rawSend({ type: "announcement-x-click", id });
+  }
+
+  // Same reasoning as the announcement-* reporters above, for the sidebar
+  // partner-ad slot — see PartnerCard.tsx.
+  reportPartnerView(id: string) {
+    this.rawSend({ type: "partner-view", id });
+  }
+
+  reportPartnerClick(id: string) {
+    this.rawSend({ type: "partner-click", id });
   }
 }
 
