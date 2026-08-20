@@ -125,13 +125,110 @@ export const SHARE_BITRATE_OPTIONS: { value: ShareBitrate; label: string }[] = [
   { value: "high", label: "Bitrate alto (~4 Mbps)" },
 ];
 
-function applySenderBitrate(sender: RTCRtpSender, maxBitrateKbps: number | undefined) {
+// Updated sender helper: also controls resolution scale-down and degradation mode.
+// For screen sharing, "maintain-resolution" keeps text and UI crisp by preferring
+// frame-rate drops over blurry pixels when the encoder is under pressure.
+function applySenderBitrateAndScale(
+  sender: RTCRtpSender,
+  maxBitrateKbps: number | undefined,
+  scaleResolutionDownBy: number = 1.0
+) {
   if (!maxBitrateKbps) return;
   const params = sender.getParameters();
   const encodings = params.encodings && params.encodings.length > 0 ? params.encodings : [{}];
-  encodings[0].maxBitrate = maxBitrateKbps * 1000;
+  encodings[0].maxBitrate = Math.round(maxBitrateKbps * 1000);
+  encodings[0].scaleResolutionDownBy = scaleResolutionDownBy;
+  // Prefer dropping frame rate over blurring resolution when bandwidth is tight.
+  // This keeps screen-share text readable even during congestion.
+  params.degradationPreference = "maintain-resolution";
   params.encodings = encodings;
   sender.setParameters(params).catch(() => {});
+}
+
+// Prefer VP9 > AV1 > H264 > VP8 for ~30–50% bandwidth savings over VP8 at
+// equivalent quality. Falls back gracefully on browsers that don't support
+// setCodecPreferences or that lack a given codec entirely.
+function applyVideoCodecPreferences(transceiver: RTCRtpTransceiver) {
+  if (typeof RTCRtpSender.getCapabilities !== "function") return;
+  const capabilities = RTCRtpSender.getCapabilities("video");
+  if (!capabilities?.codecs) return;
+  const order = ["video/VP9", "video/AV1", "video/H264", "video/VP8"];
+  const sorted = [...capabilities.codecs].sort((a, b) => {
+    const ia = order.indexOf(a.mimeType);
+    const ib = order.indexOf(b.mimeType);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+  try {
+    transceiver.setCodecPreferences(sorted);
+  } catch {
+    // Ignored — some older browser versions reject the call entirely.
+  }
+}
+
+// Stats-driven adaptive bitrate controller for a single sender. Polls
+// `remote-inbound-rtp` every 2 s and backs the bitrate off when the peer
+// reports congestion (high packet-loss or RTT), then gradually recovers once
+// the link is healthy again. Operates per peer-connection so a single slow
+// viewer doesn't degrade everyone else's stream.
+//
+// Returns a cleanup function; call it when the peer connection closes.
+function startPeerAdaptiveBitrateMonitor(
+  pc: RTCPeerConnection,
+  sender: RTCRtpSender,
+  baseBitrateKbps: number
+): () => void {
+  // Per-peer mutable state — deliberately not React state so updates are
+  // synchronous inside the interval without triggering re-renders.
+  let currentKbps = baseBitrateKbps;
+  let scaleDown = 1.0;
+  let healthyStreak = 0;
+
+  const id = setInterval(async () => {
+    // Don't poke a dead connection — both guards needed because some browsers
+    // leave `connectionState` at "disconnected" rather than "failed"/"closed".
+    if (pc.connectionState !== "connected") return;
+    if (sender.track === null) return;
+
+    let fractionLost = 0;
+    let rtt = 0;
+    try {
+      const stats = await pc.getStats(sender.track);
+      stats.forEach((report) => {
+        if (report.type === "remote-inbound-rtp" && report.kind === "video") {
+          const remoteReport = report as { fractionLost?: number; roundTripTime?: number };
+          fractionLost = remoteReport.fractionLost ?? 0;
+          rtt = remoteReport.roundTripTime ?? 0;
+        }
+      });
+    } catch {
+      return; // getStats can throw if the pc is in a transitional state.
+    }
+
+    if (fractionLost > 0.04 || rtt > 0.35) {
+      // Congestion detected — back off 25 %, floor at 250 kbps.
+      healthyStreak = 0;
+      currentKbps = Math.max(250, Math.round(currentKbps * 0.75));
+      // If bitrate is already very constrained, also downscale resolution to
+      // give the encoder headroom — half-res at low bitrate beats full-res
+      // encoded badly (macro-blocking, freezes).
+      scaleDown = currentKbps < 500 ? 2.0 : currentKbps < 900 ? 1.5 : 1.0;
+      applySenderBitrateAndScale(sender, currentKbps, scaleDown);
+    } else if (fractionLost <= 0.01 && rtt < 0.2) {
+      // Link is healthy — cautiously ramp back up (15 % per clean streak of 3).
+      healthyStreak++;
+      if (healthyStreak >= 3 && currentKbps < baseBitrateKbps) {
+        currentKbps = Math.min(baseBitrateKbps, Math.round(currentKbps * 1.15));
+        scaleDown = currentKbps >= baseBitrateKbps * 0.8 ? 1.0 : 1.25;
+        applySenderBitrateAndScale(sender, currentKbps, scaleDown);
+        healthyStreak = 0;
+      }
+    } else {
+      // Neutral zone — reset streak so recovery only happens after a clean run.
+      healthyStreak = 0;
+    }
+  }, 2000);
+
+  return () => clearInterval(id);
 }
 
 // Shared connection-management for a single media channel (screen share or
@@ -186,6 +283,11 @@ function useBroadcastChannel(
   // peer-list-driven reconnect loop below so it doesn't just re-open a sendPC
   // that was deliberately paused the moment anyone else joins/leaves the room.
   const viewerPausedPeers = useRef<Set<string>>(new Set());
+  // Cleanup functions for per-peer adaptive bitrate monitors (see
+  // startPeerAdaptiveBitrateMonitor). Keyed by peerId; called when the sendPC
+  // for that peer closes so the setInterval is always torn down with the PC.
+  const sendPCMonitors = useRef<Map<string, () => void>>(new Map());
+
 
   const clearStopped = useCallback((peerId: string) => {
     setStoppedPeers((prev) => {
@@ -223,8 +325,12 @@ function useBroadcastChannel(
       pc.close();
       sendPCs.current.delete(peerId);
     }
+    // Stop the per-peer adaptive bitrate monitor if one is running.
+    sendPCMonitors.current.get(peerId)?.();
+    sendPCMonitors.current.delete(peerId);
     pendingSendCandidates.current.delete(peerId);
   }, []);
+
 
   const closeRecvPC = useCallback(
     (peerId: string) => {
@@ -306,7 +412,20 @@ function useBroadcastChannel(
       sendPCs.current.set(peerId, pc);
       stream.getTracks().forEach((track) => {
         const sender = pc.addTrack(track, stream);
-        if (track.kind === "video") applySenderBitrate(sender, videoQualityRef.current?.maxBitrateKbps);
+        if (track.kind === "video") {
+          const transceivers = pc.getTransceivers();
+          const transceiver = transceivers.find((t) => t.sender === sender);
+          if (transceiver) applyVideoCodecPreferences(transceiver);
+
+          const baseBitrate = videoQualityRef.current?.maxBitrateKbps;
+          applySenderBitrateAndScale(sender, baseBitrate, 1.0);
+
+          if (baseBitrate) {
+            sendPCMonitors.current.get(peerId)?.();
+            const cleanup = startPeerAdaptiveBitrateMonitor(pc, sender, baseBitrate);
+            sendPCMonitors.current.set(peerId, cleanup);
+          }
+        }
       });
       pc.onicecandidate = (e) => {
         if (e.candidate) {
@@ -387,9 +506,16 @@ function useBroadcastChannel(
         frameRate: { ideal: videoQuality.frameRate },
       })
       .catch(() => {});
-    for (const pc of sendPCs.current.values()) {
+    for (const [peerId, pc] of sendPCs.current) {
       const sender = pc.getSenders().find((s) => s.track?.kind === "video");
-      if (sender) applySenderBitrate(sender, videoQuality.maxBitrateKbps);
+      if (sender) {
+        applySenderBitrateAndScale(sender, videoQuality.maxBitrateKbps, 1.0);
+        if (videoQuality.maxBitrateKbps) {
+          sendPCMonitors.current.get(peerId)?.();
+          const cleanup = startPeerAdaptiveBitrateMonitor(pc, sender, videoQuality.maxBitrateKbps);
+          sendPCMonitors.current.set(peerId, cleanup);
+        }
+      }
     }
   }, [videoQuality]);
 
@@ -401,6 +527,8 @@ function useBroadcastChannel(
     localStreamRef.current = null;
     setLocalStream(null);
     setSource(undefined);
+    for (const cleanup of sendPCMonitors.current.values()) cleanup();
+    sendPCMonitors.current.clear();
     for (const [peerId, pc] of sendPCs.current) {
       signalingClient.sendSignal(peerId, { channel, role: "broadcaster", kind: "stop" });
       pc.close();
@@ -425,6 +553,11 @@ function useBroadcastChannel(
     }
     try {
       const stream = await capture(requestedSource);
+      // Give the browser encoder a hint: screen shares prioritize sharp detail
+      // (text/UI readability), camera shares prioritize smooth motion.
+      stream.getVideoTracks().forEach((track) => {
+        track.contentHint = channel === "screen" ? "detail" : "motion";
+      });
       localStreamRef.current = stream;
       activeRef.current = true;
       setLocalStream(stream);
@@ -457,6 +590,15 @@ function useBroadcastChannel(
       const pc = new RTCPeerConnection(ICE_CONFIG);
       recvPCs.current.set(peerId, pc);
       pc.ontrack = (e) => {
+        // Smooth out network jitter for viewers with fluctuating or high-latency
+        // connections (absorbs micro-bursts without causing frame freezes).
+        if (e.receiver && "playoutDelayHint" in e.receiver) {
+          try {
+            (e.receiver as RTCRtpReceiver & { playoutDelayHint?: number }).playoutDelayHint = 0.1;
+          } catch {
+            // Ignored on unsupported browsers
+          }
+        }
         setRemoteStreams((prev) => ({ ...prev, [peerId]: e.streams[0] }));
         clearResuming(peerId);
       };
