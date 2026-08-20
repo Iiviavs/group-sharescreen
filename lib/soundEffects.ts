@@ -8,6 +8,31 @@
 // a room already occurred (joining requires typing a name and submitting).
 let audioCtx: AudioContext | null = null;
 
+// Global on/off switch for every effect in this file (room join/leave,
+// share start/stop, mentions, and the site-wide warning banner) — a single
+// source of truth here means one toggle covers all of them regardless of
+// which component fired the sound.
+const SOUND_EFFECTS_ENABLED_KEY = "sharescreen:soundEffectsEnabled";
+
+export function getSoundEffectsEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const raw = window.localStorage.getItem(SOUND_EFFECTS_ENABLED_KEY);
+    return raw === null ? true : raw === "true";
+  } catch {
+    return true;
+  }
+}
+
+export function setSoundEffectsEnabled(value: boolean) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SOUND_EFFECTS_ENABLED_KEY, String(value));
+  } catch {
+    // ignored - localStorage may be unavailable (private mode, quota, etc.)
+  }
+}
+
 function getAudioContext(): AudioContext | null {
   if (typeof window === "undefined") return null;
   const AudioContextCtor =
@@ -31,6 +56,7 @@ type Note = {
 // exponential decay) so notes sound like soft chimes instead of harsh
 // on/off clicks.
 function playNotes(notes: Note[]) {
+  if (!getSoundEffectsEnabled()) return;
   const ctx = getAudioContext();
   if (!ctx) return;
   const now = ctx.currentTime;

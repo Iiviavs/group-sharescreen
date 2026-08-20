@@ -16,6 +16,7 @@ import {
 import { trackEvent } from "@/lib/analytics";
 import { toRoomHandle, isPrivateRoomHandle } from "@/lib/roomsApi";
 import { useRoomSoundEffects } from "@/lib/useRoomSoundEffects";
+import { getSoundEffectsEnabled, setSoundEffectsEnabled } from "@/lib/soundEffects";
 import {
   getStoredMicsMuted,
   setStoredMicsMuted,
@@ -38,6 +39,8 @@ import {
   NoiseSuppressionOffIcon,
   LinkIcon,
   CheckIcon,
+  SpeakerIcon,
+  SpeakerMuteIcon,
 } from "@/components/icons";
 import { MdHome } from "react-icons/md";
 
@@ -97,6 +100,7 @@ export function WatchRoom({ handle }: { handle: string }) {
   const [switchIsPrivate, setSwitchIsPrivate] = useState(false);
   const [nameInput, setNameInput] = useState("");
   const [micsMuted, setMicsMuted] = useState(() => getStoredMicsMuted());
+  const [soundEffectsOn, setSoundEffectsOn] = useState(() => getSoundEffectsEnabled());
   const [mutedPeerIds, setMutedPeerIds] = useState<Set<string>>(new Set());
   const [peerVolumes, setPeerVolumes] = useState<Record<string, number>>(() => getStoredPeerVolumes());
   const [transmissionVolumes, setTransmissionVolumes] = useState<Record<string, number>>(() =>
@@ -126,6 +130,13 @@ export function WatchRoom({ handle }: { handle: string }) {
     }
     previousNameRef.current = state.name;
   }, [state.name, renaming]);
+
+  function toggleSoundEffects() {
+    const next = !soundEffectsOn;
+    setSoundEffectsOn(next);
+    setSoundEffectsEnabled(next);
+    trackEvent(next ? "sound_effects_on" : "sound_effects_off");
+  }
 
   function toggleMicsMuted() {
     const next = !micsMuted;
@@ -574,6 +585,21 @@ export function WatchRoom({ handle }: { handle: string }) {
               </form>
             )}
           </div>
+
+          <button
+            type="button"
+            onClick={toggleSoundEffects}
+            title={soundEffectsOn ? "Desativar efeitos sonoros do site" : "Ativar efeitos sonoros do site"}
+            aria-label={soundEffectsOn ? "Desativar efeitos sonoros do site" : "Ativar efeitos sonoros do site"}
+            className={`rounded-lg p-2 text-white transition ${soundEffectsOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-zinc-500 hover:bg-zinc-600"
+              }`}
+          >
+            {soundEffectsOn ? (
+              <SpeakerIcon className="h-5 w-5" />
+            ) : (
+              <SpeakerMuteIcon className="h-5 w-5" />
+            )}
+          </button>
 
           <button
             type="button"
