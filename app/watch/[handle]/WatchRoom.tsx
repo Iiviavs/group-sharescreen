@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signalingClient } from "@/lib/signalingClient";
@@ -41,6 +41,7 @@ import {
   CheckIcon,
   SpeakerIcon,
   SpeakerMuteIcon,
+  MoreIcon,
 } from "@/components/icons";
 import { MdHome } from "react-icons/md";
 
@@ -48,6 +49,47 @@ import { MdHome } from "react-icons/md";
 // this lets through but the server rejects lands the user in a dead room
 // (join fails server-side, but the client's already navigated to it).
 const HANDLE_RE = /^[a-zA-Z0-9_-]{1,32}$/;
+
+// A label + on/off pill for the header's consolidated "more options" panel
+// (see WatchRoom below) — every toggle in there (sound effects, noise
+// suppression, mute mics) follows the exact same green-on/gray-off shape
+// the old per-button icons used, just as a full-width row instead of a
+// standalone icon button.
+function MenuToggleRow({
+  label,
+  active,
+  onToggle,
+  activeIcon,
+  inactiveIcon,
+  disabled = false,
+  title,
+}: {
+  label: string;
+  active: boolean;
+  onToggle: () => void;
+  activeIcon: ReactNode;
+  inactiveIcon: ReactNode;
+  disabled?: boolean;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      disabled={disabled}
+      title={title}
+      className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-zinc-300 dark:hover:bg-zinc-900"
+    >
+      <span>{label}</span>
+      <span
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white ${active ? "bg-emerald-600" : "bg-zinc-500"
+          }`}
+      >
+        {active ? activeIcon : inactiveIcon}
+      </span>
+    </button>
+  );
+}
 
 export function WatchRoom({ handle }: { handle: string }) {
   const router = useRouter();
@@ -111,6 +153,17 @@ export function WatchRoom({ handle }: { handle: string }) {
   const [qualityOpen, setQualityOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [focusedPeerId, setFocusedPeerId] = useState<string | null>(null);
+  // Consolidates every header control except the mic toggle and the
+  // share/camera transmission buttons into one "more options" panel — see
+  // the header below. Those sub-toggles (renaming/switching/qualityOpen)
+  // now live *inside* that panel instead of behind their own separate
+  // buttons, so closing the panel also collapses whichever of them was left
+  // open (see closeMenu below).
+  const [menuOpen, setMenuOpen] = useState(false);
+  // Below lg, the participants list and chat share one pane and take turns
+  // via this tab switcher instead of being stacked in one long scroll — see
+  // the aside below. Unused (both always shown) from lg up.
+  const [mobileTab, setMobileTab] = useState<"participants" | "chat">("participants");
   const previousNameRef = useRef(state.name);
 
   // Same hydration-flash guard as page.tsx: useAccountToken()/
@@ -118,7 +171,10 @@ export function WatchRoom({ handle }: { handle: string }) {
   // paint before correcting to the real localStorage-backed value, which
   // would otherwise flash the "choose a name" form for a logged-in account.
   const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    const id = setTimeout(() => setMounted(true), 0);
+    return () => clearTimeout(id);
+  }, []);
 
   // Closes the rename popover once the name actually changes — covers both
   // success (server confirmed the new name) and a plain reconnect, without
@@ -166,6 +222,13 @@ export function WatchRoom({ handle }: { handle: string }) {
   function setTransmissionVolume(volumeKey: string, volume: number) {
     setTransmissionVolumes((prev) => ({ ...prev, [volumeKey]: volume }));
     setStoredTransmissionVolume(volumeKey, volume);
+  }
+
+  function closeMenu() {
+    setMenuOpen(false);
+    setRenaming(false);
+    setSwitching(false);
+    setQualityOpen(false);
   }
 
   async function handleCopyLink() {
@@ -433,198 +496,331 @@ export function WatchRoom({ handle }: { handle: string }) {
     resumingEntries.length +
     (focusedPeerVisible ? localTileCount : 0);
   const isSingleTile = tileCount === 1;
+  // Below `sm`, 2 tiles side by side are still each bigger than a single
+  // full-width 16:9 tile would end up after the header/aside eat into a
+  // phone's height, so they stay stacked — but 3+ was the actual complaint
+  // ("não aparece todas, tem que scrollar"): one column per tile meant
+  // scrolling through a wall of tiles even though 2-up comfortably fits
+  // more of them in view at once.
+  const mobileGridCols = tileCount <= 2 ? "grid-cols-1" : "grid-cols-2";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-zinc-50 dark:bg-black">
-      <header className="relative flex flex-wrap items-center justify-between gap-3 border-b border-black/10 px-4 py-3 dark:border-white/10">
-        <div className="flex items-center gap-3">
-          <div>
-            <Link href={"/"} className="text-lg font-semibold text-zinc-950 dark:text-zinc-50"><MdHome /></Link>
+      <header className="border-b border-black/10 px-3 py-2.5 dark:border-white/10 sm:px-4 sm:py-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <Link href={"/"} className="shrink-0 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
+              <MdHome />
+            </Link>
+            <h1 className="truncate text-base font-semibold text-zinc-950 dark:text-zinc-50 sm:text-lg">
+              {handle}
+            </h1>
+            <span
+              className={`hidden shrink-0 rounded-full px-2.5 py-1 text-xs font-medium text-white sm:inline-block ${isPrivateRoomHandle(handle) ? "bg-red-600" : "bg-emerald-600"
+                }`}
+            >
+              {isPrivateRoomHandle(handle) ? "Sala privada" : "Sala pública"}
+            </span>
+            <span className="shrink-0 rounded-full bg-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+              {peerCount} {peerCount === 1 ? "pessoa" : "pessoas"}
+            </span>
           </div>
-          <div>
-            <h1 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">{handle}</h1>
-          </div>
-          <span
-            className={`rounded-full px-2.5 py-1 text-xs font-medium text-white ${isPrivateRoomHandle(handle) ? "bg-red-600" : "bg-emerald-600"
-              }`}
-          >
-            {isPrivateRoomHandle(handle) ? "Sala privada" : "Sala pública"}
-          </span>
-          <span className="rounded-full bg-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-            {peerCount} {peerCount === 1 ? "pessoa" : "pessoas"}
-          </span>
-          <a
-            href="https://discord.gg/nemtudo"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm font-medium text-red-600 hover:text-red-700 dark:text-red-500 dark:hover:text-red-400"
-          >
-            Reportar bug
-          </a>
-        </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={handleCopyLink}
-            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${linkCopied
-              ? "border-emerald-600 text-emerald-600 dark:border-emerald-500 dark:text-emerald-500"
-              : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-              }`}
-          >
-            {linkCopied ? (
-              <CheckIcon className="h-4 w-4" />
-            ) : (
-              <LinkIcon className="h-4 w-4" />
-            )}
-            {linkCopied ? "Link copiado!" : "Compartilhar sala"}
-          </button>
-
-          {/* A logged-in account's room name is locked server-side to its
-              account record (see server/signaling.ts's "register" handler)
-              — offering a rename control here would just error on every
-              attempt (or worse, silently look like it did nothing), so it's
-              hidden entirely instead of a confusing dead end. */}
-          {!state.account && (
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => {
-                  setSwitching(false);
-                  setQualityOpen(false);
-                  setRenaming((r) => {
-                    if (!r) setRenameInput(state.name ?? "");
-                    return !r;
-                  });
-                }}
-                className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-              >
-                Mudar nome
-              </button>
-
-              {renaming && (
-                <form
-                  onSubmit={handleRenameSubmit}
-                  className="absolute right-0 top-full z-20 mt-2 w-72 max-w-[90vw] rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-950"
-                >
-                  <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                    Novo nome
-                  </label>
-                  <input
-                    autoFocus
-                    value={renameInput}
-                    onChange={(e) => setRenameInput(e.target.value)}
-                    maxLength={24}
-                    placeholder="Ex: Maria"
-                    className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-                  />
-                  {state.nameError && <p className="mt-1 text-xs text-red-500">{state.nameError}</p>}
-                  <button
-                    type="submit"
-                    disabled={!renameInput.trim() || renameInput.trim() === state.name}
-                    className="mt-2 w-full rounded-md bg-zinc-950 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
-                  >
-                    Salvar nome
-                  </button>
-                </form>
-              )}
-            </div>
-          )}
-
-          <div className="relative">
+          {/* Every header control except the mic toggle, the mute-mics
+              toggle, and the share/camera transmission buttons below lives
+              in here — on a phone, the old one-row-per-button layout
+              wrapped into a wall of buttons taller than the video area
+              itself. */}
+          <div className="relative shrink-0">
             <button
               type="button"
-              onClick={() => {
-                setRenaming(false);
-                setQualityOpen(false);
-                setSwitching((s) => !s);
-              }}
-              className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+              onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}
+              aria-label="Mais opções"
+              aria-expanded={menuOpen}
+              className={`rounded-lg border p-2 transition ${menuOpen
+                ? "border-zinc-400 bg-zinc-100 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                }`}
             >
-              Trocar de sala
+              <MoreIcon className="h-5 w-5" />
             </button>
 
-            {switching && (
-              <form
-                onSubmit={handleSwitchSubmit}
-                className="absolute right-0 top-full z-20 mt-2 w-72 max-w-[90vw] rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-950"
-              >
-                <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                  Nova sala
-                </label>
-                <input
-                  autoFocus
-                  value={switchInput}
-                  onChange={(e) => setSwitchInput(e.target.value)}
-                  placeholder="Ex: reuniao-time"
-                  className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-                />
-                <label className="mt-2 flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-                  <input
-                    type="checkbox"
-                    checked={switchIsPrivate}
-                    onChange={(e) => setSwitchIsPrivate(e.target.checked)}
-                    className="h-3.5 w-3.5 rounded border-zinc-300 dark:border-zinc-700"
+            {menuOpen && (
+              <>
+                {/* Full-screen tap-to-close catcher — also what turns this
+                    into a proper bottom sheet on mobile (the panel below is
+                    fixed to the viewport, not this button). */}
+                <div className="fixed inset-0 z-30" onClick={closeMenu} />
+                <div className="fixed inset-x-0 bottom-0 z-40 flex max-h-[85vh] flex-col gap-1 overflow-y-auto rounded-t-2xl border-t border-zinc-200 bg-white p-4 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950 sm:absolute sm:inset-x-auto sm:bottom-auto sm:right-0 sm:top-full sm:mt-2 sm:max-h-[80vh] sm:w-80 sm:rounded-xl sm:border sm:p-3">
+                  <div className="mb-1 flex items-center justify-between gap-2 sm:hidden">
+                    <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Mais opções</p>
+                    <button
+                      type="button"
+                      onClick={closeMenu}
+                      aria-label="Fechar"
+                      className="text-xl leading-none text-zinc-400 transition hover:text-zinc-700 dark:hover:text-zinc-200"
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <span
+                    className={`mb-2 inline-block w-fit shrink-0 rounded-full px-2.5 py-1 text-xs font-medium text-white sm:hidden ${isPrivateRoomHandle(handle) ? "bg-red-600" : "bg-emerald-600"
+                      }`}
+                  >
+                    {isPrivateRoomHandle(handle) ? "Sala privada" : "Sala pública"}
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={handleCopyLink}
+                    className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-left text-sm font-medium transition ${linkCopied
+                      ? "border-emerald-600 text-emerald-600 dark:border-emerald-500 dark:text-emerald-500"
+                      : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                      }`}
+                  >
+                    {linkCopied ? <CheckIcon className="h-4 w-4" /> : <LinkIcon className="h-4 w-4" />}
+                    {linkCopied ? "Link copiado!" : "Compartilhar sala"}
+                  </button>
+
+                  <a
+                    href="https://discord.gg/nemtudo"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-lg px-2 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50 dark:text-red-500 dark:hover:bg-red-950/40"
+                  >
+                    Reportar bug
+                  </a>
+
+                  <div className="my-2 border-t border-zinc-200 dark:border-zinc-800" />
+
+                  <MenuToggleRow
+                    label="Efeitos sonoros do site"
+                    active={soundEffectsOn}
+                    onToggle={toggleSoundEffects}
+                    activeIcon={<SpeakerIcon className="h-4 w-4" />}
+                    inactiveIcon={<SpeakerMuteIcon className="h-4 w-4" />}
                   />
-                  Sala privada
-                </label>
-                {switchError && <p className="mt-1 text-xs text-red-500">{switchError}</p>}
-                <button
-                  type="submit"
-                  disabled={!switchInput.trim()}
-                  className="mt-2 w-full rounded-md bg-zinc-950 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
-                >
-                  Ir para a sala
-                </button>
-                <Link
-                  href="/rooms"
-                  className="mt-2 block text-center text-xs font-medium text-zinc-500 underline underline-offset-2 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
-                >
-                  Ver salas públicas ativas
-                </Link>
-              </form>
+                  <MenuToggleRow
+                    label="Supressão de ruído"
+                    active={noiseSuppressionOn}
+                    onToggle={toggleNoiseSuppression}
+                    disabled={isMicOn && !noiseSuppressionAvailable}
+                    title={
+                      isMicOn && !noiseSuppressionAvailable
+                        ? "Supressão de ruído indisponível neste navegador"
+                        : undefined
+                    }
+                    activeIcon={<NoiseSuppressionIcon className="h-4 w-4" />}
+                    inactiveIcon={<NoiseSuppressionOffIcon className="h-4 w-4" />}
+                  />
+                  <div className="my-2 border-t border-zinc-200 dark:border-zinc-800" />
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQualityOpen((q) => !q);
+                    }}
+                    title="Qualidade da transmissão — reduza se a sala estiver travando"
+                    className="rounded-lg px-2 py-2 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                  >
+                    Qualidade: {shareResolution} · {shareFps}fps
+                  </button>
+
+                  {qualityOpen && (
+                    <div className="mx-2 mb-1 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900">
+                      <div className="flex flex-col gap-3">
+                        <label className="flex items-start gap-2 rounded-md border border-zinc-200 bg-white p-2 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
+                          <input
+                            type="checkbox"
+                            checked={smartQualityEnabled}
+                            onChange={(e) => setSmartQualityEnabled(e.target.checked)}
+                            className="mt-0.5 h-3.5 w-3.5 rounded border-zinc-300 dark:border-zinc-700"
+                          />
+                          <span>
+                            <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                              Ativar controle inteligente de qualidade
+                            </span>
+                            <br />
+                            Reduz resolução e bitrate automaticamente quando a sala tem muita gente. As opções abaixo viram o teto — a qualidade real pode ficar menor.
+                          </span>
+                        </label>
+
+                        <div>
+                          <label
+                            htmlFor="share-resolution"
+                            className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400"
+                          >
+                            Resolução
+                          </label>
+                          <select
+                            id="share-resolution"
+                            value={shareResolution}
+                            onChange={(e) => setShareResolution(e.target.value as typeof shareResolution)}
+                            className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                          >
+                            {SHARE_RESOLUTION_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label
+                            htmlFor="share-fps"
+                            className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400"
+                          >
+                            Taxa de quadros
+                          </label>
+                          <select
+                            id="share-fps"
+                            value={shareFps}
+                            onChange={(e) => setShareFps(Number(e.target.value) as typeof shareFps)}
+                            className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                          >
+                            {SHARE_FPS_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label
+                            htmlFor="share-bitrate"
+                            className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400"
+                          >
+                            Bitrate
+                          </label>
+                          <select
+                            id="share-bitrate"
+                            value={shareBitrate}
+                            onChange={(e) => setShareBitrate(e.target.value as typeof shareBitrate)}
+                            className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                          >
+                            {SHARE_BITRATE_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* A logged-in account's room name is locked server-side
+                      to its account record (see server/signaling.ts's
+                      "register" handler) — offering a rename control here
+                      would just error on every attempt (or worse, silently
+                      look like it did nothing), so it's hidden entirely
+                      instead of a confusing dead end. */}
+                  {!state.account && (
+                    <>
+                      <div className="my-2 border-t border-zinc-200 dark:border-zinc-800" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRenaming((r) => {
+                            if (!r) setRenameInput(state.name ?? "");
+                            return !r;
+                          });
+                        }}
+                        className="rounded-lg px-2 py-2 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                      >
+                        Mudar nome
+                      </button>
+                      {renaming && (
+                        <form
+                          onSubmit={handleRenameSubmit}
+                          className="mx-2 mb-1 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900"
+                        >
+                          <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                            Novo nome
+                          </label>
+                          <input
+                            autoFocus
+                            value={renameInput}
+                            onChange={(e) => setRenameInput(e.target.value)}
+                            maxLength={24}
+                            placeholder="Ex: Maria"
+                            className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
+                          />
+                          {state.nameError && <p className="mt-1 text-xs text-red-500">{state.nameError}</p>}
+                          <button
+                            type="submit"
+                            disabled={!renameInput.trim() || renameInput.trim() === state.name}
+                            className="mt-2 w-full rounded-md bg-zinc-950 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+                          >
+                            Salvar nome
+                          </button>
+                        </form>
+                      )}
+                    </>
+                  )}
+
+                  <div className="my-2 border-t border-zinc-200 dark:border-zinc-800" />
+
+                  <button
+                    type="button"
+                    onClick={() => setSwitching((s) => !s)}
+                    className="rounded-lg px-2 py-2 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                  >
+                    Trocar de sala
+                  </button>
+                  {switching && (
+                    <form
+                      onSubmit={handleSwitchSubmit}
+                      className="mx-2 mb-1 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900"
+                    >
+                      <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                        Nova sala
+                      </label>
+                      <input
+                        autoFocus
+                        value={switchInput}
+                        onChange={(e) => setSwitchInput(e.target.value)}
+                        placeholder="Ex: reuniao-time"
+                        className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
+                      />
+                      <label className="mt-2 flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+                        <input
+                          type="checkbox"
+                          checked={switchIsPrivate}
+                          onChange={(e) => setSwitchIsPrivate(e.target.checked)}
+                          className="h-3.5 w-3.5 rounded border-zinc-300 dark:border-zinc-700"
+                        />
+                        Sala privada
+                      </label>
+                      {switchError && <p className="mt-1 text-xs text-red-500">{switchError}</p>}
+                      <button
+                        type="submit"
+                        disabled={!switchInput.trim()}
+                        className="mt-2 w-full rounded-md bg-zinc-950 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+                      >
+                        Ir para a sala
+                      </button>
+                      <Link
+                        href="/rooms"
+                        className="mt-2 block text-center text-xs font-medium text-zinc-500 underline underline-offset-2 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
+                      >
+                        Ver salas públicas ativas
+                      </Link>
+                    </form>
+                  )}
+                </div>
+              </>
             )}
           </div>
+        </div>
 
-          <button
-            type="button"
-            onClick={toggleSoundEffects}
-            title={soundEffectsOn ? "Desativar efeitos sonoros do site" : "Ativar efeitos sonoros do site"}
-            aria-label={soundEffectsOn ? "Desativar efeitos sonoros do site" : "Ativar efeitos sonoros do site"}
-            className={`rounded-lg p-2 text-white transition ${soundEffectsOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-zinc-500 hover:bg-zinc-600"
-              }`}
-          >
-            {soundEffectsOn ? (
-              <SpeakerIcon className="h-5 w-5" />
-            ) : (
-              <SpeakerMuteIcon className="h-5 w-5" />
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={toggleNoiseSuppression}
-            disabled={isMicOn && !noiseSuppressionAvailable}
-            title={
-              isMicOn && !noiseSuppressionAvailable
-                ? "Supressão de ruído indisponível neste navegador"
-                : noiseSuppressionOn
-                  ? "Desativar supressão de ruído"
-                  : "Ativar supressão de ruído"
-            }
-            aria-label={
-              noiseSuppressionOn ? "Desativar supressão de ruído" : "Ativar supressão de ruído"
-            }
-            className={`rounded-lg p-2 text-white transition disabled:cursor-not-allowed disabled:opacity-50 ${noiseSuppressionOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-zinc-500 hover:bg-zinc-600"
-              }`}
-          >
-            {noiseSuppressionOn ? (
-              <NoiseSuppressionIcon className="h-5 w-5" />
-            ) : (
-              <NoiseSuppressionOffIcon className="h-5 w-5" />
-            )}
-          </button>
-
+        {/* The only controls left outside the menu — kept prominent since
+            they're the ones actually used mid-call, not just once at setup.
+            Mute-mics sits immediately right of the mic toggle on purpose. */}
+        <div className="mt-2.5 flex flex-wrap items-center gap-2 sm:mt-3">
           <button
             type="button"
             onClick={toggleMic}
@@ -635,7 +831,6 @@ export function WatchRoom({ handle }: { handle: string }) {
           >
             {isMicOn ? <MicIcon className="h-5 w-5" /> : <MicOffIcon className="h-5 w-5" />}
           </button>
-
 
           <button
             type="button"
@@ -652,123 +847,8 @@ export function WatchRoom({ handle }: { handle: string }) {
             )}
           </button>
 
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => {
-                setRenaming(false);
-                setSwitching(false);
-                setQualityOpen((q) => !q);
-              }}
-              title="Qualidade da transmissão — reduza se a sala estiver travando"
-              className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-            >
-              Qualidade: {shareResolution} · {shareFps}fps
-            </button>
-
-            {qualityOpen && (
-              <div className="absolute right-0 top-full z-20 mt-2 w-72 max-w-[90vw] rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-950">
-                <div className="mb-2 flex items-start justify-between gap-2">
-                  <p className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                    Qualidade da transmissão — reduza se a sala estiver travando
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setQualityOpen(false)}
-                    aria-label="Fechar"
-                    title="Fechar"
-                    className="shrink-0 text-lg leading-none text-zinc-400 transition hover:text-zinc-700 dark:hover:text-zinc-200"
-                  >
-                    ×
-                  </button>
-                </div>
-
-                <div className="flex flex-col gap-3">
-                  <label className="flex items-start gap-2 rounded-md border border-zinc-200 bg-zinc-50 p-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
-                    <input
-                      type="checkbox"
-                      checked={smartQualityEnabled}
-                      onChange={(e) => setSmartQualityEnabled(e.target.checked)}
-                      className="mt-0.5 h-3.5 w-3.5 rounded border-zinc-300 dark:border-zinc-700"
-                    />
-                    <span>
-                      <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                        Ativar controle inteligente de qualidade
-                      </span>
-                      <br />
-                      Reduz resolução e bitrate automaticamente quando a sala tem muita gente. As opções abaixo viram o teto — a qualidade real pode ficar menor.
-                    </span>
-                  </label>
-
-                  <div>
-                    <label
-                      htmlFor="share-resolution"
-                      className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400"
-                    >
-                      Resolução
-                    </label>
-                    <select
-                      id="share-resolution"
-                      value={shareResolution}
-                      onChange={(e) => setShareResolution(e.target.value as typeof shareResolution)}
-                      className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-                    >
-                      {SHARE_RESOLUTION_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="share-fps"
-                      className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400"
-                    >
-                      Taxa de quadros
-                    </label>
-                    <select
-                      id="share-fps"
-                      value={shareFps}
-                      onChange={(e) => setShareFps(Number(e.target.value) as typeof shareFps)}
-                      className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-                    >
-                      {SHARE_FPS_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="share-bitrate"
-                      className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400"
-                    >
-                      Bitrate
-                    </label>
-                    <select
-                      id="share-bitrate"
-                      value={shareBitrate}
-                      onChange={(e) => setShareBitrate(e.target.value as typeof shareBitrate)}
-                      className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-                    >
-                      {SHARE_BITRATE_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
           {isSharing ? (
-            <div className="flex items-center gap-2 border-l border-zinc-300 pl-3 dark:border-zinc-700">
+            <div className="flex flex-wrap items-center gap-2 border-l border-zinc-300 pl-2 dark:border-zinc-700">
               {localStream && (
                 <button
                   type="button"
@@ -789,7 +869,7 @@ export function WatchRoom({ handle }: { handle: string }) {
               )}
             </div>
           ) : (
-            <div className="flex items-center gap-3 border-l border-zinc-300 pl-3 dark:border-zinc-700">
+            <div className="flex flex-wrap items-center gap-2 border-l border-zinc-300 pl-2 dark:border-zinc-700">
               <button
                 type="button"
                 onClick={() => startShare("display")}
@@ -876,7 +956,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                 className={
                   isSingleTile
                     ? "h-full"
-                    : "grid grid-cols-1 gap-5 sm:grid-cols-2 2xl:grid-cols-3"
+                    : `grid ${mobileGridCols} gap-2 sm:grid-cols-2 sm:gap-5 2xl:grid-cols-3`
                 }
               >
                 {focusedPeerVisible && isSharing && localStream && (
@@ -961,50 +1041,86 @@ export function WatchRoom({ handle }: { handle: string }) {
             being reachable by scrolling within this pane. Uncapped again
             from lg: on, where it already gets a fixed height matching
             <main> via lg:h-full. */}
-        <aside className="flex w-full max-h-[50vh] shrink-0 flex-col overflow-y-auto lg:h-full lg:max-h-none lg:w-64">
+        <aside className="flex w-full max-h-[65vh] shrink-0 flex-col overflow-y-auto lg:h-full lg:max-h-none lg:w-64">
           {(state.status === "connecting" || state.status === "closed") && (
             <p className="mb-1 flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-500">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
               Conectando...
             </p>
           )}
-          <h2 className="mb-2 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
-            Participantes
-          </h2>
-          <ul className="flex flex-col gap-1.5">
-            <ParticipantRow
-              name={state.name}
-              isSelf
-              micOn={isMicOn}
-              sharing={isSharing}
-              micStream={localMicStream}
-            />
-            {visiblePeers.map((p) => {
-              const volumeKey = p.userId ?? p.id;
-              return (
-                <ParticipantRow
-                  key={p.id}
-                  name={p.name}
-                  micOn={p.mic}
-                  sharing={p.sharing}
-                  micStream={remoteMicStreams[p.id]}
-                  muted={micsMuted || mutedPeerIds.has(p.id)}
-                  onToggleMute={() => togglePeerMute(p.id)}
-                  volume={peerVolumes[volumeKey] ?? 1}
-                  onVolumeChange={(volume) => setPeerVolume(volumeKey, volume)}
-                />
-              );
-            })}
-          </ul>
 
-          <ChatPanel
-            messages={state.chatMessages}
-            selfId={state.selfId}
-            selfName={state.name}
-            onSend={(text) => signalingClient.sendChatMessage(text)}
-            onSendGif={(url) => signalingClient.sendGif(url)}
-            blockedMessage={state.chatBlockedMessage}
-          />
+          {/* Below lg, participants and chat take turns in this one pane
+              via these tabs instead of always being stacked — the old
+              layout crammed a variable-length participant list, a
+              fixed-height chat, and the ad card into one shared scroll box,
+              which is what made this whole section feel broken on a phone.
+              From lg: on this bar is hidden and both stay stacked, exactly
+              like before. */}
+          <div className="mb-2 flex gap-1 lg:hidden">
+            <button
+              type="button"
+              onClick={() => setMobileTab("participants")}
+              className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition ${mobileTab === "participants"
+                ? "bg-zinc-950 text-white dark:bg-zinc-50 dark:text-zinc-950"
+                : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                }`}
+            >
+              Participantes ({peerCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileTab("chat")}
+              className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition ${mobileTab === "chat"
+                ? "bg-zinc-950 text-white dark:bg-zinc-50 dark:text-zinc-950"
+                : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                }`}
+            >
+              Chat
+            </button>
+          </div>
+
+          <div className={`${mobileTab === "participants" ? "block" : "hidden"} lg:block`}>
+            <h2 className="mb-2 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+              Participantes
+            </h2>
+            <ul className="flex flex-col gap-1.5">
+              <ParticipantRow
+                name={state.name}
+                isSelf
+                micOn={isMicOn}
+                sharing={isSharing}
+                micStream={localMicStream}
+              />
+              {visiblePeers.map((p) => {
+                const volumeKey = p.userId ?? p.id;
+                return (
+                  <ParticipantRow
+                    key={p.id}
+                    name={p.name}
+                    micOn={p.mic}
+                    sharing={p.sharing}
+                    micStream={remoteMicStreams[p.id]}
+                    muted={micsMuted || mutedPeerIds.has(p.id)}
+                    onToggleMute={() => togglePeerMute(p.id)}
+                    volume={peerVolumes[volumeKey] ?? 1}
+                    onVolumeChange={(volume) => setPeerVolume(volumeKey, volume)}
+                  />
+                );
+              })}
+            </ul>
+          </div>
+
+          <div className={`${mobileTab === "chat" ? "block" : "hidden"} lg:block`}>
+            <ChatPanel
+              messages={state.chatMessages}
+              selfId={state.selfId}
+              selfName={state.name}
+              onSend={(text) => signalingClient.sendChatMessage(text)}
+              onSendGif={(url) => signalingClient.sendGif(url)}
+              blockedMessage={state.chatBlockedMessage}
+              heightClassName="h-[55vh] lg:h-72"
+            />
+          </div>
 
           <PartnerCard />
         </aside>

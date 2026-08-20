@@ -61,6 +61,7 @@ export function ChatPanel({
   onSend,
   onSendGif,
   blockedMessage,
+  heightClassName = "h-72",
 }: {
   messages: ChatMessage[];
   selfId: string | null;
@@ -76,6 +77,10 @@ export function ChatPanel({
   // word (see signalingClient's chatBlockedMessage) — shown once, right
   // above the input, and cleared by the client on the next send attempt.
   blockedMessage?: string | null;
+  // Lets a caller give this a taller box than the default fixed 18rem — e.g.
+  // WatchRoom.tsx's mobile tab view, where chat is the sole content of its
+  // pane instead of one of several things stacked in a shared sidebar.
+  heightClassName?: string;
 }) {
   const [input, setInput] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -117,7 +122,10 @@ export function ChatPanel({
   }
 
   return (
-    <div className="mt-4 mb-4 flex h-72 flex-col overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800" style={{ minHeight: "245px" }}>
+    <div
+      className={`mt-4 mb-4 flex ${heightClassName} flex-col overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800`}
+      style={{ minHeight: "245px" }}
+    >
       <h2 className="border-b border-zinc-200 px-3 py-2 text-sm font-semibold text-zinc-700 dark:border-zinc-800 dark:text-zinc-300">
         Chat
       </h2>
