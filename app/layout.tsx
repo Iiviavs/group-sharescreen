@@ -1,7 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
+import { InstallAppButton } from "@/components/InstallAppButton";
 import { AuthProvider } from "@/lib/AuthContext";
 import "./globals.css";
 
@@ -85,6 +86,27 @@ export const metadata: Metadata = {
       "max-image-preview": "large",
     },
   },
+  // Links app/manifest.ts (served at /manifest.webmanifest) into <head> —
+  // Next doesn't do that automatically just from the file existing, see its
+  // own doc comment. Together with the `viewport` export below and
+  // InstallAppButton, this is what makes "Adicionar à tela de início" open
+  // GoLive full-screen/chrome-less (Android's PWA install, iOS's "Add to
+  // Home Screen") instead of as a regular bookmark.
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: SITE_NAME,
+    statusBarStyle: "black-translucent",
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  // Matches manifest.ts's background_color/theme_color — themeColor moved
+  // out of `metadata` and into this separate export (metadata.themeColor is
+  // deprecated).
+  themeColor: "#09090b",
 };
 
 const jsonLd = {
@@ -118,6 +140,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <AuthProvider>
           <AnnouncementBanner />
           {children}
+          <InstallAppButton />
         </AuthProvider>
         {UMAMI_WEBSITE_ID && (
           <Script

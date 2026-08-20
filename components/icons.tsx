@@ -354,6 +354,47 @@ export function ChevronUpIcon({ className }: IconProps) {
   );
 }
 
+export function DownloadIcon({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  );
+}
+
+// The iOS "share sheet" glyph (box with an arrow out the top) — used in
+// InstallAppButton.tsx's instructions, since iOS Safari has no programmatic
+// install prompt and this is the icon people need to recognize/tap.
+export function ShareIcon({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M12 16V4" />
+      <polyline points="8 8 12 4 16 8" />
+      <rect x="4" y="14" width="16" height="6" rx="2" />
+    </svg>
+  );
+}
+
 export function ChartIcon({ className }: IconProps) {
   return (
     <svg
