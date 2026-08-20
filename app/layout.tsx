@@ -11,7 +11,7 @@ const SITE_URL = "https://golive.nemtudo.me";
 const SITE_NAME = "GoLive";
 const TITLE = "GoLive — Transmissão de Tela em Grupo Online Grátis";
 const DESCRIPTION =
-  "Transmita sua tela para várias pessoas ao mesmo tempo, direto do navegador. Crie uma sala grátis, sem instalar nada e sem cadastro: a forma mais fácil de fazer transmissão de tela em grupo online.";
+  "Transmita sua tela para várias pessoas ao mesmo tempo, direto do navegador. Crie uma sala em 4 cliques sem cadastro: a forma mais fácil de fazer transmissão de tela em grupo online.";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
