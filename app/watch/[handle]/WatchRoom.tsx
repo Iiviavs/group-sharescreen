@@ -278,6 +278,44 @@ export function WatchRoom({ handle }: { handle: string }) {
     );
   }
 
+  // A different guest/account already holds this name in this specific
+  // room (see server/signaling.ts's "join" handler) — unlike "superseded"
+  // above, nobody here was kicked; this connection just never got in, so a
+  // different name lets it retry immediately instead of waiting/reloading.
+  if (state.joinError) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-4 py-16">
+        <main className="w-full max-w-md rounded-2xl border border-black/10 bg-white p-8 shadow-sm dark:border-white/10 dark:bg-zinc-950">
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
+            Não foi possível entrar na sala {handle}
+          </h1>
+          <p className="mt-1 text-sm text-red-500">{state.joinError}</p>
+          <form onSubmit={handleNameSubmit} className="mt-8 flex flex-col gap-3">
+            <label htmlFor="join-error-name" className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              Escolha outro nome
+            </label>
+            <input
+              id="join-error-name"
+              autoFocus
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              maxLength={24}
+              placeholder="Ex: Maria"
+              className="rounded-lg border border-zinc-300 bg-white px-4 py-2.5 text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+            />
+            <button
+              type="submit"
+              disabled={!nameInput.trim()}
+              className="mt-2 rounded-lg bg-zinc-950 px-4 py-2.5 font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+            >
+              Entrar na sala
+            </button>
+          </form>
+        </main>
+      </div>
+    );
+  }
+
   if (!state.name) {
     return (
       <div className="flex flex-1 items-center justify-center px-4 py-16">
@@ -407,20 +445,27 @@ export function WatchRoom({ handle }: { handle: string }) {
             {linkCopied ? "Link copiado!" : "Compartilhar sala"}
           </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setSwitching(false);
-              setQualityOpen(false);
-              setRenaming((r) => {
-                if (!r) setRenameInput(state.name ?? "");
-                return !r;
-              });
-            }}
-            className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-          >
-            Mudar nome
-          </button>
+          {/* A logged-in account's room name is locked server-side to its
+              account record (see server/signaling.ts's "register" handler)
+              — offering a rename control here would just error on every
+              attempt (or worse, silently look like it did nothing), so it's
+              hidden entirely instead of a confusing dead end. */}
+          {!state.account && (
+            <button
+              type="button"
+              onClick={() => {
+                setSwitching(false);
+                setQualityOpen(false);
+                setRenaming((r) => {
+                  if (!r) setRenameInput(state.name ?? "");
+                  return !r;
+                });
+              }}
+              className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+            >
+              Mudar nome
+            </button>
+          )}
 
           <button
             type="button"

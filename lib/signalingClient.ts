@@ -44,6 +44,14 @@ export type SignalingState = {
   nameError: string | null;
   account: RegisteredAccount | null;
   room: string | null;
+  // Set when the server rejected our last "join" because someone else — a
+  // provably different guest/account, not just another connection of ours
+  // — already holds this display name in that specific room (see
+  // server/signaling.ts's "join" handler). Cleared as soon as a room is
+  // actually entered. Distinct from nameError: that one is about the name
+  // itself (format, or reserved by an account) and can block before a room
+  // is even chosen; this one only ever happens once a room was targeted.
+  joinError: string | null;
   peers: PeerInfo[];
   chatMessages: ChatMessage[];
   // Site-wide banner, independent of room — null when none is active. Set
@@ -63,6 +71,20 @@ type SignalListener = (from: string, data: Record<string, unknown>) => void;
 
 const WS_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || "ws://localhost:4000/ws";
 const NAME_STORAGE_KEY = "sharescreen:name";
+// A guest identity token (see server/signaling.ts's "register" handler) —
+// unlike the clientId below, this is meant to follow the guest around
+// everywhere (every tab, every reload) since it's what proves "this is
+// still the same guest" without ever being exposed to anyone else, so it's
+// kept in localStorage rather than sessionStorage.
+const GUEST_TOKEN_STORAGE_KEY = "sharescreen:guestToken";
+// Deliberately sessionStorage, not localStorage: this id is echoed to every
+// peer in whatever room it's used in (see peerSummary/room-state on the
+// server), so it must stay scoped to *this tab* rather than being shared
+// browser-wide — otherwise a second tab opened for a different room would
+// immediately steal it back and forth with the first (see
+// SUPERSEDED_CLOSE_CODE below), even though the two tabs have nothing to do
+// with each other. A reload of this same tab still reclaims it, since
+// sessionStorage survives that; a brand new tab simply starts fresh.
 const CLIENT_ID_STORAGE_KEY = "sharescreen:clientId";
 // Mirrors server/signaling.ts's SUPERSEDED_CLOSE_CODE.
 const SUPERSEDED_CLOSE_CODE = 4000;
@@ -76,6 +98,7 @@ const initialState: SignalingState = {
   nameError: null,
   account: null,
   room: null,
+  joinError: null,
   peers: [],
   chatMessages: [],
   announcement: null,
@@ -105,16 +128,18 @@ function setStoredName(name: string | null) {
   }
 }
 
-// A stable per-browser id, persisted across reloads and reconnects
-// (including after the signaling server itself restarts for a deploy) so a
-// returning client can reclaim its previous identity instead of showing up
-// as a stranger — which would otherwise orphan everyone else's still-open
-// WebRTC connections to it. The server adopts whatever id we send it once
-// registered, so this also self-heals if it's ever out of sync.
+// A stable per-tab connection id, persisted across reloads and reconnects
+// of *this tab* (including after the signaling server itself restarts for a
+// deploy) so a returning client can reclaim its previous identity instead
+// of showing up as a stranger — which would otherwise orphan everyone
+// else's still-open WebRTC connections to it. The server adopts whatever id
+// we send it once registered, so this also self-heals if it's ever out of
+// sync. sessionStorage (not localStorage) deliberately keeps this scoped to
+// one tab — see CLIENT_ID_STORAGE_KEY above.
 function getClientId(): string | null {
   if (typeof window === "undefined") return null;
   try {
-    return window.localStorage.getItem(CLIENT_ID_STORAGE_KEY);
+    return window.sessionStorage.getItem(CLIENT_ID_STORAGE_KEY);
   } catch {
     return null;
   }
@@ -123,7 +148,29 @@ function getClientId(): string | null {
 function setClientId(id: string) {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(CLIENT_ID_STORAGE_KEY, id);
+    window.sessionStorage.setItem(CLIENT_ID_STORAGE_KEY, id);
+  } catch {
+    // ignored - sessionStorage may be unavailable (private mode, quota, etc.)
+  }
+}
+
+// The guest identity token handed back by "registered" (see
+// server/signaling.ts) the first time a connection shows up without one —
+// null once logged into an account (accountApi's own token takes over) or
+// before this browser has ever registered as a guest at all.
+function getStoredGuestToken(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(GUEST_TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function setStoredGuestToken(token: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(GUEST_TOKEN_STORAGE_KEY, token);
   } catch {
     // ignored - localStorage may be unavailable (private mode, quota, etc.)
   }
@@ -267,6 +314,19 @@ class SignalingClient {
         break;
       case "registered": {
         const account = (msg.account as RegisteredAccount | null) ?? null;
+        const guestToken = typeof msg.guestToken === "string" ? msg.guestToken : null;
+        // A guest identity token is only ever sent when the server minted a
+        // new one for us (see server/signaling.ts) — persist it and start
+        // presenting it on every future register() so this guest can prove
+        // it's still the same one (that's what lets a reload or a second
+        // tab reclaim its spot without some other request being able to
+        // impersonate it — see isSameOwner server-side).
+        let justMintedGuestToken = false;
+        if (!account && guestToken) {
+          setStoredGuestToken(guestToken);
+          this.desiredToken = guestToken;
+          justMintedGuestToken = true;
+        }
         this.setState({
           name: msg.name as string,
           nameError: null,
@@ -281,6 +341,17 @@ class SignalingClient {
         if (!account) setStoredName(msg.name as string);
         setClientId(msg.id as string);
         trackEvent("name_registered");
+        // A freshly minted guest token only protects this connection once
+        // the server has actually seen it presented back (see isSameOwner
+        // and "registered"/"join" server-side) — until then someone who
+        // observes this connection's id/name from a room's peer list could
+        // still claim it the old (unprotected) way. Immediately presenting
+        // it back on this same connection, rather than waiting for the next
+        // natural reconnect, closes that window down to one round trip
+        // instead of leaving it open for as long as this tab stays open.
+        if (justMintedGuestToken) {
+          this.rawSend({ type: "register", name: msg.name, clientId: getClientId(), token: guestToken });
+        }
         if (this.desiredRoom) this.rawSend({ type: "join", room: this.desiredRoom });
         break;
       }
@@ -299,6 +370,16 @@ class SignalingClient {
         }
         trackEvent("name_register_error");
         break;
+      // The name we hold is already taken by a provably different
+      // guest/account in the room we just tried to join (see
+      // server/signaling.ts's "join" handler) — surfaced separately from
+      // register-error since, unlike that one, our name registration itself
+      // was fine; only entering *this* room failed.
+      case "join-error":
+        this.desiredRoom = null;
+        this.setState({ joinError: (msg.message as string) ?? "Não foi possível entrar nesta sala." });
+        trackEvent("join_error");
+        break;
       case "room-state": {
         // The server sends the room's full retained chat history (kept for
         // the room's lifetime — see server/signaling.ts) on every join,
@@ -308,6 +389,7 @@ class SignalingClient {
         this.setState({
           room: msg.room as string,
           selfId: msg.selfId as string,
+          joinError: null,
           peers: msg.peers as PeerInfo[],
           chatMessages:
             history.length > MAX_CHAT_MESSAGES ? history.slice(-MAX_CHAT_MESSAGES) : history,
@@ -402,13 +484,21 @@ class SignalingClient {
 
   // `token` is an account JWT (see accountApi.ts) — pass it when
   // registering as a logged-in account so the server can verify the
-  // reserved-name check against the right owner; omit it (or pass
-  // null/undefined) for a plain guest name.
+  // reserved-name check against the right owner (and, as of the account
+  // name lock, so the room display name comes from the account record
+  // instead of `name`). Omit it entirely (leave it `undefined`) to keep
+  // using whatever token is already active for this connection — an
+  // account token if one's in play (e.g. the "superseded" screen's "Usar
+  // esta aba" button, which only ever passes a name), otherwise whatever
+  // guest token this browser was previously issued, so a returning guest
+  // keeps proving it's the same one instead of looking like a stranger on
+  // every reconnect. Pass `null` explicitly to drop the current identity
+  // and force a brand new guest one instead.
   register(name: string, token?: string | null) {
     this.desiredName = name;
-    this.desiredToken = token ?? null;
+    this.desiredToken = token !== undefined ? token : this.desiredToken ?? getStoredGuestToken();
     this.reconnectAttempts = 0;
-    this.setState({ nameError: null });
+    this.setState({ nameError: null, joinError: null });
     const wasOpen = this.ws && this.ws.readyState === WebSocket.OPEN;
     this.ensureSocket();
     if (wasOpen) {
