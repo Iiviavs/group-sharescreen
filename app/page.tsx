@@ -200,7 +200,7 @@ export default function Home() {
           {peopleOnline} {peopleOnline === 1 ? "pessoa" : "pessoas"} em salas agora
         </span>
       )}
-      {false && <>
+      {true && <>
 
         <h2 style={{ color: "#ff2828", maxWidth: "500px", fontSize: "1.3rem" }}>Site fora do ar momentâneamente!!</h2>
         <h2 style={{ color: "#ff6767", maxWidth: "500px" }}>A API foi reiniciar pra atualizar e não consegue mais ligar por ter mais de 2000 pessoas tentando reconectar.</h2>
