@@ -2,8 +2,8 @@
 
 import { SpeakerIcon, SpeakerMuteIcon } from "./icons";
 
-function clampVolume(value: number) {
-  return Math.min(1, Math.max(0, value));
+function clampVolume(value: number, max = 2) {
+  return Math.min(max, Math.max(0, value));
 }
 
 export function VolumeSlider({
@@ -14,6 +14,7 @@ export function VolumeSlider({
   onToggleMute,
   showIcon = true,
   collapseOnIdle = false,
+  max = 2,
   className = "",
 }: {
   value: number;
@@ -23,14 +24,16 @@ export function VolumeSlider({
   onToggleMute?: () => void;
   showIcon?: boolean;
   collapseOnIdle?: boolean;
+  max?: number;
   className?: string;
 }) {
-  const normalizedValue = clampVolume(value);
+  const normalizedValue = clampVolume(value, max);
+  const isBoosted = normalizedValue > 1.0;
   const icon =
     muted || normalizedValue === 0 ? (
       <SpeakerMuteIcon className="h-4 w-4 shrink-0" />
     ) : (
-      <SpeakerIcon className="h-4 w-4 shrink-0" />
+      <SpeakerIcon className={`h-4 w-4 shrink-0 ${isBoosted ? "text-amber-500" : ""}`} />
     );
 
   function handleIconClick(event: React.MouseEvent<HTMLButtonElement>) {
@@ -38,10 +41,12 @@ export function VolumeSlider({
     onToggleMute?.();
   }
 
+  const percentage = Math.round(normalizedValue * 100);
+
   return (
     <div
       className={`${collapseOnIdle ? "group relative z-20" : ""} flex min-w-0 items-center gap-1.5 ${className}`}
-      title={`${label}: ${Math.round(normalizedValue * 100)}%`}
+      title={`${label}: ${percentage}%${isBoosted ? " (Amplificado 🚀)" : ""}`}
       onClick={(event) => event.stopPropagation()}
     >
       {showIcon &&
@@ -49,7 +54,7 @@ export function VolumeSlider({
           <button
             type="button"
             onClick={handleIconClick}
-            title={muted || normalizedValue === 0 ? "Reativar áudio" : "Silenciar áudio"}
+            title={muted || normalizedValue === 0 ? "Reativar áudio" : `Silenciar áudio (${percentage}%)`}
             aria-label={
               muted || normalizedValue === 0 ? "Reativar áudio" : "Silenciar áudio"
             }
@@ -63,12 +68,14 @@ export function VolumeSlider({
       <input
         type="range"
         min="0"
-        max="1"
+        max={max}
         step="0.01"
         value={normalizedValue}
         onChange={(event) => onChange(Number(event.target.value))}
         aria-label={label}
-        className={`min-w-0 cursor-pointer accent-current transition-opacity duration-150 ${
+        className={`min-w-0 cursor-pointer transition-opacity duration-150 ${
+          isBoosted ? "accent-amber-500" : "accent-current"
+        } ${
           collapseOnIdle
             ? "pointer-events-none absolute right-6 top-1/2 z-10 w-24 -translate-y-1/2 rounded-full bg-zinc-50/95 px-2 py-1 opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 dark:bg-zinc-900/95"
             : "h-1.5 w-20 sm:w-24"
@@ -77,3 +84,4 @@ export function VolumeSlider({
     </div>
   );
 }
+

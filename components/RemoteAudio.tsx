@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useAudioBooster } from "@/lib/useAudioBooster";
 
 export function RemoteAudio({
   stream,
@@ -13,16 +14,16 @@ export function RemoteAudio({
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
 
+  useAudioBooster(stream, volume, muted);
+
+  // Keep an audio element with muted=true to prevent WebRTC from throttling/pausing the track
   useEffect(() => {
-    if (audioRef.current) audioRef.current.srcObject = stream;
+    if (audioRef.current) {
+      audioRef.current.srcObject = stream;
+      audioRef.current.muted = true;
+    }
   }, [stream]);
 
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.muted = muted;
-    audio.volume = Math.min(1, Math.max(0, volume));
-  }, [muted, volume]);
-
-  return <audio ref={audioRef} autoPlay className="sr-only" />;
+  return <audio ref={audioRef} autoPlay playsInline muted className="sr-only" />;
 }
+

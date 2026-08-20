@@ -1078,6 +1078,7 @@ export function WatchRoom({ handle }: { handle: string }) {
               >
                 {focusedPeerVisible && isSharing && localStream && (
                   <VideoTile
+                    isSelf
                     stream={localStream}
                     label="Você"
                     badge={shareSource === "camera" ? "câmera" : "transmitindo"}
@@ -1089,6 +1090,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                 )}
                 {focusedPeerVisible && localCameraStream && (
                   <VideoTile
+                    isSelf
                     stream={localCameraStream}
                     label="Você"
                     badge="câmera"

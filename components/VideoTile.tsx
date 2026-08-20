@@ -12,6 +12,7 @@ import {
   EyeOffIcon,
 } from "@/components/icons";
 import { VolumeSlider } from "@/components/VolumeSlider";
+import { useAudioBooster } from "@/lib/useAudioBooster";
 
 function noopSubscribe() {
   return () => {};
@@ -31,6 +32,7 @@ export function VideoTile({
   allowUnmute = true,
   volume,
   onVolumeChange,
+  isSelf = false,
   fill = false,
   onStopWatching,
   onDoubleClick,
@@ -42,6 +44,7 @@ export function VideoTile({
   allowUnmute?: boolean;
   volume?: number;
   onVolumeChange?: (volume: number) => void;
+  isSelf?: boolean;
   // When true (the lone tile in the room), grow to fill the available
   // space instead of staying locked to a 16:9 card like the grid view.
   fill?: boolean;
@@ -62,19 +65,31 @@ export function VideoTile({
   // actually has data flowing — surface that gap as a spinner instead of a
   // blank black tile, and reset it whenever the stream is swapped out.
   const [isVideoLoading, setIsVideoLoading] = useState(true);
+  const [prevStream, setPrevStream] = useState(stream);
+  if (stream !== prevStream) {
+    setPrevStream(stream);
+    setIsVideoLoading(true);
+  }
   const pipSupported = useSyncExternalStore(noopSubscribe, getPipSupported, getPipSupportedServer);
 
+  const effectiveVolume = volume ?? internalVolume;
+  // Route audio through Web Audio booster to allow clean amplification up to 200%
+  useAudioBooster(isSelf ? null : stream, effectiveVolume, isMuted);
+
   useEffect(() => {
-    setIsVideoLoading(true);
-    if (videoRef.current) videoRef.current.srcObject = stream;
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
+      // When not self, video element stays muted so audio plays exclusively via useAudioBooster
+      videoRef.current.muted = true;
+    }
   }, [stream]);
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || !isSelf) return;
     video.muted = isMuted;
     video.volume = Math.min(1, Math.max(0, volume ?? internalVolume));
-  }, [internalVolume, isMuted, volume]);
+  }, [internalVolume, isMuted, volume, isSelf]);
 
   useEffect(() => {
     function onFullscreenChange() {
