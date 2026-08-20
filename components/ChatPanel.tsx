@@ -88,7 +88,7 @@ export function ChatPanel({
   }
 
   return (
-    <div className="mt-4 flex h-72 flex-col overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
+    <div className="mt-4 mb-4 flex h-72 flex-col overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800" style={{ minHeight: "245px" }}>
       <h2 className="border-b border-zinc-200 px-3 py-2 text-sm font-semibold text-zinc-700 dark:border-zinc-800 dark:text-zinc-300">
         Chat
       </h2>
@@ -105,9 +105,8 @@ export function ChatPanel({
               <div key={m.id} className="text-sm">
                 <div className="flex items-baseline gap-1.5">
                   <span
-                    className={`font-medium ${
-                      isSelf ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-700 dark:text-zinc-300"
-                    }`}
+                    className={`font-medium ${isSelf ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-700 dark:text-zinc-300"
+                      }`}
                   >
                     {m.name}
                   </span>
