@@ -37,7 +37,7 @@ async function fetchPartner(signal?: AbortSignal): Promise<PartnerCardData | nul
 // instead of an empty slot.
 const FALLBACK_PARTNER: PartnerCardData = {
   title: "Anuncie aqui pra todo mundo!",
-  description: "Esse site é visitado por mais de 10 mil por dia!\n\nAbra um ticket no meu Discord e anuncie",
+  description: "Esse site é visitado por mais de 10 mil por dia!\n\nAbra um ticket no meu Discord e vamos combinar um anúncio",
   buttonLabel: "Abrir ticket no Discord",
   buttonUrl: "https://go.nemtudo.me/golive-partner-nemtudodiscord",
   backgroundColor: "#111827",
