@@ -5,6 +5,12 @@ import { signalingClient } from "./signalingClient";
 import { trackEvent } from "./analytics";
 import { ICE_CONFIG } from "./iceConfig";
 import { captureNoiseSuppressedMic, setGraphSuppressionEnabled, type MicNoiseGraph } from "./rnnoise";
+import {
+  getStoredMicOn,
+  getStoredNoiseSuppressionOn,
+  setStoredMicOn,
+  setStoredNoiseSuppressionOn,
+} from "./mediaPreferences";
 
 type Channel = "screen" | "camera" | "mic";
 type ShareSource = "display" | "camera";
@@ -981,8 +987,10 @@ export function useRoomMedia(room: string) {
   // Mirrors noiseSuppressionOn below without going stale inside the capture
   // closure, which useBroadcastChannel only ever calls once per mic start
   // (long after a later render could have updated a captured `const`).
-  const noiseSuppressionOnRef = useRef(true);
-  const [noiseSuppressionOn, setNoiseSuppressionOnState] = useState(true);
+  // Seeded from localStorage so a returning visitor's last choice carries
+  // over instead of resetting to "on" every reload.
+  const noiseSuppressionOnRef = useRef(getStoredNoiseSuppressionOn());
+  const [noiseSuppressionOn, setNoiseSuppressionOnState] = useState(getStoredNoiseSuppressionOn);
   // Non-null only while the mic is active AND RNNoise actually loaded —
   // used both to reroute the live audio graph on toggle and to tell the UI
   // whether suppression is really in effect right now.
@@ -1006,14 +1014,28 @@ export function useRoomMedia(room: string) {
   );
 
   const toggleMic = useCallback(() => {
+    const next = !mic.active;
+    setStoredMicOn(next);
     if (mic.active) mic.stop();
     else mic.start();
   }, [mic]);
+
+  // Restores a returning visitor's mic-on preference — fires on mount and
+  // again after a room switch (the mic itself always stops on a room
+  // change, same as screen/camera share, so without this it would silently
+  // stay off instead of carrying over like noise suppression/mute do).
+  // Only ever reads the persisted value once per room; a manual toggle
+  // afterwards is respected instead of being fought on the next render.
+  useEffect(() => {
+    if (getStoredMicOn()) mic.start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room]);
 
   const toggleNoiseSuppression = useCallback(() => {
     const next = !noiseSuppressionOnRef.current;
     noiseSuppressionOnRef.current = next;
     setNoiseSuppressionOnState(next);
+    setStoredNoiseSuppressionOn(next);
     setGraphSuppressionEnabled(micGraphRef.current, next);
     trackEvent(next ? "noise_suppression_on" : "noise_suppression_off");
   }, []);

@@ -14,6 +14,11 @@ export type PeerInfo = {
   sharing: boolean;
   mic: boolean;
   role?: "moderator";
+  // Stable per-account/per-guest identity (see server/signaling.ts's
+  // stableUserId) — unlike `id`, which is reissued on every reconnect, this
+  // stays the same across reloads for the same person. Undefined only for a
+  // peer sent by an older server version that doesn't send it yet.
+  userId?: string;
 };
 
 export type SignalingStatus = "idle" | "connecting" | "open" | "closed" | "superseded" | "banned";
@@ -405,16 +410,17 @@ class SignalingClient {
         // still-healthy WebRTC connections over a brief signaling hiccup).
         const alreadyKnown = this.state.peers.some((p) => p.id === msg.id);
         const role = msg.role === "moderator" ? "moderator" : undefined;
+        const userId = typeof msg.userId === "string" ? msg.userId : undefined;
         this.setState({
           peers: alreadyKnown
             ? this.state.peers.map((p) =>
                 p.id === msg.id
-                  ? { ...p, name: msg.name as string, sharing: false, mic: false, role }
+                  ? { ...p, name: msg.name as string, sharing: false, mic: false, role, userId }
                   : p
               )
             : [
                 ...this.state.peers,
-                { id: msg.id as string, name: msg.name as string, sharing: false, mic: false, role },
+                { id: msg.id as string, name: msg.name as string, sharing: false, mic: false, role, userId },
               ],
         });
         break;

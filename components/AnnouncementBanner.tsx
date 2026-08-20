@@ -5,6 +5,7 @@ import { useSignaling } from "@/lib/useSignaling";
 import { AnnouncementBar } from "./AnnouncementBar";
 import { getHiddenAnnouncementIds, hideAnnouncementId } from "@/lib/announcement";
 import { trackEvent } from "@/lib/analytics";
+import { playWarningSound } from "@/lib/soundEffects";
 
 // Site-wide, rendered once in the root layout — not scoped to any room.
 // Two things permanently hide a given announcement id (persisted, so it
@@ -41,6 +42,7 @@ export function AnnouncementBanner() {
     }
     if (!trackedShownIds.current.has(announcement.id)) {
       trackedShownIds.current.add(announcement.id);
+      playWarningSound();
       trackEvent("announcement_shown", {
         id: announcement.id,
         color: announcement.color,

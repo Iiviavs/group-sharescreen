@@ -33,12 +33,17 @@ function linkifyText(text: string) {
 export function ChatPanel({
   messages,
   selfId,
+  selfName,
   onSend,
   onSendGif,
   blockedMessage,
 }: {
   messages: ChatMessage[];
   selfId: string | null;
+  // Used to detect "@YourName" mentions for the yellow highlight below —
+  // omitted for the admin moderation view, which has no identity of its own
+  // in the room it's watching.
+  selfName?: string | null;
   // Omitted for a read-only viewer (the admin moderation view) — hides the
   // input form instead of sending into a room the viewer isn't a member of.
   onSend?: (text: string) => void;
@@ -101,8 +106,17 @@ export function ChatPanel({
         ) : (
           messages.map((m) => {
             const isSelf = m.from === selfId;
+            const isMention =
+              !!selfName &&
+              m.kind !== "gif" &&
+              m.text.toLowerCase().includes(`@${selfName}`.toLowerCase());
             return (
-              <div key={m.id} className="text-sm">
+              <div
+                key={m.id}
+                className={`-mx-1.5 rounded-md px-1.5 py-1 text-sm ${
+                  isMention ? "bg-yellow-200 dark:bg-blue-500/25" : ""
+                }`}
+              >
                 <div className="flex items-baseline gap-1.5">
                   <span
                     className={`font-medium ${isSelf ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-700 dark:text-zinc-300"

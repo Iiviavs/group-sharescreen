@@ -15,6 +15,15 @@ import {
 } from "@/lib/useRoomMedia";
 import { trackEvent } from "@/lib/analytics";
 import { toRoomHandle, isPrivateRoomHandle } from "@/lib/roomsApi";
+import { useRoomSoundEffects } from "@/lib/useRoomSoundEffects";
+import {
+  getStoredMicsMuted,
+  setStoredMicsMuted,
+  getStoredPeerVolumes,
+  setStoredPeerVolume,
+  getStoredTransmissionVolumes,
+  setStoredTransmissionVolume,
+} from "@/lib/mediaPreferences";
 import { VideoTile, StoppedPeerTile, ResumingPeerTile } from "@/components/VideoTile";
 import { RemoteAudio } from "@/components/RemoteAudio";
 import { ParticipantRow } from "@/components/ParticipantRow";
@@ -40,6 +49,7 @@ const HANDLE_RE = /^[a-zA-Z0-9_-]{1,32}$/;
 export function WatchRoom({ handle }: { handle: string }) {
   const router = useRouter();
   const state = useSignaling();
+  useRoomSoundEffects(state);
   const hasStoredName = useHasStoredName();
   const { loading: resolvingAccount } = useAuth();
   const validHandle = HANDLE_RE.test(handle);
@@ -86,10 +96,12 @@ export function WatchRoom({ handle }: { handle: string }) {
   const [switchError, setSwitchError] = useState<string | null>(null);
   const [switchIsPrivate, setSwitchIsPrivate] = useState(false);
   const [nameInput, setNameInput] = useState("");
-  const [micsMuted, setMicsMuted] = useState(false);
+  const [micsMuted, setMicsMuted] = useState(() => getStoredMicsMuted());
   const [mutedPeerIds, setMutedPeerIds] = useState<Set<string>>(new Set());
-  const [peerVolumes, setPeerVolumes] = useState<Record<string, number>>({});
-  const [transmissionVolumes, setTransmissionVolumes] = useState<Record<string, number>>({});
+  const [peerVolumes, setPeerVolumes] = useState<Record<string, number>>(() => getStoredPeerVolumes());
+  const [transmissionVolumes, setTransmissionVolumes] = useState<Record<string, number>>(() =>
+    getStoredTransmissionVolumes()
+  );
   const [renaming, setRenaming] = useState(false);
   const [renameInput, setRenameInput] = useState("");
   const [qualityOpen, setQualityOpen] = useState(false);
@@ -118,6 +130,7 @@ export function WatchRoom({ handle }: { handle: string }) {
   function toggleMicsMuted() {
     const next = !micsMuted;
     setMicsMuted(next);
+    setStoredMicsMuted(next);
     trackEvent(next ? "mics_muted" : "mics_unmuted");
   }
 
@@ -130,12 +143,18 @@ export function WatchRoom({ handle }: { handle: string }) {
     });
   }
 
-  function setPeerVolume(peerId: string, volume: number) {
-    setPeerVolumes((prev) => ({ ...prev, [peerId]: volume }));
+  // Keyed by the peer's stable userId (falling back to their current
+  // connection id for a peer an older server hasn't sent one for yet) —
+  // NOT the WebRTC connection id, so a saved dial survives that peer
+  // reconnecting with a brand new connection id.
+  function setPeerVolume(volumeKey: string, volume: number) {
+    setPeerVolumes((prev) => ({ ...prev, [volumeKey]: volume }));
+    setStoredPeerVolume(volumeKey, volume);
   }
 
-  function setTransmissionVolume(peerId: string, volume: number) {
-    setTransmissionVolumes((prev) => ({ ...prev, [peerId]: volume }));
+  function setTransmissionVolume(volumeKey: string, volume: number) {
+    setTransmissionVolumes((prev) => ({ ...prev, [volumeKey]: volume }));
+    setStoredTransmissionVolume(volumeKey, volume);
   }
 
   async function handleCopyLink() {
@@ -409,7 +428,7 @@ export function WatchRoom({ handle }: { handle: string }) {
       <header className="relative flex flex-wrap items-center justify-between gap-3 border-b border-black/10 px-4 py-3 dark:border-white/10">
         <div className="flex items-center gap-3">
           <div>
-            <Link href={"/"} className="text-lg font-semibold text-zinc-950 dark:text-zinc-50"><MdHome/></Link>
+            <Link href={"/"} className="text-lg font-semibold text-zinc-950 dark:text-zinc-50"><MdHome /></Link>
           </div>
           <div>
             <h1 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">{handle}</h1>
@@ -558,17 +577,6 @@ export function WatchRoom({ handle }: { handle: string }) {
 
           <button
             type="button"
-            onClick={toggleMic}
-            title={isMicOn ? "Desativar microfone" : "Ativar microfone"}
-            aria-label={isMicOn ? "Desativar microfone" : "Ativar microfone"}
-            className={`rounded-lg p-2 text-white transition ${isMicOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
-              }`}
-          >
-            {isMicOn ? <MicIcon className="h-5 w-5" /> : <MicOffIcon className="h-5 w-5" />}
-          </button>
-
-          <button
-            type="button"
             onClick={toggleNoiseSuppression}
             disabled={isMicOn && !noiseSuppressionAvailable}
             title={
@@ -590,6 +598,18 @@ export function WatchRoom({ handle }: { handle: string }) {
               <NoiseSuppressionOffIcon className="h-5 w-5" />
             )}
           </button>
+
+          <button
+            type="button"
+            onClick={toggleMic}
+            title={isMicOn ? "Desativar microfone" : "Ativar microfone"}
+            aria-label={isMicOn ? "Desativar microfone" : "Ativar microfone"}
+            className={`rounded-lg p-2 text-white transition ${isMicOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
+              }`}
+          >
+            {isMicOn ? <MicIcon className="h-5 w-5" /> : <MicOffIcon className="h-5 w-5" />}
+          </button>
+
 
           <button
             type="button"
@@ -790,14 +810,17 @@ export function WatchRoom({ handle }: { handle: string }) {
         </p>
       )}
 
-      {Object.entries(remoteMicStreams).map(([peerId, stream]) => (
-        <RemoteAudio
-          key={peerId}
-          stream={stream}
-          muted={micsMuted || mutedPeerIds.has(peerId)}
-          volume={peerVolumes[peerId] ?? 1}
-        />
-      ))}
+      {Object.entries(remoteMicStreams).map(([peerId, stream]) => {
+        const volumeKey = state.peers.find((p) => p.id === peerId)?.userId ?? peerId;
+        return (
+          <RemoteAudio
+            key={peerId}
+            stream={stream}
+            muted={micsMuted || mutedPeerIds.has(peerId)}
+            volume={peerVolumes[volumeKey] ?? 1}
+          />
+        );
+      })}
 
       <div className="flex min-h-0 flex-1 flex-col gap-6 p-4 lg:flex-row">
         <main className="min-h-0 flex-1 overflow-y-auto">
@@ -853,7 +876,9 @@ export function WatchRoom({ handle }: { handle: string }) {
                   />
                 )}
                 {focusedScreenEntries.map(([peerId, stream]) => {
-                  const peerName = state.peers.find((p) => p.id === peerId)?.name ?? "Alguém";
+                  const peer = state.peers.find((p) => p.id === peerId);
+                  const peerName = peer?.name ?? "Alguém";
+                  const volumeKey = peer?.userId ?? peerId;
                   return (
                     <VideoTile
                       key={`screen-${peerId}`}
@@ -861,8 +886,8 @@ export function WatchRoom({ handle }: { handle: string }) {
                       label={peerName}
                       badge="ao vivo · tela"
                       muted
-                      volume={transmissionVolumes[peerId] ?? 1}
-                      onVolumeChange={(volume) => setTransmissionVolume(peerId, volume)}
+                      volume={transmissionVolumes[volumeKey] ?? 1}
+                      onVolumeChange={(volume) => setTransmissionVolume(volumeKey, volume)}
                       fill={isSingleTile}
                       onStopWatching={() => stopWatchingPeer(peerId)}
                       onDoubleClick={() => setFocusedPeerId(peerId)}
@@ -870,7 +895,9 @@ export function WatchRoom({ handle }: { handle: string }) {
                   );
                 })}
                 {focusedCameraEntries.map(([peerId, stream]) => {
-                  const peerName = state.peers.find((p) => p.id === peerId)?.name ?? "Alguém";
+                  const peer = state.peers.find((p) => p.id === peerId);
+                  const peerName = peer?.name ?? "Alguém";
+                  const volumeKey = peer?.userId ?? peerId;
                   return (
                     <VideoTile
                       key={`camera-${peerId}`}
@@ -878,8 +905,8 @@ export function WatchRoom({ handle }: { handle: string }) {
                       label={peerName}
                       badge="ao vivo · câmera"
                       muted
-                      volume={transmissionVolumes[peerId] ?? 1}
-                      onVolumeChange={(volume) => setTransmissionVolume(peerId, volume)}
+                      volume={transmissionVolumes[volumeKey] ?? 1}
+                      onVolumeChange={(volume) => setTransmissionVolume(volumeKey, volume)}
                       fill={isSingleTile}
                       onDoubleClick={() => setFocusedPeerId(peerId)}
                     />
@@ -926,24 +953,28 @@ export function WatchRoom({ handle }: { handle: string }) {
               sharing={isSharing}
               micStream={localMicStream}
             />
-            {visiblePeers.map((p) => (
-              <ParticipantRow
-                key={p.id}
-                name={p.name}
-                micOn={p.mic}
-                sharing={p.sharing}
-                micStream={remoteMicStreams[p.id]}
-                muted={micsMuted || mutedPeerIds.has(p.id)}
-                onToggleMute={() => togglePeerMute(p.id)}
-                volume={peerVolumes[p.id] ?? 1}
-                onVolumeChange={(volume) => setPeerVolume(p.id, volume)}
-              />
-            ))}
+            {visiblePeers.map((p) => {
+              const volumeKey = p.userId ?? p.id;
+              return (
+                <ParticipantRow
+                  key={p.id}
+                  name={p.name}
+                  micOn={p.mic}
+                  sharing={p.sharing}
+                  micStream={remoteMicStreams[p.id]}
+                  muted={micsMuted || mutedPeerIds.has(p.id)}
+                  onToggleMute={() => togglePeerMute(p.id)}
+                  volume={peerVolumes[volumeKey] ?? 1}
+                  onVolumeChange={(volume) => setPeerVolume(volumeKey, volume)}
+                />
+              );
+            })}
           </ul>
 
           <ChatPanel
             messages={state.chatMessages}
             selfId={state.selfId}
+            selfName={state.name}
             onSend={(text) => signalingClient.sendChatMessage(text)}
             onSendGif={(url) => signalingClient.sendGif(url)}
             blockedMessage={state.chatBlockedMessage}
