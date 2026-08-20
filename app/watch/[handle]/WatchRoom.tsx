@@ -820,7 +820,7 @@ export function WatchRoom({ handle }: { handle: string }) {
         {/* The only controls left outside the menu — kept prominent since
             they're the ones actually used mid-call, not just once at setup.
             Mute-mics sits immediately right of the mic toggle on purpose. */}
-        <div className="mt-2.5 flex flex-wrap items-center gap-2 sm:mt-3">
+        <div className="mt-2.5 flex flex-wrap items-center justify-end gap-2 sm:mt-3">
           <button
             type="button"
             onClick={toggleMic}
