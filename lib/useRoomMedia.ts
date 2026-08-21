@@ -40,6 +40,9 @@ type SignalData = {
   // already exist rather than from a scramble of probes at the worst moment.
   // "relay-assign" is the broadcaster telling us to forward what we are
   // receiving from them on to a list of other viewers (see relayLink.ts).
+  // "reconnect-request" is a viewer telling us our sendPC to them is dead on
+  // their end, even if it looks fine on ours — see requestReconnect's doc
+  // comment.
   kind?:
     | "offer"
     | "answer"
@@ -49,7 +52,8 @@ type SignalData = {
     | "peer-left"
     | "quality"
     | "capacity"
-    | "relay-assign";
+    | "relay-assign"
+    | "reconnect-request";
   sdp?: RTCSessionDescriptionInit;
   candidate?: RTCIceCandidateInit;
   tier?: QualityTier;
@@ -405,6 +409,26 @@ function useBroadcastChannel(
       if (channel !== "mic") qualityNegotiator.forget(channel as "screen" | "camera", peerId);
     },
     [closeRecvPC, clearStopped, clearResuming, channel]
+  );
+
+  // Asks a broadcaster to rebuild their sendPC to us from scratch. Exists
+  // because recv-side failure recovery used to be entirely passive: a viewer
+  // whose recvPC died (ICE "failed", or "disconnected" that never came back)
+  // had no way to do anything about it — it just waited for the broadcaster's
+  // OWN sendPC to independently notice the same link is bad and retry (see
+  // openSendPC's scheduleSendRetry/CONNECT_TIMEOUT_MS). ICE connection state
+  // is computed independently on each side, so the two do not always reach
+  // "failed" together; when only our side notices, the broadcaster's sendPC
+  // can sit at "connected" indefinitely, believing everything is fine, while
+  // our tile is permanently gone. This turns that into an active request
+  // instead of a hope: the broadcaster force-recreates its sendPC (see the
+  // "reconnect-request" handler below) regardless of what its own pc thinks
+  // its state is.
+  const requestReconnect = useCallback(
+    (peerId: string) => {
+      signalingClient.sendSignal(peerId, { channel, role: "viewer", kind: "reconnect-request" });
+    },
+    [channel]
   );
 
   // Lets a viewer stop receiving one specific peer's stream without touching
@@ -792,23 +816,24 @@ function useBroadcastChannel(
         if (recvPCs.current.get(peerId) !== pc) return;
         if (pc.connectionState === "failed" || pc.connectionState === "closed") {
           closeRecvPC(peerId);
+          // Actively ask for a fresh sendPC instead of waiting on the
+          // broadcaster's own pc to independently reach the same
+          // conclusion — see requestReconnect's doc comment.
+          requestReconnect(peerId);
         } else if (pc.connectionState === "disconnected") {
-          // Mirrors the sender-side grace period: don't tear down a viewer's
-          // tile over a brief blip, but don't let it sit frozen forever
-          // either if the link doesn't recover. The broadcaster's own
-          // sendPC (see openSendPC above) mirrors this same link, so once
-          // its side also gives up it sends a fresh offer that rebuilds
-          // this from scratch.
+          // Don't tear down a viewer's tile over a brief blip — give it a
+          // few seconds to recover on its own first.
           setTimeout(() => {
             if (recvPCs.current.get(peerId) === pc && pc.connectionState === "disconnected") {
               closeRecvPC(peerId);
+              requestReconnect(peerId);
             }
           }, 4000);
         }
       };
       return pc;
     },
-    [channel, closeRecvPC, clearResuming]
+    [channel, closeRecvPC, clearResuming, requestReconnect]
   );
 
   useEffect(() => {
@@ -934,6 +959,15 @@ function useBroadcastChannel(
         } else if (data.kind === "resume") {
           viewerPausedPeers.current.delete(from);
           if (activeRef.current) openSendPC(from);
+        } else if (data.kind === "reconnect-request") {
+          // This viewer's recvPC died on their end, even though ours may
+          // still report "connected" — ICE state is computed independently
+          // on each side, so ours has no reason to have noticed anything is
+          // wrong on its own. Force a fresh sendPC regardless of what ours
+          // currently thinks, unless they deliberately paused us.
+          if (viewerPausedPeers.current.has(from) || !activeRef.current) return;
+          closeSendPC(from);
+          openSendPC(from);
         } else if (data.kind === "answer" && data.sdp) {
           // A relay child answers us, not the original broadcaster, so route
           // it to the RelayLink before falling through to our own senders.
