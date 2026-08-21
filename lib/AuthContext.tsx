@@ -17,6 +17,7 @@ import {
   fetchMe,
   loginAccount,
   registerAccount,
+  completeOAuthSignup as completeOAuthSignupRequest,
   logoutAccount,
 } from "./accountApi";
 import { signalingClient, getStoredName } from "./signalingClient";
@@ -30,6 +31,13 @@ type AuthContextValue = {
   loading: boolean;
   login: (username: string, password: string) => Promise<Account>;
   register: (username: string, displayName: string, password: string) => Promise<Account>;
+  // Finishes a Discord/Google *signup* (see lib/oauthApi.ts): the ticket
+  // stands in for the password here — the provider identity behind it was
+  // already verified server-side — and the result is an ordinary account,
+  // indistinguishable from a registered one from this point on. A plain
+  // social *login* needs nothing from this context beyond refresh(), since
+  // its token arrives through accountApi's store on its own.
+  completeOAuthSignup: (ticket: string, username: string, displayName: string) => Promise<Account>;
   logout: () => void;
   // Re-resolves the current token against /auth/me — e.g. after an action
   // that changes the account server-side (rename, flags) outside this tab.
@@ -90,6 +98,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const completeOAuthSignup = useCallback(
+    async (ticket: string, username: string, displayName: string) => {
+      const { account: acc } = await completeOAuthSignupRequest(ticket, username, displayName);
+      setAccount(acc);
+      setResolvedToken(getAccountToken());
+      return acc;
+    },
+    []
+  );
+
   // Turns a stored (or freshly obtained, via login()/register() above)
   // account token into an actual signaling registration — lives here rather
   // than in any one page so it also fires on a direct link straight into a
@@ -133,8 +151,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [accountToken, loading, resolvedAccount]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ account: resolvedAccount, loading, login, register, logout, refresh }),
-    [resolvedAccount, loading, login, register, logout, refresh]
+    () => ({
+      account: resolvedAccount,
+      loading,
+      login,
+      register,
+      completeOAuthSignup,
+      logout,
+      refresh,
+    }),
+    [resolvedAccount, loading, login, register, completeOAuthSignup, logout, refresh]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

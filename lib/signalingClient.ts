@@ -736,8 +736,24 @@ class SignalingClient {
 
   // Same reasoning as the announcement-* reporters above, for the sidebar
   // partner-ad slot — see PartnerCard.tsx.
+  //
+  // One per *serve*: the slot refills every few minutes, and each refill that
+  // lands on this ad is another impression.
   reportPartnerView(id: string) {
     this.rawSend({ type: "partner-view", id });
+  }
+
+  // One per (tab x ad), which is what "views" counted before the slot started
+  // rotating. Deliberately a separate message rather than a flag on the one
+  // above, so the server keeps two independent counters instead of having to
+  // infer which kind of event it just received.
+  //
+  // Worth being precise about what it measures, because the old name was
+  // misleading: this is reach per session, not per person. The same visitor
+  // reloading the page, opening a second tab, or moving to another room sends
+  // it again. Counting people is a question only the server can answer.
+  reportPartnerSessionView(id: string) {
+    this.rawSend({ type: "partner-session-view", id });
   }
 
   reportPartnerClick(id: string) {

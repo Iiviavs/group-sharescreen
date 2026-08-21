@@ -39,7 +39,12 @@ export function getAccountToken(): string | null {
   return cachedToken;
 }
 
-function setAccountToken(token: string | null) {
+// Exported because the social login gets its token from a redirect rather
+// than from a fetch in this module (see oauthApi.ts / the OAuth callback
+// page) — it still has to land in the same place, through the same
+// listeners, so every consumer of useAccountToken reacts identically no
+// matter how the token was obtained.
+export function setAccountToken(token: string | null) {
   cachedToken = token;
   initialized = true;
   if (typeof window !== "undefined") {
@@ -99,6 +104,26 @@ export async function loginAccount(
     body: JSON.stringify({ username, password }),
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res, "Usuário ou senha inválidos."));
+  const data = (await res.json()) as { token: string; account: Account };
+  setAccountToken(data.token);
+  return data;
+}
+
+// Finishes a social *signup*: the ticket proves the provider identity was
+// already verified server-side, and these are the names the user just chose
+// for it. Same { token, account } contract as loginAccount above, so the
+// caller can't tell the two apart afterwards.
+export async function completeOAuthSignup(
+  ticket: string,
+  username: string,
+  displayName: string
+): Promise<{ token: string; account: Account }> {
+  const res = await fetch(`${getSignalingHttpBase()}/auth/oauth/complete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ticket, username, displayName }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, "Falha ao criar conta."));
   const data = (await res.json()) as { token: string; account: Account };
   setAccountToken(data.token);
   return data;

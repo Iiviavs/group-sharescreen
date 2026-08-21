@@ -322,7 +322,25 @@ export type AdminPartner = Partner & {
   createdAt: number;
 };
 
-export type PartnerStats = { views: number; clicks: number };
+export type PartnerStats = {
+  // Total impressions: one per *serve*, so a slot that rotates every five
+  // minutes (see PartnerCard's rotation) counts each time it lands on this
+  // ad, not once per visitor per session.
+  views: number;
+  // Reach per session: one per (tab x ad), which is exactly what the old
+  // "views" counted before the slot started rotating. Kept as its own number
+  // rather than folded into either neighbour — a visitor who reloads twice is
+  // two sessions and one person, so this sits genuinely between the two.
+  sessionViews?: number;
+  // How many distinct people are behind those impressions. Only the server
+  // can answer this — the browser has no idea who else is out there — so it
+  // is optional here and rendered as "—" until the signaling server starts
+  // sending it. Reporting it as 0 instead would be worse than admitting we
+  // do not know: an unimplemented field would read as a real, alarming
+  // measurement.
+  uniqueViews?: number;
+  clicks: number;
+};
 
 export type PartnerAdminList = {
   partners: AdminPartner[];

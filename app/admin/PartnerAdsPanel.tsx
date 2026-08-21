@@ -255,6 +255,15 @@ export function PartnerAdsPanel() {
           {partners.map((p) => {
             const expired = p.expiresAt !== null && p.expiresAt <= asOf;
             const s = stats[p.id] ?? { views: 0, clicks: 0 };
+            // Click-through rate against unique people, not against total
+            // impressions: with rotation the same person can be served the
+            // same ad several times in one session, and a ratio whose
+            // denominator grows every five minutes while nobody new arrives
+            // is a number that only ever falls.
+            const ctr =
+              s.uniqueViews && s.uniqueViews > 0
+                ? `${((s.clicks / s.uniqueViews) * 100).toFixed(1)}%`
+                : null;
             return (
               <div
                 key={p.id}
@@ -292,10 +301,18 @@ export function PartnerAdsPanel() {
                 <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-zinc-500 dark:text-zinc-400">
                   <span>Expira: {p.expiresAt ? new Date(p.expiresAt).toLocaleString("pt-BR") : "nunca"}</span>
                   <span>
-                    Visualizações: <strong>{s.views}</strong>
+                    Impressões: <strong>{s.views}</strong>
+                  </span>
+                  <span>
+                    Sessões: <strong>{s.sessionViews ?? "—"}</strong>
+                  </span>
+                  <span>
+                    Pessoas únicas:{" "}
+                    <strong>{s.uniqueViews ?? "—"}</strong>
                   </span>
                   <span>
                     Cliques: <strong>{s.clicks}</strong>
+                    {ctr ? ` (${ctr})` : ""}
                   </span>
                 </div>
               </div>

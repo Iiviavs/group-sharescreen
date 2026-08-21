@@ -3,6 +3,9 @@
 import { useState, type FormEvent } from "react";
 import { useAuth } from "@/lib/AuthContext";
 import { trackEvent } from "@/lib/analytics";
+import { OAuthButtons } from "./OAuthButtons";
+import { CompleteOAuthSignupForm } from "./CompleteOAuthSignupForm";
+import type { OAuthResult } from "@/lib/oauthApi";
 
 // Mirrors server-side validation (see accountApi.ts / the account routes) —
 // duplicated here only so a bad username is caught before a round trip.
@@ -44,6 +47,13 @@ export function CreateAccountForm({
   const [password, setPassword] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Set when a social login turned out to be a signup. While it's here this
+  // component renders *only* the username step — the fields below ask for
+  // the same two names plus a password the social account doesn't have, so
+  // showing both at once was just two stacked forms.
+  const [oauthTicket, setOAuthTicket] = useState<
+    Extract<OAuthResult, { kind: "ticket" }> | null
+  >(null);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -74,57 +84,82 @@ export function CreateAccountForm({
     }
   }
 
-  return (
-    <form onSubmit={handleSubmit} className="mt-8 flex flex-col gap-3">
-      <label htmlFor="create-username" className={labelClass}>
-        Usuário
-      </label>
-      <input
-        id="create-username"
-        autoFocus
-        autoComplete="username"
-        value={username}
-        onChange={(e) => setUsername(e.target.value)}
-        maxLength={20}
-        placeholder="Ex: maria123"
-        className={inputClass}
-      />
-      <label htmlFor="create-displayName" className={labelClass}>
-        Nome de exibição
-      </label>
-      <input
-        id="create-displayName"
-        value={displayName}
-        onChange={(e) => setDisplayName(e.target.value)}
-        maxLength={24}
-        placeholder="Ex: Maria"
-        className={inputClass}
-      />
-      <label htmlFor="create-password" className={labelClass}>
-        Senha
-      </label>
-      <input
-        id="create-password"
-        type="password"
-        autoComplete="new-password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        className={inputClass}
-      />
-      {formError && <p className="text-sm text-red-500">{formError}</p>}
-      <div className="mt-2 flex gap-2">
-        <button type="submit" disabled={submitting} className={`flex-1 ${primaryButtonClass}`}>
-          {submitting ? "Criando..." : "Criar conta"}
-        </button>
-        <button type="button" onClick={onCancel} className={secondaryButtonClass}>
-          Voltar
-        </button>
+  if (oauthTicket) {
+    return (
+      <div className="mt-8">
+        <CompleteOAuthSignupForm
+          ticket={oauthTicket.ticket}
+          provider={oauthTicket.provider}
+          suggestedUsername={oauthTicket.suggestedUsername}
+          suggestedDisplayName={oauthTicket.suggestedDisplayName}
+          onSuccess={onSuccess}
+          // Back to the password form rather than out of the whole flow:
+          // whoever cancels here still meant to create an account.
+          onCancel={() => setOAuthTicket(null)}
+        />
       </div>
-      {onSwitchToLogin && (
-        <button type="button" onClick={onSwitchToLogin} className={linkButtonClass}>
-          Já tenho uma conta
-        </button>
-      )}
-    </form>
+    );
+  }
+
+  return (
+    <div className="mt-8 flex flex-col gap-3">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+        <label htmlFor="create-username" className={labelClass}>
+          Usuário
+        </label>
+        <input
+          id="create-username"
+          autoFocus
+          autoComplete="username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          maxLength={20}
+          placeholder="Ex: maria123"
+          className={inputClass}
+        />
+        <label htmlFor="create-displayName" className={labelClass}>
+          Nome de exibição
+        </label>
+        <input
+          id="create-displayName"
+          value={displayName}
+          onChange={(e) => setDisplayName(e.target.value)}
+          maxLength={24}
+          placeholder="Ex: Maria"
+          className={inputClass}
+        />
+        <label htmlFor="create-password" className={labelClass}>
+          Senha
+        </label>
+        <input
+          id="create-password"
+          type="password"
+          autoComplete="new-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className={inputClass}
+        />
+        {formError && <p className="text-sm text-red-500">{formError}</p>}
+        <div className="mt-2 flex gap-2">
+          <button type="submit" disabled={submitting} className={`flex-1 ${primaryButtonClass}`}>
+            {submitting ? "Criando..." : "Criar conta"}
+          </button>
+          <button type="button" onClick={onCancel} className={secondaryButtonClass}>
+            Voltar
+          </button>
+        </div>
+        {onSwitchToLogin && (
+          <button type="button" onClick={onSwitchToLogin} className={linkButtonClass}>
+            Já tenho uma conta
+          </button>
+        )}
+      </form>
+      {/* Outside the <form> on purpose: the username step this can turn
+          into is itself a form, and forms can't nest. Renders nothing at all
+          when the API has no provider configured — social signup lands in
+          the same place as the password one (an account either way), so
+          onSuccess is the same callback. */}
+      <OAuthButtons onSuccess={onSuccess} onTicket={setOAuthTicket} />
+    </div>
   );
 }

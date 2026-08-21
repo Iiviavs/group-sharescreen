@@ -9,6 +9,9 @@ import { trackEvent } from "@/lib/analytics";
 import { toRoomHandle, fetchPeopleOnline } from "@/lib/roomsApi";
 import { useAuth } from "@/lib/AuthContext";
 import { CreateAccountForm } from "@/components/CreateAccountForm";
+import { OAuthButtons } from "@/components/OAuthButtons";
+import { CompleteOAuthSignupForm } from "@/components/CompleteOAuthSignupForm";
+import type { OAuthResult } from "@/lib/oauthApi";
 import { GlobeIcon } from "@/components/icons";
 import { Tooltip } from "@/components/Tooltip";
 
@@ -48,6 +51,13 @@ export default function Home() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  // A social login that turned out to be a signup. It takes over the whole
+  // identity area below (see the branch before `mode`), because the username
+  // step replaces whichever form the buttons were sitting under — rendering
+  // it alongside left the two stacked on top of each other.
+  const [oauthTicket, setOAuthTicket] = useState<
+    Extract<OAuthResult, { kind: "ticket" }> | null
+  >(null);
   const [submitting, setSubmitting] = useState(false);
 
   const hasStoredName = useHasStoredName();
@@ -112,6 +122,7 @@ export default function Home() {
     setFormError(null);
     setUsername("");
     setPassword("");
+    setOAuthTicket(null);
   }
 
   function openCreateMode() {
@@ -202,6 +213,19 @@ export default function Home() {
 
         {restoring ? (
           <p className="mt-8 text-sm text-zinc-500 dark:text-zinc-400">Reconectando...</p>
+        ) : oauthTicket ? (
+          <div className="mt-8">
+            <CompleteOAuthSignupForm
+              ticket={oauthTicket.ticket}
+              provider={oauthTicket.provider}
+              suggestedUsername={oauthTicket.suggestedUsername}
+              suggestedDisplayName={oauthTicket.suggestedDisplayName}
+              onSuccess={resetIdentityForm}
+              // Back to whichever form the user came from, not out of the
+              // identity area entirely.
+              onCancel={() => setOAuthTicket(null)}
+            />
+          </div>
         ) : mode === "create" ? (
           <CreateAccountForm
             initialDisplayName={state.name ?? ""}
@@ -213,50 +237,56 @@ export default function Home() {
             }}
           />
         ) : mode === "login" ? (
-          <form onSubmit={handleLoginSubmit} className="mt-8 flex flex-col gap-3">
-            <label htmlFor="loginUsername" className={labelClass}>
-              Usuário
-            </label>
-            <input
-              id="loginUsername"
-              autoFocus
-              autoComplete="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className={inputClass}
-            />
-            <label htmlFor="loginPassword" className={labelClass}>
-              Senha
-            </label>
-            <input
-              id="loginPassword"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className={inputClass}
-            />
-            {formError && <p className="text-sm text-red-500">{formError}</p>}
-            <div className="mt-2 flex gap-2">
+          <div className="mt-8 flex flex-col gap-3">
+            <form onSubmit={handleLoginSubmit} className="flex flex-col gap-3">
+              <label htmlFor="loginUsername" className={labelClass}>
+                Usuário
+              </label>
+              <input
+                id="loginUsername"
+                autoFocus
+                autoComplete="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className={inputClass}
+              />
+              <label htmlFor="loginPassword" className={labelClass}>
+                Senha
+              </label>
+              <input
+                id="loginPassword"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className={inputClass}
+              />
+              {formError && <p className="text-sm text-red-500">{formError}</p>}
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="submit"
+                  disabled={submitting || !username.trim() || !password}
+                  className={`flex-1 ${primaryButtonClass}`}
+                >
+                  {submitting ? "Entrando..." : "Entrar"}
+                </button>
+                <button type="button" onClick={resetIdentityForm} className={secondaryButtonClass}>
+                  Voltar
+                </button>
+              </div>
               <button
-                type="submit"
-                disabled={submitting || !username.trim() || !password}
-                className={`flex-1 ${primaryButtonClass}`}
+                type="button"
+                onClick={openCreateMode}
+                className={linkButtonClass}
               >
-                {submitting ? "Entrando..." : "Entrar"}
+                Criar uma conta
               </button>
-              <button type="button" onClick={resetIdentityForm} className={secondaryButtonClass}>
-                Voltar
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={openCreateMode}
-              className={linkButtonClass}
-            >
-              Criar uma conta
-            </button>
-          </form>
+            </form>
+          {/* Outside the <form> above, since the username step this can
+              lead to is a form of its own. Renders nothing when no provider
+              is configured. */}
+          <OAuthButtons onSuccess={resetIdentityForm} onTicket={setOAuthTicket} />
+          </div>
         ) : !registered ? (
           <>
             {mode === "landing" && (
@@ -297,6 +327,14 @@ export default function Home() {
                   Já tenho uma conta
                 </button>
               </form>
+            )}
+            {/* The highest-value spot for these: someone landing here with
+                no account gets in with one click, skipping both the guest
+                name and the signup form. */}
+            {mode === "landing" && (
+              <div className="mt-3">
+                <OAuthButtons onSuccess={resetIdentityForm} onTicket={setOAuthTicket} />
+              </div>
             )}
           </>
         ) : changingName ? (

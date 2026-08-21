@@ -175,10 +175,10 @@ function getPeerCountServer() {
 // itself advertises they exist), but renders them as a disabled option
 // suffixed "(conta necessária)" instead of a selectable one.
 export const SHARE_RESOLUTION_OPTIONS: { value: ShareResolution; label: string; accountOnly?: boolean }[] = [
-  { value: "1440p", label: "2K (1440p)", accountOnly: true },
-  { value: "1080p", label: "1080p" },
-  { value: "720p", label: "720p" },
   { value: "576p", label: "576p" },
+  { value: "720p", label: "720p" },
+  { value: "1080p", label: "Full HD (1080p)" },
+  { value: "1440p", label: "2K (1440p)", accountOnly: true },
 ];
 
 export const SHARE_FPS_OPTIONS: { value: ShareFps; label: string; accountOnly?: boolean }[] = [
@@ -194,7 +194,7 @@ export const SHARE_BITRATE_OPTIONS: { value: ShareBitrate; label: string; accoun
   { value: "medium", label: "Bitrate médio (~2 Mbps)" },
   { value: "high", label: "Bitrate alto (~4 Mbps)" },
   { value: "ultra", label: "Bitrate ultra (~8 Mbps)" },
-  { value: "maximo", label: "Bitrate maximo (~16 Mbps)" },
+  { value: "maximo", label: "Bitrate máximo (~16 Mbps)", accountOnly: true },
 ];
 
 // Codec preference. VP9 first for text-heavy screen content (its screen

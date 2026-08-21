@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchPeopleOnline, getSignalingHttpBase } from "@/lib/roomsApi";
 import { trackEvent } from "@/lib/analytics";
 import { useSignaling } from "@/lib/useSignaling";
@@ -11,6 +11,12 @@ import { Popover } from "@/components/Tooltip";
 
 const STATS_DASHBOARD_URL = process.env.NEXT_PUBLIC_STATS_DASHBOARD_URL;
 const PEOPLE_COUNT_POLL_MS = 8000;
+
+// How often the slot asks the server for a different ad. Long on purpose: an
+// ad that changes while someone is still reading it is worse than no rotation
+// at all, and a room is often open for hours, so this is about not showing
+// the same thing for the whole session rather than about churn.
+const ROTATE_INTERVAL_MS = 5 * 60 * 1000;
 
 // Naming everything "partner" instead of "ad"/"advertisement" throughout —
 // element ids, class names, API path, etc. — is deliberate: ad blockers
@@ -37,8 +43,17 @@ type PartnerCardData = {
   expiresAt?: number | null;
 };
 
-async function fetchPartner(signal?: AbortSignal): Promise<PartnerCardData | null> {
-  const res = await fetch(`${getSignalingHttpBase()}/partner`, { signal });
+// `currentId` tells the server which ad this slot is showing right now, so a
+// rotation can deliberately land on a *different* one. Sent as a hint, not as
+// an instruction: the server still owns the choice (weights, the "show
+// nothing X% of the time" roll, expiry), and a server that ignores the
+// parameter entirely still behaves exactly as it does today.
+async function fetchPartner(
+  signal?: AbortSignal,
+  currentId?: string | null
+): Promise<PartnerCardData | null> {
+  const query = currentId ? `?current=${encodeURIComponent(currentId)}` : "";
+  const res = await fetch(`${getSignalingHttpBase()}/partner${query}`, { signal });
   if (!res.ok) throw new Error(`Falha ao carregar parceiro (status ${res.status})`);
   const data = (await res.json()) as { partner: PartnerCardData | null };
   return data.partner;
@@ -117,6 +132,15 @@ export function PartnerCard() {
   // default, so it should cost none until asked for.
   const [collapsed, setCollapsed] = useState(true);
 
+  // Every path that puts a *served* ad on screen goes through here, so each
+  // one is one impression. See the impression effect below, which keys off
+  // this object's identity: a fresh object means the server served the slot
+  // again, even if it happened to serve the same ad.
+  const applyServedPartner = useCallback((next: PartnerCardData | null) => {
+    setPartner(next);
+    setLoaded(true);
+  }, []);
+
   // Initial value, over plain HTTP — respects the server's "show nothing
   // X% of the time" roll (see server/signaling.ts's GET /partner and
   // partnerStore.ts's emptyPercent). A live socket update (the effect
@@ -125,18 +149,57 @@ export function PartnerCard() {
   useEffect(() => {
     const controller = new AbortController();
     fetchPartner(controller.signal)
-      .then((data) => {
-        setPartner(data);
-        setLoaded(true);
-      })
+      .then(applyServedPartner)
       .catch(() => {
         // Treated the same as "no partner configured" — a broken /partner
         // endpoint shouldn't take the house ad down with it.
-        setPartner(null);
-        setLoaded(true);
+        applyServedPartner(null);
       });
     return () => controller.abort();
-  }, []);
+  }, [applyServedPartner]);
+
+  // Read by the rotation timer below. Refs rather than deps so that timer is
+  // installed once and never torn down and rebuilt — rebuilding it on every
+  // hover or state change would restart its five-minute countdown each time,
+  // which in a card the mouse passes over regularly means it never fires.
+  const hoveredRef = useRef(false);
+  const currentIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    currentIdRef.current = partner?.id ?? null;
+  }, [partner]);
+  // "The person is doing something with this card": reading the example ad,
+  // browsing the house ad, or in the customizer. Swapping the slot underneath
+  // any of those is the same interruption as swapping it under the cursor.
+  const interactingRef = useRef(false);
+  useEffect(() => {
+    interactingRef.current = showingExample || showingHouseAd || customizerOpen || statsOpen;
+  }, [showingExample, showingHouseAd, customizerOpen, statsOpen]);
+
+  // Rotation. Skipped — not deferred — whenever the person is on the card:
+  // the next tick five minutes later tries again. Retrying the instant the
+  // mouse leaves would technically honour the interval better, at the cost of
+  // the ad appearing to change *because* they moved away, which reads as the
+  // page reacting to them rather than to a clock.
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = setInterval(() => {
+      if (hoveredRef.current || interactingRef.current) return;
+      // A hidden tab has nobody to show an ad to. Rotating there would burn
+      // a serve — and, once the tab came back, an impression — on a slot
+      // nobody was looking at.
+      if (document.visibilityState !== "visible") return;
+      fetchPartner(controller.signal, currentIdRef.current)
+        .then(applyServedPartner)
+        .catch(() => {
+          // Keep whatever is already on screen: a failed rotation is not a
+          // reason to blank the slot.
+        });
+    }, ROTATE_INTERVAL_MS);
+    return () => {
+      clearInterval(timer);
+      controller.abort();
+    };
+  }, [applyServedPartner]);
 
   // Live updates while this card stays mounted — pushed by the server after
   // every admin create/edit/delete (see broadcastPartnerUpdate), so an
@@ -151,9 +214,8 @@ export function PartnerCard() {
       return;
     }
     lastHandledPartnerSeq.current = signalingState.partnerSeq;
-    setPartner(signalingState.partner);
-    setLoaded(true);
-  }, [signalingState.partnerSeq, signalingState.partner]);
+    applyServedPartner(signalingState.partner);
+  }, [signalingState.partnerSeq, signalingState.partner, applyServedPartner]);
 
   // Removes an expired ad the instant it expires, without waiting for a
   // reload or a live update to do it — falls back to the house ad exactly
@@ -169,23 +231,45 @@ export function PartnerCard() {
     return () => clearTimeout(timer);
   }, [partner]);
 
-  // Views only count for a genuinely visible tab — same reasoning as
+  // One impression per serve.
+  //
+  // Impressions only count for a genuinely visible tab — same reasoning as
   // AnnouncementBanner.tsx's identical guard — and only for a real,
   // backend-sourced ad (never the fallback/example ones, which have no id
   // and aren't things the admin is tracking engagement for).
-  const reportedViewIds = useRef<Set<string>>(new Set());
+  //
+  // The guard is the served object's *identity*, not its id. That is what
+  // makes rotation countable: this used to remember which ids it had already
+  // reported for the whole session, so an ad shown again an hour later was
+  // silently not counted — fine when a slot was filled once per page load,
+  // wrong now that it refills every five minutes. Identity also still absorbs
+  // a double-invoked effect in development, since that re-runs with the same
+  // object.
+  const reportedServeRef = useRef<PartnerCardData | null>(null);
+  // The second counter, and the one that survived from before rotation
+  // existed: at most one report per ad id for as long as this card stays
+  // mounted. Its own dedupe rather than a mode of the one above, because the
+  // two answer different questions and neither can be derived from the other
+  // — impressions cannot be divided down into sessions, and sessions cannot
+  // be multiplied up into impressions.
+  const reportedSessionIds = useRef<Set<string>>(new Set());
   useEffect(() => {
-    const id = partner?.id;
-    if (!id) return;
-    function maybeReportView() {
+    const serve = partner;
+    const id = serve?.id;
+    if (!serve || !id) return;
+    function maybeReport() {
       if (document.visibilityState !== "visible") return;
-      if (reportedViewIds.current.has(id!)) return;
-      reportedViewIds.current.add(id!);
+      if (!reportedSessionIds.current.has(id!)) {
+        reportedSessionIds.current.add(id!);
+        signalingClient.reportPartnerSessionView(id!);
+      }
+      if (reportedServeRef.current === serve) return;
+      reportedServeRef.current = serve;
       signalingClient.reportPartnerView(id!);
     }
-    maybeReportView();
-    document.addEventListener("visibilitychange", maybeReportView);
-    return () => document.removeEventListener("visibilitychange", maybeReportView);
+    maybeReport();
+    document.addEventListener("visibilitychange", maybeReport);
+    return () => document.removeEventListener("visibilitychange", maybeReport);
   }, [partner]);
 
   // Runs regardless of whether a real partner is configured: the count now
@@ -266,7 +350,26 @@ export function PartnerCard() {
   );
 
   return (
-    <div className="relative mt-auto w-full shrink-0">
+    <div
+      className="relative mt-auto w-full shrink-0"
+      // Pointer events rather than mouse ones so a pen or a hovering trackpad
+      // counts too; a touch device never hovers, so there the rotation simply
+      // always proceeds.
+      onPointerEnter={() => {
+        hoveredRef.current = true;
+      }}
+      onPointerLeave={() => {
+        hoveredRef.current = false;
+      }}
+      // Keyboard equivalent: someone tabbing through the card's buttons is
+      // just as much "on it" as someone pointing at it.
+      onFocusCapture={() => {
+        hoveredRef.current = true;
+      }}
+      onBlurCapture={() => {
+        hoveredRef.current = false;
+      }}
+    >
       <button
         type="button"
         onClick={() => setCollapsed((c) => !c)}
