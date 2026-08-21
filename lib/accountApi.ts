@@ -13,6 +13,12 @@ export type Account = {
 };
 
 
+// Which social providers this account can also log in with, plus whether it
+// still has a password. Kept as plain strings (not the OAuthProviderId union
+// in oauthApi.ts) so this module stays at the bottom of the import graph —
+// oauthApi imports *from* here.
+export type AccountConnections = { providers: string[]; hasPassword: boolean };
+
 const TOKEN_STORAGE_KEY = "sharescreen:accountToken";
 
 // localStorage (not sessionStorage) — unlike the admin token in
@@ -136,7 +142,15 @@ export function logoutAccount() {
 // Resolves the currently stored token to its account, clearing it if the
 // server no longer accepts it (expired, or the account is gone) — called on
 // startup to decide whether to auto-connect as this account.
-export async function fetchMe(): Promise<Account | null> {
+//
+// Also brings back the account's linked providers, since it's the one
+// request that already knows the answer: re-asking on every render of the
+// connections panel would be a second round trip for data this one carries
+// for free.
+export async function fetchMe(): Promise<{
+  account: Account;
+  connections: AccountConnections;
+} | null> {
   const token = getAccountToken();
   if (!token) return null;
   const res = await fetch(`${getSignalingHttpBase()}/auth/me`, {
@@ -146,6 +160,24 @@ export async function fetchMe(): Promise<Account | null> {
     setAccountToken(null);
     return null;
   }
-  const data = (await res.json()) as { account: Account };
-  return data.account;
+  const data = (await res.json()) as { account: Account; connections?: AccountConnections };
+  return {
+    account: data.account,
+    // An older API that predates social login answers without this field;
+    // "nothing linked, has a password" is the right reading of that.
+    connections: data.connections ?? { providers: [], hasPassword: true },
+  };
+}
+
+// Detaches a provider from the logged-in account. The API refuses when it's
+// the only way in left (no password and no other provider), which surfaces
+// here as the thrown message.
+export async function unlinkOAuthProvider(provider: string): Promise<void> {
+  const token = getAccountToken();
+  if (!token) throw new Error("Você não está conectado.");
+  const res = await fetch(`${getSignalingHttpBase()}/auth/oauth/${provider}/link`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, "Falha ao desconectar."));
 }

@@ -12,12 +12,14 @@ import {
 } from "react";
 import {
   type Account,
+  type AccountConnections,
   useAccountToken,
   getAccountToken,
   fetchMe,
   loginAccount,
   registerAccount,
   completeOAuthSignup as completeOAuthSignupRequest,
+  unlinkOAuthProvider as unlinkOAuthProviderRequest,
   logoutAccount,
 } from "./accountApi";
 import { signalingClient, getStoredName } from "./signalingClient";
@@ -26,6 +28,10 @@ type AuthContextValue = {
   // The logged-in account, or null once resolved to "no account" (guest, no
   // token, or an expired/invalid token).
   account: Account | null;
+  // Which social providers the account is linked to (and whether it still
+  // has a password), for the connections panel. Null whenever `account` is —
+  // it comes from the same /auth/me response.
+  connections: AccountConnections | null;
   // True while the stored token (if any) is still being resolved against
   // /auth/me — the one request this context makes on app open.
   loading: boolean;
@@ -38,6 +44,9 @@ type AuthContextValue = {
   // social *login* needs nothing from this context beyond refresh(), since
   // its token arrives through accountApi's store on its own.
   completeOAuthSignup: (ticket: string, username: string, displayName: string) => Promise<Account>;
+  // Detaches a provider, then re-resolves so the panel reflects it. Rejects
+  // (with the API's message) when it would leave the account with no way in.
+  unlinkProvider: (provider: string) => Promise<void>;
   logout: () => void;
   // Re-resolves the current token against /auth/me — e.g. after an action
   // that changes the account server-side (rename, flags) outside this tab.
@@ -49,6 +58,9 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const accountToken = useAccountToken();
   const [account, setAccount] = useState<Account | null>(null);
+  // Travels with `account` — same source (/auth/me), same lifetime, so it's
+  // set and cleared everywhere that one is.
+  const [connections, setConnections] = useState<AccountConnections | null>(null);
   // Tracks which token the effect below has already resolved (via
   // accountApi.fetchMe) — while it's behind the current accountToken, we
   // don't yet know whether there's an account behind it, hence `loading`.
@@ -62,9 +74,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!accountToken || resolvedToken === accountToken) return;
     let cancelled = false;
     fetchMe()
-      .then((acc) => {
+      .then((me) => {
         if (cancelled) return;
-        setAccount(acc);
+        setAccount(me?.account ?? null);
+        setConnections(me?.connections ?? null);
         setResolvedToken(accountToken);
       })
       .catch(() => {
@@ -76,10 +89,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [accountToken, resolvedToken]);
 
   const refresh = useCallback(async () => {
-    const acc = await fetchMe();
-    setAccount(acc);
+    const me = await fetchMe();
+    setAccount(me?.account ?? null);
+    setConnections(me?.connections ?? null);
     setResolvedToken(getAccountToken());
   }, []);
+
+  const unlinkProvider = useCallback(
+    async (provider: string) => {
+      await unlinkOAuthProviderRequest(provider);
+      // The account object itself doesn't change, but its connections do —
+      // re-resolving is the simplest way to keep them honest, and it's the
+      // same request the panel would have made anyway.
+      await refresh();
+    },
+    [refresh]
+  );
 
   const login = useCallback(async (username: string, password: string) => {
     const { account: acc } = await loginAccount(username, password);
@@ -123,6 +148,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     logoutAccount();
     setAccount(null);
+    setConnections(null);
     setResolvedToken(null);
     registeredForTokenRef.current = null;
     signalingClient.logoutIdentity();
@@ -153,14 +179,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthContextValue>(
     () => ({
       account: resolvedAccount,
+      connections: resolvedAccount ? connections : null,
       loading,
       login,
       register,
       completeOAuthSignup,
+      unlinkProvider,
       logout,
       refresh,
     }),
-    [resolvedAccount, loading, login, register, completeOAuthSignup, logout, refresh]
+    [
+      resolvedAccount,
+      connections,
+      loading,
+      login,
+      register,
+      completeOAuthSignup,
+      unlinkProvider,
+      logout,
+      refresh,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

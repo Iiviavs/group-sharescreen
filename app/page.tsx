@@ -11,6 +11,7 @@ import { useAuth } from "@/lib/AuthContext";
 import { CreateAccountForm } from "@/components/CreateAccountForm";
 import { OAuthButtons } from "@/components/OAuthButtons";
 import { CompleteOAuthSignupForm } from "@/components/CompleteOAuthSignupForm";
+import { AccountConnections } from "@/components/AccountConnections";
 import type { OAuthResult } from "@/lib/oauthApi";
 import { GlobeIcon } from "@/components/icons";
 import { Tooltip } from "@/components/Tooltip";
@@ -418,6 +419,11 @@ export default function Home() {
                 </>
               )}
             </p>
+            {/* Only for a real account — a guest has nothing to link a
+                provider to. Renders nothing when no provider is configured,
+                and stays collapsed until asked for, so the room form below
+                remains the page's main action. */}
+            {isAccount && <AccountConnections />}
             <label htmlFor="room" className={labelClass}>
               Para qual sala você quer ir ou criar?
             </label>

@@ -171,6 +171,8 @@ export function oauthErrorMessage(error: string): string {
       return "A sessão de login expirou ou os cookies estão bloqueados. Tente novamente.";
     case "provider_failed":
       return "Não foi possível falar com o provedor. Tente de novo em instantes.";
+    case "identity_taken":
+      return "Essa conta já está vinculada a outro usuário do GoLive.";
     case "account_gone":
       return "Sua conta não foi encontrada. Entre novamente.";
     default:
