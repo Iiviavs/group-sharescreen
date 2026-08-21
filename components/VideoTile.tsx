@@ -19,7 +19,7 @@ import { MAX_GAIN } from "@/lib/audioGain";
 import { useGainedAudio } from "@/lib/useGainedAudio";
 
 function noopSubscribe() {
-  return () => {};
+  return () => { };
 }
 function getPipSupported() {
   return typeof document !== "undefined" && Boolean(document.pictureInPictureEnabled);
@@ -121,11 +121,45 @@ export function VideoTile({
   useGainedAudio(videoRef, stream, volume ?? internalVolume, isMuted);
 
   useEffect(() => {
+    const video = videoRef.current;
+
     function onFullscreenChange() {
       setIsFullscreen(document.fullscreenElement === containerRef.current);
     }
+
+    function onWebkitBeginFullscreen() {
+      setIsFullscreen(true);
+    }
+
+    function onWebkitEndFullscreen() {
+      setIsFullscreen(false);
+    }
+
     document.addEventListener("fullscreenchange", onFullscreenChange);
-    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+
+    video?.addEventListener(
+      "webkitbeginfullscreen",
+      onWebkitBeginFullscreen
+    );
+
+    video?.addEventListener(
+      "webkitendfullscreen",
+      onWebkitEndFullscreen
+    );
+
+    return () => {
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+
+      video?.removeEventListener(
+        "webkitbeginfullscreen",
+        onWebkitBeginFullscreen
+      );
+
+      video?.removeEventListener(
+        "webkitendfullscreen",
+        onWebkitEndFullscreen
+      );
+    };
   }, []);
 
   // Watches the <video> itself rather than the container: the container may
@@ -166,16 +200,39 @@ export function VideoTile({
     };
   }, []);
 
+  type WebkitVideo = HTMLVideoElement & {
+    webkitSupportsFullscreen?: boolean;
+    webkitDisplayingFullscreen?: boolean;
+    webkitEnterFullscreen?: () => void;
+  };
+
   async function toggleFullscreen() {
-    if (!containerRef.current) return;
+    const video = videoRef.current;
+    const container = containerRef.current;
+
+    if (!video || !container) return;
+
+    const webkitVideo = video as WebkitVideo;
+
+    // iPhone / Safari
+    if (webkitVideo.webkitSupportsFullscreen) {
+      if (webkitVideo.webkitDisplayingFullscreen) {
+        return;
+      }
+
+      webkitVideo.webkitEnterFullscreen?.();
+      return;
+    }
+
+    // Chrome / Safari desktop / Android etc.
     try {
       if (document.fullscreenElement) {
         await document.exitFullscreen();
       } else {
-        await containerRef.current.requestFullscreen();
+        await container.requestFullscreen();
       }
-    } catch {
-      // ignored - fullscreen may be blocked by the browser
+    } catch (error) {
+      console.error("Fullscreen error:", error);
     }
   }
 
@@ -211,7 +268,7 @@ export function VideoTile({
         // forced a scroll — h-full alone always stays within whatever main
         // gives it.
         fill ? "h-full" : "aspect-video"
-      } ${className}`}
+        } ${className}`}
     >
       <video
         ref={videoRef}
@@ -282,11 +339,10 @@ export function VideoTile({
               onClick={onFocus}
               aria-label={isSpotlighted ? "Remover destaque" : `Focar em ${nameForLabel}`}
               aria-pressed={isSpotlighted}
-              className={`rounded-full p-2 text-white active:bg-black/80 ${
-                isSpotlighted
-                  ? "bg-emerald-600 hover:bg-emerald-700"
-                  : "bg-black/60 hover:bg-black/80"
-              }`}
+              className={`rounded-full p-2 text-white active:bg-black/80 ${isSpotlighted
+                ? "bg-emerald-600 hover:bg-emerald-700"
+                : "bg-black/60 hover:bg-black/80"
+                }`}
             >
               <FocusIcon className="h-5 w-5" />
             </button>
@@ -299,11 +355,10 @@ export function VideoTile({
               onClick={onHyperfocus}
               aria-label={`Hiperfoco em ${nameForLabel}`}
               aria-pressed={isHyperfocused}
-              className={`rounded-full p-2 text-white active:bg-black/80 ${
-                isHyperfocused
-                  ? "bg-emerald-600 hover:bg-emerald-700"
-                  : "bg-black/60 hover:bg-black/80"
-              }`}
+              className={`rounded-full p-2 text-white active:bg-black/80 ${isHyperfocused
+                ? "bg-emerald-600 hover:bg-emerald-700"
+                : "bg-black/60 hover:bg-black/80"
+                }`}
             >
               <HyperfocusIcon className="h-5 w-5" />
             </button>
@@ -353,7 +408,7 @@ function PlaceholderTile({
         // Same reasoning as VideoTile's fill container above: no min-height
         // floor, so this never grows past what main actually has to give.
         fill ? "h-full" : "aspect-video"
-      }`}
+        }`}
     >
       {children}
     </div>
