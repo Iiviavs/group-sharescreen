@@ -200,16 +200,25 @@ function applyVideoCodecPreferences(transceiver: RTCRtpTransceiver) {
 // the link is healthy again. Operates per peer-connection so a single slow
 // viewer doesn't degrade everyone else's stream.
 //
-// Returns a cleanup function; call it when the peer connection closes.
+// `initialKbps` lets a caller resume a monitor mid-convergence (e.g. after
+// the room's peer count changed the base bitrate) instead of always starting
+// back at 100% of base — see the videoQuality-change effect below, which
+// rescales a peer's last-known kbps by the new base instead of discarding
+// what this monitor learned about that viewer's link.
+//
+// Returns a cleanup function plus a getter for the last-known kbps, so a
+// caller replacing this monitor (as opposed to tearing it down for good) can
+// carry that state into the replacement.
 function startPeerAdaptiveBitrateMonitor(
   pc: RTCPeerConnection,
   sender: RTCRtpSender,
-  baseBitrateKbps: number
-): () => void {
+  baseBitrateKbps: number,
+  initialKbps: number = baseBitrateKbps
+): { cleanup: () => void; getCurrentKbps: () => number; baseKbps: number } {
   // Per-peer mutable state — deliberately not React state so updates are
   // synchronous inside the interval without triggering re-renders.
-  let currentKbps = baseBitrateKbps;
-  let scaleDown = 1.0;
+  let currentKbps = Math.min(baseBitrateKbps, Math.max(250, Math.round(initialKbps)));
+  let scaleDown = currentKbps < 500 ? 2.0 : currentKbps < 900 ? 1.5 : 1.0;
   let healthyStreak = 0;
 
   const id = setInterval(async () => {
@@ -257,7 +266,7 @@ function startPeerAdaptiveBitrateMonitor(
     }
   }, 2000);
 
-  return () => clearInterval(id);
+  return { cleanup: () => clearInterval(id), getCurrentKbps: () => currentKbps, baseKbps: baseBitrateKbps };
 }
 
 // How far apart (in ms) openSendPCsStaggered spaces out opening sendPCs to
@@ -334,7 +343,9 @@ function useBroadcastChannel(
   // Cleanup functions for per-peer adaptive bitrate monitors (see
   // startPeerAdaptiveBitrateMonitor). Keyed by peerId; called when the sendPC
   // for that peer closes so the setInterval is always torn down with the PC.
-  const sendPCMonitors = useRef<Map<string, () => void>>(new Map());
+  const sendPCMonitors = useRef<
+    Map<string, { cleanup: () => void; getCurrentKbps: () => number; baseKbps: number }>
+  >(new Map());
   // Pending timers scheduled by openSendPCsStaggered — cleared in stop() so
   // a share that already ended never opens a late connection.
   const staggerTimers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
@@ -386,7 +397,7 @@ function useBroadcastChannel(
       sendPCs.current.delete(peerId);
     }
     // Stop the per-peer adaptive bitrate monitor if one is running.
-    sendPCMonitors.current.get(peerId)?.();
+    sendPCMonitors.current.get(peerId)?.cleanup();
     sendPCMonitors.current.delete(peerId);
     pendingSendCandidates.current.delete(peerId);
     const connectTimeout = connectTimeouts.current.get(peerId);
@@ -484,9 +495,9 @@ function useBroadcastChannel(
           applySenderBitrateAndScale(sender, baseBitrate, 1.0);
 
           if (baseBitrate) {
-            sendPCMonitors.current.get(peerId)?.();
-            const cleanup = startPeerAdaptiveBitrateMonitor(pc, sender, baseBitrate);
-            sendPCMonitors.current.set(peerId, cleanup);
+            sendPCMonitors.current.get(peerId)?.cleanup();
+            const monitor = startPeerAdaptiveBitrateMonitor(pc, sender, baseBitrate);
+            sendPCMonitors.current.set(peerId, monitor);
           }
         }
       });
@@ -614,11 +625,26 @@ function useBroadcastChannel(
     for (const [peerId, pc] of sendPCs.current) {
       const sender = pc.getSenders().find((s) => s.track?.kind === "video");
       if (sender) {
-        applySenderBitrateAndScale(sender, videoQuality.maxBitrateKbps, 1.0);
-        if (videoQuality.maxBitrateKbps) {
-          sendPCMonitors.current.get(peerId)?.();
-          const cleanup = startPeerAdaptiveBitrateMonitor(pc, sender, videoQuality.maxBitrateKbps);
-          sendPCMonitors.current.set(peerId, cleanup);
+        const newBase = videoQuality.maxBitrateKbps;
+        if (newBase) {
+          // Rescale by the monitor's last-known ratio (currentKbps/baseKbps)
+          // instead of resetting to 100% of the new base — otherwise every
+          // peer join/leave in the room (which recomputes this preset) would
+          // wipe out what the monitor learned about each viewer's link and
+          // force it to reconverge from scratch.
+          const prevMonitor = sendPCMonitors.current.get(peerId);
+          const ratio = prevMonitor ? prevMonitor.getCurrentKbps() / prevMonitor.baseKbps : 1.0;
+          const initialKbps = Math.round(newBase * ratio);
+          applySenderBitrateAndScale(
+            sender,
+            initialKbps,
+            initialKbps < 500 ? 2.0 : initialKbps < 900 ? 1.5 : 1.0
+          );
+          prevMonitor?.cleanup();
+          const monitor = startPeerAdaptiveBitrateMonitor(pc, sender, newBase, initialKbps);
+          sendPCMonitors.current.set(peerId, monitor);
+        } else {
+          applySenderBitrateAndScale(sender, newBase, 1.0);
         }
       }
     }
@@ -632,7 +658,7 @@ function useBroadcastChannel(
     localStreamRef.current = null;
     setLocalStream(null);
     setSource(undefined);
-    for (const cleanup of sendPCMonitors.current.values()) cleanup();
+    for (const monitor of sendPCMonitors.current.values()) monitor.cleanup();
     sendPCMonitors.current.clear();
     // Nothing still pending from openSendPCsStaggered should open once this
     // share has already ended.
