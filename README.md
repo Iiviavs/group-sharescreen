@@ -10,7 +10,7 @@ Repositório da API:
 https://github.com/Nem-Tudo/group-sharescreen-api
 
 URL da api:
-https://goliveapi.nemtudo.me
+https://apigolive.nemtudo.me
 
 Se você gosta de estatísticas assim como eu, tem o Grafana público:
 https://stats.nemtudo.me/public-dashboards/9be4846ec8774ff5888baa7d33862ccc

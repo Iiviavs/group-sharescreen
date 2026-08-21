@@ -277,6 +277,11 @@ function useBroadcastChannel(
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<ShareSource | undefined>(undefined);
+  // Only ever set for the screen channel capturing "display" on Firefox —
+  // see isFirefoxBrowser's doc comment. Surfaced so the UI can tell the
+  // broadcaster their system audio isn't actually going out, instead of
+  // them assuming it's working because no error was thrown.
+  const [systemAudioUnavailable, setSystemAudioUnavailable] = useState(false);
   // Peers whose stream WE (as a viewer) deliberately stopped receiving, via
   // stopWatchingPeer below — kept separate from remoteStreams (which loses
   // the entry the moment the recvPC closes) so the UI can still render a
@@ -785,6 +790,7 @@ function useBroadcastChannel(
     localStreamRef.current = null;
     setLocalStream(null);
     setSource(undefined);
+    setSystemAudioUnavailable(false);
     qualityRegistry.current.clear();
     requestedTiers.current.clear();
     // Nothing still pending from openSendPCsStaggered should open once this
@@ -839,6 +845,9 @@ function useBroadcastChannel(
       setLocalStream(stream);
       setActive(true);
       setSource(requestedSource);
+      setSystemAudioUnavailable(
+        channel === "screen" && requestedSource !== "camera" && isFirefoxBrowser()
+      );
       if (channel === "mic") signalingClient.setMic(true);
       else signalingClient.setSharing(true);
       trackEvent(`${eventPrefix}_start`);
@@ -1243,6 +1252,7 @@ function useBroadcastChannel(
     remoteStreams,
     error,
     source,
+    systemAudioUnavailable,
     stoppedPeers,
     resumingPeers,
     recvConnectionStates,
@@ -1262,6 +1272,15 @@ function hasDisplayCapture() {
 }
 function hasCameraCapture() {
   return typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
+}
+
+// Firefox's getDisplayMedia() silently ignores the `audio: true` constraint —
+// no error, no picker checkbox, it just never returns an audio track. Bug
+// open since 2019 (bugzilla.mozilla.org/show_bug.cgi?id=1541425), no fix in
+// sight. Used to warn the user instead of leaving them wondering why their
+// system audio never reaches anyone.
+function isFirefoxBrowser() {
+  return typeof navigator !== "undefined" && /firefox/i.test(navigator.userAgent);
 }
 
 // Most mobile browsers (all of iOS Safari, most of Android Chrome) don't
@@ -1430,7 +1449,21 @@ export function useRoomMedia(room: string) {
       // No fallback to the camera here — on browsers without getDisplayMedia
       // (most mobile ones) this throws synchronously, which start() below
       // turns into a visible error instead of silently switching sources.
-      return navigator.mediaDevices.getDisplayMedia({ video: videoConstraints, audio: true });
+      // Explicit false on the mic-oriented processing constraints: left
+      // unset, Chrome runs tab/system audio through the same APM pipeline
+      // as a microphone (echo cancellation, noise suppression, AGC), which
+      // mangles music/game audio into something that sounds noise-gated.
+      // Screen/tab audio isn't a voice call, so it should pass through
+      // unprocessed — stereo, uncompressed dynamic range.
+      return navigator.mediaDevices.getDisplayMedia({
+        video: videoConstraints,
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: 2,
+        },
+      });
     },
     () => hasDisplayCapture() || hasCameraCapture(),
     "Seu navegador não suporta compartilhamento de tela nem câmera.",
@@ -1628,6 +1661,7 @@ export function useRoomMedia(room: string) {
     remoteStreams: screen.remoteStreams,
     shareError: screen.error,
     shareSource: screen.source,
+    shareSystemAudioUnavailable: screen.systemAudioUnavailable,
     isCameraSharing: camera.active,
     startCameraShare: camera.start,
     stopCameraShare: camera.stop,
