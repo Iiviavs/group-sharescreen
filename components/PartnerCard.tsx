@@ -318,7 +318,7 @@ export function PartnerCard() {
               className="flex shrink-0 items-center gap-1 rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs font-medium text-emerald-600 transition hover:bg-zinc-200 dark:bg-zinc-900 dark:text-emerald-400 dark:hover:bg-zinc-800"
             >
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
-              {peopleOnline} online
+              {peopleOnline} on
               <ChevronUpIcon
                 className={`h-3 w-3 transition-transform ${statsOpen ? "rotate-180" : ""}`}
               />
