@@ -1144,7 +1144,7 @@ export function useRoomMedia(room: string) {
   // value from whatever render happened to create it.
   const [shareResolution, setShareResolutionState] = useState<ShareResolution>("1080p");
   const [shareFps, setShareFpsState] = useState<ShareFps>(30);
-  const [shareBitrate, setShareBitrateState] = useState<ShareBitrate>("medium");
+  const [shareBitrate, setShareBitrateState] = useState<ShareBitrate>("high");
   // On by default. It no longer means "step quality down as the headcount
   // rises" — that guessed cost from a number of people while knowing nothing
   // about how large anyone renders the video. It now means "let each viewer

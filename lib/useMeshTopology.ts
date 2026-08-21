@@ -56,6 +56,18 @@ function isRelayEligible(): boolean {
 
 const CAPACITY_BROADCAST_MS = 8000;
 
+// Cascading only ever pays for itself in a room big enough that the
+// alternative — everyone downgraded a tier or two to fit the broadcaster's
+// own link — is worse than a relay hop's cost (a full decode+re-encode,
+// ~120-220ms and a generation of quality loss, see relayLink.ts). Below this
+// many people in the room, a broadcaster who can't reach everyone directly
+// is degraded uniformly instead (see planTopology's downgrade loop) rather
+// than routed through another participant's browser. Also used to skip the
+// capacity broadcast below entirely in a small room: nothing there is ever
+// read once cascading itself is off, so sending it would be pure background
+// signalling traffic for no reason.
+const CASCADE_ROOM_SIZE_THRESHOLD = 10;
+
 /**
  * Measures this device's own serving capacity and keeps the room informed.
  *
@@ -136,9 +148,11 @@ export function useMeshCapacity(directOnly: boolean = false) {
   // the potential relay, which is precisely the viewer.
   useEffect(() => {
     const broadcast = () => {
-      const broadcasters = signalingClient.state.peers.filter(
-        (p) => p.sharing && p.role !== "moderator"
-      );
+      const nonModeratorPeers = signalingClient.state.peers.filter((p) => p.role !== "moderator");
+      // Below CASCADE_ROOM_SIZE_THRESHOLD, useMeshTopology never builds a
+      // plan that could use this — see its own doc comment.
+      if (nonModeratorPeers.length + 1 <= CASCADE_ROOM_SIZE_THRESHOLD) return;
+      const broadcasters = nonModeratorPeers.filter((p) => p.sharing);
       if (broadcasters.length === 0) return;
       for (const peer of broadcasters) {
         signalingClient.sendSignal(peer.id, {
@@ -248,7 +262,17 @@ export function useMeshTopology(
       return;
     }
 
-    const plan = planTopology(self, viewers, contentMultiplier);
+    // Below the threshold, nobody is eligible to relay — the planner falls
+    // back to its uniform-downgrade path on its own (the same one it already
+    // uses for peers it has no capacity report from at all), so this needs
+    // no other change here.
+    const roomSize = viewers.length + 1;
+    const plannerViewers =
+      roomSize > CASCADE_ROOM_SIZE_THRESHOLD
+        ? viewers
+        : viewers.map((v) => (v.eligibleRelay ? { ...v, eligibleRelay: false } : v));
+
+    const plan = planTopology(self, plannerViewers, contentMultiplier);
     const reason =
       plan.depth > 1
         ? `Sua conexão não alcança ${viewers.length} pessoas sozinha — ${plan.relays.length} participante(s) estão ajudando a retransmitir.`

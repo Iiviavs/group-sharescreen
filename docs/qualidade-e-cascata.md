@@ -63,20 +63,29 @@ observado.
 
 ## Cascata
 
-Desligada por padrão. Ligue com `NEXT_PUBLIC_RELAY_ENABLED=true`.
+Ligada por padrão, mas só entra em jogo em salas com mais de 10 pessoas
+(`CASCADE_ROOM_SIZE_THRESHOLD` em `lib/useMeshTopology.ts`) — abaixo disso o
+planejador nunca considera ninguém elegível a relay, e uma sala que não cabe
+em malha direta é rebaixada uniformemente em vez de cascateada. O broadcast
+de capacidade (`useMeshCapacity`) também é pulado inteiro abaixo do limite:
+não há motivo pra gerar esse tráfego de sinalização se ele nunca vai ser lido.
+Desligue tudo incondicionalmente, independente do tamanho da sala, com
+`NEXT_PUBLIC_RELAY_ENABLED=false`.
 
-O motivo de estar desligada: **navegador não faz passthrough de RTP**. As
+O motivo de existir esse limite: **navegador não faz passthrough de RTP**. As
 WebRTC Encoded Transforms existem, mas repasse entre PeerConnections não é
 coberto pela spec (casamento de codec, reescrita de SSRC/timestamp e
 propagação de PLI ficam indefinidos). Então cada salto é decode + encode
 completos: ~120–220ms e uma geração de perda de qualidade, gastando CPU e
-upload de um participante.
+upload de um participante — só vale a pena quando a alternativa (rebaixar a
+sala inteira) é pior.
 
-O que **não** está validado em campo é churn: quando um relay fecha a aba, a
-subárvore congela até ser re-parenteada. `RelayLink` detecta a fonte parada em
-~1,5s e avisa os filhos, mas isso precisa ser exercitado numa sala real antes
-de ligar em produção. Uma subárvore congelada é pior que um transmissor um
-pouco sobrecarregado.
+Churn ainda merece atenção em campo: quando um relay fecha a aba, a subárvore
+fica sem stream até ser re-parenteada. `RelayLink` detecta a fonte parada em
+~1,5s e avisa os filhos, mas o broadcaster só reatribui esses filhos na
+próxima passagem do planejador (até `REPLAN_COOLDOWN_MS` = 6s depois). Numa
+sala grande e ativa isso deve ser raro e curto; se aparecer como um problema
+real, `NEXT_PUBLIC_RELAY_ENABLED=false` desliga o mecanismo por completo.
 
 Profundidade é limitada a 3 — além disso o planejador **rebaixa qualidade em
 vez de aprofundar**.

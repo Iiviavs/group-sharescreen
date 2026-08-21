@@ -1,7 +1,7 @@
 // Relay execution: forwarding a stream we are *receiving* onward to other
 // viewers, so the original broadcaster does not have to reach everybody.
 //
-// Read this before enabling it (RELAY_ENABLED below is off by default):
+// Read this before touching RELAY_ENABLED below:
 //
 // A browser cannot forward RTP. There is no passthrough — WebRTC Encoded
 // Transforms exist but the spec explicitly does not cover cross-PeerConnection
@@ -25,12 +25,17 @@ import { ICE_CONFIG } from "./iceConfig";
 import { PeerQualityRegistry } from "./peerQualityController";
 import { tierSpec, type QualityTier } from "./videoQuality";
 
-// Off by default, deliberately. The machinery below is complete and the
-// planner that drives it is tested, but churn handling — what a subtree sees
-// when its relay closes its tab — has not been exercised against a real room.
-// A frozen subtree is a worse experience than a slightly over-subscribed
-// broadcaster, so this stays off until it has been measured in the field.
-export const RELAY_ENABLED = process.env.NEXT_PUBLIC_RELAY_ENABLED === "true";
+// On by default — but the planner (see useMeshTopology's
+// CASCADE_ROOM_SIZE_THRESHOLD) never actually builds a relay assignment for a
+// room of 10 people or fewer, so in practice this only ever engages in a
+// room big enough that the alternative (degrading everyone a tier or two
+// instead) is the worse trade. Set NEXT_PUBLIC_RELAY_ENABLED=false to kill
+// the whole mechanism outright regardless of room size, e.g. if churn
+// handling — what an orphaned child sees for the few seconds between its
+// relay dying and the broadcaster re-parenting it directly, see
+// RelayLink.checkStall and applyRelayPlan's re-adoption path — turns out to
+// need more field time before it's trusted at scale.
+export const RELAY_ENABLED = process.env.NEXT_PUBLIC_RELAY_ENABLED !== "false";
 
 export interface RelayChild {
   id: string;

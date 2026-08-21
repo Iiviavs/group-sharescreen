@@ -218,12 +218,13 @@ export function scaleFactorFor(tier: QualityTier, captureHeight: number): number
 }
 
 // Absolute bitrate floor for a congested link, on top of the proportional
-// MIN_RATIO in peerQualityController. Ported from upstream's own fix to this
-// same problem (commit "fix screenshare"): a ratio alone is not enough of a
-// guard, because 20% of a cheap tier is a genuinely unusable picture — 20% of
-// 360p15's budget is not video, it is a slideshow of artefacts. Below this
-// there is nothing worth sending, so stop backing off and let frames drop.
-const MIN_KBPS = 250;
+// MIN_RATIO in peerQualityController. A ratio alone is not enough of a
+// guard: a share of a cheap tier can still be a genuinely unusable picture —
+// 250 kbps at 360p is not video, it is a slideshow of artefacts, and under
+// "maintain-resolution" (text mode) that shortfall comes out as dropped
+// frames rather than blur, i.e. a frozen-looking share. Below this there is
+// nothing worth sending, so stop backing off and let frames drop instead.
+const MIN_KBPS = 400;
 
 /**
  * The bitrate to actually request for one peer, given what its tier costs and

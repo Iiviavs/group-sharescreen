@@ -31,18 +31,26 @@ import {
 
 export type DegradationMode = "text" | "motion";
 
-// Congestion thresholds. Deliberately asymmetric: back off quickly on the
-// first sign of trouble, recover slowly and only after a sustained clean
-// run, because oscillating between bitrates looks far worse to a viewer than
-// simply sitting slightly below the ceiling.
+// Congestion thresholds. Deliberately asymmetric: back off faster than we
+// recover, because oscillating between bitrates looks far worse to a viewer
+// than sitting slightly below the ceiling for a bit. But the ratio now
+// survives room churn (see setTier's comment), which makes it a permanent
+// scar rather than a transient dip — so a single noisy sample (one dropped
+// ack, a brief wifi retransmit, a GC pause) can no longer cut bitrate on its
+// own; it takes BAD_STREAK_TO_BACKOFF consecutive bad samples, same as
+// recovery already requires a streak of good ones. Backoff and recovery
+// steps are also both gentler than they used to be, and the floor is higher,
+// so genuine congestion settles at a still-watchable bitrate instead of
+// ratcheting all the way down toward an unusable one.
 const LOSS_BAD = 0.04;
 const RTT_BAD = 0.35;
 const LOSS_GOOD = 0.01;
 const RTT_GOOD = 0.2;
-const BACKOFF = 0.75;
-const RECOVER = 1.15;
-const HEALTHY_STREAK_TO_RECOVER = 3;
-const MIN_RATIO = 0.2;
+const BACKOFF = 0.85;
+const RECOVER = 1.2;
+const BAD_STREAK_TO_BACKOFF = 2;
+const HEALTHY_STREAK_TO_RECOVER = 2;
+const MIN_RATIO = 0.4;
 
 // Below this share of the tier's bitrate, extra spatial downscaling buys the
 // encoder headroom — half resolution encoded well beats full resolution
@@ -58,6 +66,7 @@ const SCALE_SOFT = 0.65;
 export class PeerQualityController {
   private ratio = 1;
   private healthyStreak = 0;
+  private badStreak = 0;
   private appliedKbps = 0;
   private appliedScale = 0;
   private disposed = false;
@@ -112,9 +121,14 @@ export class PeerQualityController {
     const { fractionLost, rtt } = sample;
     if (fractionLost > LOSS_BAD || rtt > RTT_BAD) {
       this.healthyStreak = 0;
-      this.ratio = Math.max(MIN_RATIO, this.ratio * BACKOFF);
-      this.apply();
+      this.badStreak += 1;
+      if (this.badStreak >= BAD_STREAK_TO_BACKOFF) {
+        this.badStreak = 0;
+        this.ratio = Math.max(MIN_RATIO, this.ratio * BACKOFF);
+        this.apply();
+      }
     } else if (fractionLost <= LOSS_GOOD && rtt < RTT_GOOD) {
+      this.badStreak = 0;
       this.healthyStreak += 1;
       if (this.healthyStreak >= HEALTHY_STREAK_TO_RECOVER && this.ratio < 1) {
         this.ratio = Math.min(1, this.ratio * RECOVER);
@@ -123,8 +137,9 @@ export class PeerQualityController {
       }
     } else {
       // Neither clearly bad nor clearly good: hold, and require a fresh
-      // clean run before allowing any recovery.
+      // clean run before allowing either a backoff or a recovery.
       this.healthyStreak = 0;
+      this.badStreak = 0;
     }
   }
 

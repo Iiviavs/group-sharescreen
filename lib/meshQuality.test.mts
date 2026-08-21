@@ -149,7 +149,7 @@ assert.equal(congestedBitrateKbps(5600, 1), 5600);
 // A congested link is cut, but never below the point where the picture stops
 // being video at all.
 assert.equal(congestedBitrateKbps(5600, 0.5), 2800);
-assert.equal(congestedBitrateKbps(5600, 0.02), 250, "congestionamento pesado para no piso");
+assert.equal(congestedBitrateKbps(5600, 0.02), 400, "congestionamento pesado para no piso");
 // And the floor must not become a *ceiling lift*: a tier that deliberately
 // costs less than the floor is never pushed above its own budget.
 assert.equal(congestedBitrateKbps(150, 0.1), 150, "tier barato nunca sobe por causa do piso");
