@@ -2,8 +2,8 @@
 
 import { SpeakerIcon, SpeakerMuteIcon } from "./icons";
 
-function clampVolume(value: number) {
-  return Math.min(1, Math.max(0, value));
+function clampVolume(value: number, max: number) {
+  return Math.min(max, Math.max(0, value));
 }
 
 export function VolumeSlider({
@@ -15,6 +15,10 @@ export function VolumeSlider({
   showIcon = true,
   collapseOnIdle = false,
   className = "",
+  // 1 = the native 100% ceiling; pass audioGain.ts's MAX_GAIN (3) wherever
+  // the caller actually routes audio through the gain graph (useGainedAudio)
+  // instead of the element's own volume, which browsers hard-clamp to 1.
+  max = 1,
 }: {
   value: number;
   label: string;
@@ -24,8 +28,9 @@ export function VolumeSlider({
   showIcon?: boolean;
   collapseOnIdle?: boolean;
   className?: string;
+  max?: number;
 }) {
-  const normalizedValue = clampVolume(value);
+  const normalizedValue = clampVolume(value, max);
   const icon =
     muted || normalizedValue === 0 ? (
       <SpeakerMuteIcon className="h-4 w-4 shrink-0" />
@@ -63,7 +68,7 @@ export function VolumeSlider({
       <input
         type="range"
         min="0"
-        max="1"
+        max={max}
         step="0.01"
         value={normalizedValue}
         onChange={(event) => onChange(Number(event.target.value))}

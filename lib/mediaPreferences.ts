@@ -6,6 +6,8 @@ const NOISE_SUPPRESSION_KEY = "sharescreen:noiseSuppressionOn";
 const MIC_ON_KEY = "sharescreen:micOn";
 const MICS_MUTED_KEY = "sharescreen:micsMuted";
 const FORCE_RELAY_ICE_KEY = "sharescreen:forceRelayIce";
+const GUEST_ACCOUNT_BANNER_DISMISSED_KEY = "sharescreen:guestAccountBannerDismissed";
+const AUTO_JOIN_KEY = "sharescreen:autoJoin";
 
 function getStoredBoolean(key: string, fallback: boolean): boolean {
   if (typeof window === "undefined") return fallback;
@@ -116,4 +118,24 @@ export function getStoredTransmissionVolumes(): Record<string, number> {
 }
 export function setStoredTransmissionVolume(peerId: string, volume: number) {
   setStoredVolume(TRANSMISSION_VOLUMES_KEY, peerId, volume);
+}
+
+// Whether a guest already dismissed the "crie uma conta" nudge banner —
+// dismissing it is permanent (not per-room), since it's suggesting the same
+// thing regardless of which room they're in.
+export function getStoredGuestAccountBannerDismissed(): boolean {
+  return getStoredBoolean(GUEST_ACCOUNT_BANNER_DISMISSED_KEY, false);
+}
+export function setStoredGuestAccountBannerDismissed(value: boolean) {
+  setStoredBoolean(GUEST_ACCOUNT_BANNER_DISMISSED_KEY, value);
+}
+
+// "Entrar em transmissões automaticamente" — on by default. Off means a
+// peer's screen/camera share doesn't connect on its own; the tile shows a
+// "click to watch" prompt instead (see useRoomMedia's autoJoin gate).
+export function getStoredAutoJoin(): boolean {
+  return getStoredBoolean(AUTO_JOIN_KEY, true);
+}
+export function setStoredAutoJoin(value: boolean) {
+  setStoredBoolean(AUTO_JOIN_KEY, value);
 }

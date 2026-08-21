@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useGainedAudio } from "@/lib/useGainedAudio";
 
 export function RemoteAudio({
   stream,
@@ -9,6 +10,7 @@ export function RemoteAudio({
 }: {
   stream: MediaStream;
   muted?: boolean;
+  // Up to audioGain.ts's MAX_GAIN (300%) — see useGainedAudio.
   volume?: number;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -17,12 +19,7 @@ export function RemoteAudio({
     if (audioRef.current) audioRef.current.srcObject = stream;
   }, [stream]);
 
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.muted = muted;
-    audio.volume = Math.min(1, Math.max(0, volume));
-  }, [muted, volume]);
+  useGainedAudio(audioRef, stream, volume, muted);
 
   return <audio ref={audioRef} autoPlay className="sr-only" />;
 }

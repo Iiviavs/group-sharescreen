@@ -10,8 +10,12 @@ import {
   FullscreenExitIcon,
   EyeIcon,
   EyeOffIcon,
+  FocusIcon,
+  HyperfocusIcon,
 } from "@/components/icons";
 import { VolumeSlider } from "@/components/VolumeSlider";
+import { MAX_GAIN } from "@/lib/audioGain";
+import { useGainedAudio } from "@/lib/useGainedAudio";
 
 function noopSubscribe() {
   return () => {};
@@ -26,6 +30,7 @@ function getPipSupportedServer() {
 export function VideoTile({
   stream,
   label,
+  accessibleLabel,
   badge,
   muted = false,
   allowUnmute = true,
@@ -35,12 +40,24 @@ export function VideoTile({
   onStopWatching,
   onDoubleClick,
   onRenderedSizeChange,
+  onFocus,
+  isSpotlighted = false,
+  onHyperfocus,
+  isHyperfocused = false,
+  className = "",
 }: {
   stream: MediaStream;
-  label: string;
+  label: ReactNode;
+  // Plain-text version of `label` for aria-label/title attributes, which
+  // can't render a component (DisplayUserName) the way `label` itself can.
+  // Defaults to a generic phrase when the caller has nothing better.
+  accessibleLabel?: string;
   badge?: string;
+  // Extra classes for the root tile — e.g. WatchRoom's spotlight grid span.
+  className?: string;
   muted?: boolean;
   allowUnmute?: boolean;
+  // Up to audioGain.ts's MAX_GAIN (300%) — see useGainedAudio below.
   volume?: number;
   onVolumeChange?: (volume: number) => void;
   // Reports how large this tile is actually drawn, in CSS pixels. The viewer
@@ -59,6 +76,16 @@ export function VideoTile({
   // stop watching.
   onStopWatching?: () => void;
   onDoubleClick?: () => void;
+  // "Focar": grow this tile and shrink the rest, without touching anyone's
+  // connection — see WatchRoom's spotlightId. Omitted where focusing makes
+  // no sense (e.g. the admin moderation viewer).
+  onFocus?: () => void;
+  isSpotlighted?: boolean;
+  // "Hiperfoco": grow this tile to near-fullscreen and actively disconnect
+  // every other transmission to free up bandwidth/CPU — see WatchRoom's
+  // hyperfocusId/enterHyperfocus.
+  onHyperfocus?: () => void;
+  isHyperfocused?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -90,12 +117,7 @@ export function VideoTile({
     if (videoRef.current) videoRef.current.srcObject = stream;
   }, [stream]);
 
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.muted = isMuted;
-    video.volume = Math.min(1, Math.max(0, volume ?? internalVolume));
-  }, [internalVolume, isMuted, volume]);
+  useGainedAudio(videoRef, stream, volume ?? internalVolume, isMuted);
 
   useEffect(() => {
     function onFullscreenChange() {
@@ -175,18 +197,20 @@ export function VideoTile({
     setIsMuted(nextVolume === 0);
   }
 
+  const nameForLabel = accessibleLabel ?? "essa transmissão";
+
   return (
     <div
       ref={containerRef}
       onDoubleClick={onDoubleClick}
-      className={`relative w-full overflow-hidden rounded-xl border border-white/10 bg-black ${
+      className={`group relative w-full overflow-hidden rounded-xl border border-white/10 bg-black ${
         // No min-height floor here: on a short viewport a fixed floor could
         // force this box taller than the space main actually has, which is
         // exactly what pushed the tile past the bottom of the screen and
         // forced a scroll — h-full alone always stays within whatever main
         // gives it.
         fill ? "h-full" : "aspect-video"
-      }`}
+      } ${className}`}
     >
       <video
         ref={videoRef}
@@ -208,13 +232,17 @@ export function VideoTile({
           </span>
         )}
       </div>
-      <div className="absolute right-2 top-2 flex flex-wrap items-center justify-end gap-2">
+      {/* Hidden until hovered, so a busy grid isn't wall-to-wall buttons —
+          but always shown on a touch device, which has no hover state to
+          reveal them with in the first place. */}
+      <div className="absolute right-2 top-2 flex flex-wrap items-center justify-end gap-2 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:focus-within:opacity-100 [@media(hover:hover)]:group-hover:opacity-100">
         {allowUnmute && (
           <VolumeSlider
             value={volume ?? internalVolume}
-            label={`Volume da transmissão de ${label}`}
+            label={`Volume da transmissão de ${nameForLabel}`}
             onChange={handleVolumeChange}
             showIcon={false}
+            max={MAX_GAIN}
             className="rounded-full bg-black/60 px-2 py-1 text-white"
           />
         )}
@@ -238,6 +266,34 @@ export function VideoTile({
             className="rounded-full bg-black/60 p-2 text-white hover:bg-black/80 active:bg-black/80"
           >
             {isPiP ? <PipExitIcon className="h-5 w-5" /> : <PipIcon className="h-5 w-5" />}
+          </button>
+        )}
+        {onFocus && (
+          <button
+            type="button"
+            onClick={onFocus}
+            title={isSpotlighted ? "Remover destaque" : `Focar em ${nameForLabel}`}
+            aria-label={isSpotlighted ? "Remover destaque" : `Focar em ${nameForLabel}`}
+            aria-pressed={isSpotlighted}
+            className={`rounded-full p-2 text-white active:bg-black/80 ${
+              isSpotlighted ? "bg-emerald-600 hover:bg-emerald-700" : "bg-black/60 hover:bg-black/80"
+            }`}
+          >
+            <FocusIcon className="h-5 w-5" />
+          </button>
+        )}
+        {onHyperfocus && (
+          <button
+            type="button"
+            onClick={onHyperfocus}
+            title={`Hiperfoco em ${nameForLabel} — esconde e desconecta as outras transmissões`}
+            aria-label={`Hiperfoco em ${nameForLabel}`}
+            aria-pressed={isHyperfocused}
+            className={`rounded-full p-2 text-white active:bg-black/80 ${
+              isHyperfocused ? "bg-emerald-600 hover:bg-emerald-700" : "bg-black/60 hover:bg-black/80"
+            }`}
+          >
+            <HyperfocusIcon className="h-5 w-5" />
           </button>
         )}
         <button
@@ -290,7 +346,7 @@ export function StoppedPeerTile({
   fill = false,
   onResume,
 }: {
-  label: string;
+  label: ReactNode;
   fill?: boolean;
   onResume: () => void;
 }) {

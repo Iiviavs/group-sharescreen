@@ -466,3 +466,109 @@ export function ShieldOffIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+export function GlobeIcon({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <ellipse cx="12" cy="12" rx="4" ry="9" />
+      <line x1="3" y1="12" x2="21" y2="12" />
+      <path d="M5 6.5c1.9 1.3 4.4 2 7 2s5.1-.7 7-2" />
+      <path d="M5 17.5c1.9-1.3 4.4-2 7-2s5.1.7 7 2" />
+    </svg>
+  );
+}
+
+export function FocusIcon({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M4 9V6a2 2 0 0 1 2-2h3" />
+      <path d="M20 9V6a2 2 0 0 0-2-2h-3" />
+      <path d="M4 15v3a2 2 0 0 0 2 2h3" />
+      <path d="M20 15v3a2 2 0 0 1-2 2h-3" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+export function HyperfocusIcon({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M3 3h6M3 3v6" />
+      <path d="M21 3h-6M21 3v6" />
+      <path d="M3 21h6M3 21v-6" />
+      <path d="M21 21h-6M21 21v-6" />
+      <circle cx="12" cy="12" r="2.5" />
+    </svg>
+  );
+}
+
+export function ExitHyperfocusIcon({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M9 3H5a2 2 0 0 0-2 2v4" />
+      <path d="M15 3h4a2 2 0 0 1 2 2v4" />
+      <path d="M9 21H5a2 2 0 0 1-2-2v-4" />
+      <path d="M15 21h4a2 2 0 0 0 2-2v-4" />
+      <line x1="4" y1="20" x2="20" y2="4" />
+    </svg>
+  );
+}
+
+export function VerifiedBadgeIcon({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      stroke="none"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M12 2l2.4 1.2 2.6-.6 1.3 2.3 2.3 1.3-.6 2.6L21 11l-1.2 2.4.6 2.6-2.3 1.3-1.3 2.3-2.6-.6L12 20l-2.4-1.2-2.6.6-1.3-2.3-2.3-1.3.6-2.6L3 11l1.2-2.4-.6-2.6 2.3-1.3 1.3-2.3 2.6.6L12 2z" />
+      <path
+        d="M8.5 12.2l2.3 2.3 4.7-4.9"
+        fill="none"
+        stroke="white"
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

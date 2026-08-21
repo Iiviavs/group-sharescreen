@@ -26,13 +26,16 @@ import {
   setStoredPeerVolume,
   getStoredTransmissionVolumes,
   setStoredTransmissionVolume,
+  getStoredGuestAccountBannerDismissed,
+  setStoredGuestAccountBannerDismissed,
 } from "@/lib/mediaPreferences";
 import { VideoTile, StoppedPeerTile, ResumingPeerTile } from "@/components/VideoTile";
 import { RemoteAudio } from "@/components/RemoteAudio";
 import { ParticipantRow } from "@/components/ParticipantRow";
 import { ChatPanel } from "@/components/ChatPanel";
 import { PartnerCard } from "@/components/PartnerCard";
-import { withGuestSuffix } from "@/lib/displayName";
+import { DisplayUserName } from "@/components/DisplayUserName";
+import { CreateAccountForm } from "@/components/CreateAccountForm";
 import {
   MicIcon,
   MicOffIcon,
@@ -48,6 +51,9 @@ import {
   SpeakerMuteIcon,
   MoreIcon,
   ChevronUpIcon,
+  ExitHyperfocusIcon,
+  EyeIcon,
+  EyeOffIcon,
 } from "@/components/icons";
 import { MdHome } from "react-icons/md";
 
@@ -374,6 +380,10 @@ export function WatchRoom({ handle }: { handle: string }) {
     localCameraStream,
     remoteCameraStreams,
     cameraShareError,
+    stoppedCameraPeers,
+    resumingCameraPeers,
+    stopWatchingCameraPeer,
+    resumeWatchingCameraPeer,
     shareResolution,
     setShareResolution,
     shareFps,
@@ -391,11 +401,14 @@ export function WatchRoom({ handle }: { handle: string }) {
     micError,
     localMicStream,
     remoteMicStreams,
+    micConnectionStates,
     noiseSuppressionOn,
     noiseSuppressionAvailable,
     toggleNoiseSuppression,
     forceRelayIce,
     toggleForceRelayIce,
+    autoJoin,
+    toggleAutoJoin,
   } = useRoomMedia(handle);
 
   const [switching, setSwitching] = useState(false);
@@ -403,6 +416,16 @@ export function WatchRoom({ handle }: { handle: string }) {
   const [switchError, setSwitchError] = useState<string | null>(null);
   const [switchIsPrivate, setSwitchIsPrivate] = useState(false);
   const [nameInput, setNameInput] = useState("");
+  // Toggles the first-time name gate below between "pick a name" and "create
+  // an account" — mirrors the home page's identity flow so a guest who lands
+  // straight in a room link isn't missing the option.
+  const [creatingAccount, setCreatingAccount] = useState(false);
+  const [guestBannerDismissed, setGuestBannerDismissed] = useState(() =>
+    getStoredGuestAccountBannerDismissed()
+  );
+  // Opened from the guest banner below — reuses the same CreateAccountForm
+  // as the pre-join gate, just in a modal since this fires mid-session.
+  const [showCreateAccountModal, setShowCreateAccountModal] = useState(false);
   const [micsMuted, setMicsMuted] = useState(() => getStoredMicsMuted());
   const [soundEffectsOn, setSoundEffectsOn] = useState(() => getSoundEffectsEnabled());
   const [mutedPeerIds, setMutedPeerIds] = useState<Set<string>>(new Set());
@@ -414,7 +437,15 @@ export function WatchRoom({ handle }: { handle: string }) {
   const [renameInput, setRenameInput] = useState("");
   const [qualityOpen, setQualityOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
-  const [focusedPeerId, setFocusedPeerId] = useState<string | null>(null);
+  // "Focar": grows one tile and shrinks the rest without touching any
+  // connection — see the grid render below, which gives this id's tile a
+  // 2x2 grid span instead of hiding everyone else.
+  const [spotlightId, setSpotlightId] = useState<string | null>(null);
+  // "Hiperfoco": grows one tile to near-fullscreen and hides + actively
+  // disconnects every other transmission (see enterHyperfocus below) to
+  // actually free up bandwidth/CPU, not just screen space. Mutually
+  // exclusive with spotlightId.
+  const [hyperfocusId, setHyperfocusId] = useState<string | null>(null);
   // Consolidates every header control except the mic toggle and the
   // share/camera transmission buttons into one "more options" panel — see
   // the header below. Those sub-toggles (renaming/switching/qualityOpen)
@@ -701,28 +732,45 @@ export function WatchRoom({ handle }: { handle: string }) {
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
             Escolha um nome para entrar nesta sala.
           </p>
-          <form onSubmit={handleNameSubmit} className="mt-8 flex flex-col gap-3">
-            <label htmlFor="name" className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              Seu nome
-            </label>
-            <input
-              id="name"
-              autoFocus
-              value={nameInput}
-              onChange={(e) => setNameInput(e.target.value)}
-              maxLength={24}
-              placeholder="Ex: Maria"
-              className="rounded-lg border border-zinc-300 bg-white px-4 py-2.5 text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+          {creatingAccount ? (
+            <CreateAccountForm
+              initialDisplayName={nameInput}
+              onCancel={() => setCreatingAccount(false)}
+              onSuccess={() => setCreatingAccount(false)}
             />
-            {state.nameError && <p className="text-sm text-red-500">{state.nameError}</p>}
-            <button
-              type="submit"
-              disabled={!nameInput.trim()}
-              className="mt-2 rounded-lg bg-zinc-950 px-4 py-2.5 font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
-            >
-              Entrar na sala
-            </button>
-          </form>
+          ) : (
+            <form onSubmit={handleNameSubmit} className="mt-8 flex flex-col gap-3">
+              <label htmlFor="name" className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                Seu nome
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="name"
+                  autoFocus
+                  value={nameInput}
+                  onChange={(e) => setNameInput(e.target.value)}
+                  maxLength={24}
+                  placeholder="Ex: Maria"
+                  className="min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-4 py-2.5 text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                />
+                <button
+                  type="submit"
+                  disabled={!nameInput.trim()}
+                  className="shrink-0 rounded-lg bg-zinc-950 px-4 py-2.5 font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+                >
+                  Entrar na sala
+                </button>
+              </div>
+              {state.nameError && <p className="text-sm text-red-500">{state.nameError}</p>}
+              <button
+                type="button"
+                onClick={() => setCreatingAccount(true)}
+                className="rounded-lg border border-zinc-300 px-4 py-2.5 font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+              >
+                Criar uma conta
+              </button>
+            </form>
+          )}
         </main>
       </div>
     );
@@ -758,7 +806,8 @@ export function WatchRoom({ handle }: { handle: string }) {
   // joined when it isn't yet.
   if (!state.room) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 text-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-zinc-300 border-t-zinc-600 dark:border-zinc-700 dark:border-t-zinc-300" />
         <p className="text-zinc-600 dark:text-zinc-400">Entrando na sala...</p>
       </div>
     );
@@ -770,35 +819,58 @@ export function WatchRoom({ handle }: { handle: string }) {
   // than never added, so this is the one place that has to remember it.
   const visiblePeers = state.peers.filter((p) => p.role !== "moderator");
   const peerCount = visiblePeers.length + (state.name ? 1 : 0);
+  // A peer showing mic-on doesn't mean their audio is actually reaching us
+  // yet — the recvPC for it still has to come up, which right after joining
+  // a room that already has people talking can take a moment (everyone
+  // looks silent for a beat). Surfaced as a "Conectando..." banner rather
+  // than left silent and unexplained.
+  const connectingAudioPeers = visiblePeers.some(
+    (p) => p.mic && micConnectionStates[p.id] !== "connected"
+  );
   // Screen and camera are independent broadcast channels (see
   // useRoomMedia's useBroadcastChannel) — a peer sharing both gets one tile
   // for each, never one tile with the other crammed into a corner.
   const remoteScreenEntries = Object.entries(remoteStreams);
   const remoteCameraEntries = Object.entries(remoteCameraStreams);
-  const focusedPeerVisible = !focusedPeerId || focusedPeerId === "self";
-  const focusedScreenEntries = focusedPeerId
-    ? focusedPeerId === "self"
+  // Hyperfocus hides every tile except the chosen one (its connections are
+  // also actively closed — see enterHyperfocus below — so this isn't just a
+  // display filter, the streams genuinely stop arriving).
+  const hyperfocusVisible = !hyperfocusId || hyperfocusId === "self";
+  const visibleScreenEntries = hyperfocusId
+    ? hyperfocusId === "self"
       ? []
-      : remoteScreenEntries.filter(([peerId]) => peerId === focusedPeerId)
+      : remoteScreenEntries.filter(([peerId]) => peerId === hyperfocusId)
     : remoteScreenEntries;
-  const focusedCameraEntries = focusedPeerId
-    ? focusedPeerId === "self"
+  const visibleCameraEntries = hyperfocusId
+    ? hyperfocusId === "self"
       ? []
-      : remoteCameraEntries.filter(([peerId]) => peerId === focusedPeerId)
+      : remoteCameraEntries.filter(([peerId]) => peerId === hyperfocusId)
     : remoteCameraEntries;
   const localTileCount = (isSharing && localStream ? 1 : 0) + (localCameraStream ? 1 : 0);
   const hasMultipleShares =
     remoteScreenEntries.length + remoteCameraEntries.length + localTileCount > 1;
-  // A peer we deliberately stopped watching has no entry in remoteStreams
-  // (the underlying connection is closed to save resources — see
-  // stopWatchingPeer), but still gets a tile slot showing a "you left this
-  // transmission" placeholder instead of just vanishing from the grid.
+  // A peer we deliberately stopped watching (manually, or via the autoJoin
+  // gate, or hyperfocus freeing them up) has no entry in remoteStreams, but
+  // still gets a tile slot showing a "click to watch"/"you left this
+  // transmission" placeholder instead of just vanishing from the grid. Camera
+  // mirrors screen here — see useRoomMedia's stoppedCameraPeers.
   const stoppedEntries = visiblePeers.filter((p) => stoppedPeers.has(p.id) && !(p.id in remoteStreams));
-  // Same idea while a resume is in flight — no stream yet, but not "stopped"
-  // anymore either, so it still needs its own tile slot (see ResumingPeerTile).
   const resumingEntries = visiblePeers.filter(
     (p) => resumingPeers.has(p.id) && !(p.id in remoteStreams)
   );
+  const stoppedCameraEntries = visiblePeers.filter(
+    (p) => stoppedCameraPeers.has(p.id) && !(p.id in remoteCameraStreams)
+  );
+  const resumingCameraEntries = visiblePeers.filter(
+    (p) => resumingCameraPeers.has(p.id) && !(p.id in remoteCameraStreams)
+  );
+  // Hidden along with everything else while hyperfocused — a placeholder for
+  // someone hyperfocus itself just stopped watching would be confusing right
+  // next to the "sair do hiperfoco" banner.
+  const visibleStoppedEntries = hyperfocusId ? [] : stoppedEntries;
+  const visibleResumingEntries = hyperfocusId ? [] : resumingEntries;
+  const visibleStoppedCameraEntries = hyperfocusId ? [] : stoppedCameraEntries;
+  const visibleResumingCameraEntries = hyperfocusId ? [] : resumingCameraEntries;
   const nothingToShow =
     remoteScreenEntries.length === 0 &&
     remoteCameraEntries.length === 0 &&
@@ -806,11 +878,13 @@ export function WatchRoom({ handle }: { handle: string }) {
     resumingEntries.length === 0 &&
     !isSharing;
   const tileCount =
-    focusedScreenEntries.length +
-    focusedCameraEntries.length +
-    stoppedEntries.length +
-    resumingEntries.length +
-    (focusedPeerVisible ? localTileCount : 0);
+    visibleScreenEntries.length +
+    visibleCameraEntries.length +
+    visibleStoppedEntries.length +
+    visibleResumingEntries.length +
+    visibleStoppedCameraEntries.length +
+    visibleResumingCameraEntries.length +
+    (hyperfocusVisible ? localTileCount : 0);
   const isSingleTile = tileCount === 1;
   // Below `sm`, 2 tiles side by side are still each bigger than a single
   // full-width 16:9 tile would end up after the header/aside eat into a
@@ -819,6 +893,34 @@ export function WatchRoom({ handle }: { handle: string }) {
   // scrolling through a wall of tiles even though 2-up comfortably fits
   // more of them in view at once.
   const mobileGridCols = tileCount <= 2 ? "grid-cols-1" : "grid-cols-2";
+
+  function toggleSpotlight(id: string) {
+    setSpotlightId((prev) => (prev === id ? null : id));
+  }
+
+  // Actually frees up the other transmissions' bandwidth/CPU instead of just
+  // hiding them — closes every other screen/camera recvPC (see
+  // stopWatchingPeer/stopWatchingCameraPeer), which is what makes hyperfocus
+  // worth using over spotlight for someone on a constrained link.
+  function enterHyperfocus(id: string) {
+    setSpotlightId(null);
+    setHyperfocusId(id);
+    for (const [peerId] of remoteScreenEntries) {
+      if (peerId !== id) stopWatchingPeer(peerId);
+    }
+    for (const [peerId] of remoteCameraEntries) {
+      if (peerId !== id) stopWatchingCameraPeer(peerId);
+    }
+    trackEvent("hyperfocus_enter");
+  }
+
+  // Deliberately does not resume anyone hyperfocus stopped watching — that's
+  // the whole point (save resources), so whoever wants them back clicks
+  // "Retomar transmissão" on their own placeholder tile.
+  function exitHyperfocus() {
+    setHyperfocusId(null);
+    trackEvent("hyperfocus_exit");
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-zinc-50 dark:bg-black">
@@ -932,6 +1034,14 @@ export function WatchRoom({ handle }: { handle: string }) {
                     }
                     activeIcon={<NoiseSuppressionIcon className="h-4 w-4" />}
                     inactiveIcon={<NoiseSuppressionOffIcon className="h-4 w-4" />}
+                  />
+                  <MenuToggleRow
+                    label="Entrar em transmissões automaticamente"
+                    active={autoJoin}
+                    onToggle={toggleAutoJoin}
+                    title="Quando desligado, uma nova tela/câmera só conecta depois que você clicar pra assistir"
+                    activeIcon={<EyeIcon className="h-4 w-4" />}
+                    inactiveIcon={<EyeOffIcon className="h-4 w-4" />}
                   />
                   <MenuToggleRow
                     label="Impedir conexões diretas"
@@ -1234,6 +1344,33 @@ export function WatchRoom({ handle }: { handle: string }) {
         </div>
       </header>
 
+      {!state.account && !guestBannerDismissed && (
+        <div className="flex items-center justify-between gap-3 bg-blue-50 px-4 py-2 text-sm text-blue-800 dark:bg-blue-950/40 dark:text-blue-300">
+          <p>
+            Você está usando um nome de convidado. Se quiser, você pode{" "}
+            <button
+              type="button"
+              onClick={() => setShowCreateAccountModal(true)}
+              className="font-semibold underline underline-offset-2 hover:text-blue-900 dark:hover:text-blue-200"
+            >
+              Criar uma conta
+            </button>{" "}
+            pra reservar seu nome e manter suas configurações. Mas só se quiser, é opcional :)
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setGuestBannerDismissed(true);
+              setStoredGuestAccountBannerDismissed(true);
+            }}
+            aria-label="Fechar aviso"
+            className="shrink-0 text-lg leading-none text-blue-500 transition hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {shareError && (
         <p className="bg-red-50 px-4 py-2 text-sm text-red-600 dark:bg-red-950/40 dark:text-red-400">
           {shareError}
@@ -1277,93 +1414,147 @@ export function WatchRoom({ handle }: { handle: string }) {
             </div>
           ) : (
             <>
-              {focusedPeerId && hasMultipleShares && (
+              {hyperfocusId && (
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm dark:border-emerald-800 dark:bg-emerald-950/40">
+                  <span className="text-emerald-800 dark:text-emerald-300">
+                    Hiperfoco ativo — as outras transmissões foram desconectadas pra economizar
+                    recursos.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={exitHyperfocus}
+                    className="flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-emerald-700"
+                  >
+                    <ExitHyperfocusIcon className="h-4 w-4" />
+                    Sair do hiperfoco
+                  </button>
+                </div>
+              )}
+              {!hyperfocusId && spotlightId && hasMultipleShares && (
                 <button
                   type="button"
-                  onClick={() => setFocusedPeerId(null)}
+                  onClick={() => setSpotlightId(null)}
                   className="mb-3 rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
                 >
-                  Voltar para todas as transmissões
+                  Remover destaque
                 </button>
               )}
               <div
                 className={
                   isSingleTile
                     ? "h-full"
-                    : `grid ${mobileGridCols} gap-2 sm:grid-cols-2 sm:gap-5 2xl:grid-cols-3`
+                    : `grid ${mobileGridCols} auto-rows-fr gap-2 sm:grid-cols-2 sm:gap-5 2xl:grid-cols-3`
                 }
               >
-                {focusedPeerVisible && isSharing && localStream && (
+                {hyperfocusVisible && isSharing && localStream && (
                   <VideoTile
                     stream={localStream}
                     label="Você"
+                    accessibleLabel="Você"
                     badge={shareSource === "camera" ? "câmera" : "transmitindo"}
                     muted
                     allowUnmute={false}
-                    fill={isSingleTile}
-                    onDoubleClick={() => setFocusedPeerId("self")}
+                    fill={isSingleTile || spotlightId === "self"}
+                    className={spotlightId === "self" && !isSingleTile ? "sm:col-span-2 sm:row-span-2" : ""}
+                    onFocus={() => toggleSpotlight("self")}
+                    isSpotlighted={spotlightId === "self"}
+                    onHyperfocus={() => enterHyperfocus("self")}
                   />
                 )}
-                {focusedPeerVisible && localCameraStream && (
+                {hyperfocusVisible && localCameraStream && (
                   <VideoTile
                     stream={localCameraStream}
                     label="Você"
+                    accessibleLabel="Você"
                     badge="câmera"
                     muted
                     allowUnmute={false}
-                    fill={isSingleTile}
-                    onDoubleClick={() => setFocusedPeerId("self")}
+                    fill={isSingleTile || spotlightId === "self"}
+                    className={spotlightId === "self" && !isSingleTile ? "sm:col-span-2 sm:row-span-2" : ""}
+                    onFocus={() => toggleSpotlight("self")}
+                    isSpotlighted={spotlightId === "self"}
+                    onHyperfocus={() => enterHyperfocus("self")}
                   />
                 )}
-                {focusedScreenEntries.map(([peerId, stream]) => {
+                {visibleScreenEntries.map(([peerId, stream]) => {
                   const peer = state.peers.find((p) => p.id === peerId);
-                  const peerName = withGuestSuffix(peer?.name ?? "Alguém", peer?.isGuest);
                   const volumeKey = peer?.userId ?? peerId;
                   return (
                     <VideoTile
                       key={`screen-${peerId}`}
                       stream={stream}
-                      label={peerName}
+                      label={
+                        <DisplayUserName
+                          name={peer?.name ?? "Alguém"}
+                          isGuest={peer?.isGuest}
+                          verified={peer?.flags?.includes("VERIFIED")}
+                        />
+                      }
+                      accessibleLabel={peer?.name ?? "Alguém"}
                       badge="ao vivo · tela"
                       muted
                       volume={transmissionVolumes[volumeKey] ?? 1}
                       onVolumeChange={(volume) => setTransmissionVolume(volumeKey, volume)}
-                      fill={isSingleTile}
+                      fill={isSingleTile || spotlightId === peerId}
+                      className={spotlightId === peerId && !isSingleTile ? "sm:col-span-2 sm:row-span-2" : ""}
                       onRenderedSizeChange={(w, h) => qualityNegotiator.report("screen", peerId, w, h)}
                       onStopWatching={() => stopWatchingPeer(peerId)}
-                      onDoubleClick={() => setFocusedPeerId(peerId)}
+                      onFocus={() => toggleSpotlight(peerId)}
+                      isSpotlighted={spotlightId === peerId}
+                      onHyperfocus={() => enterHyperfocus(peerId)}
                     />
                   );
                 })}
-                {focusedCameraEntries.map(([peerId, stream]) => {
+                {visibleCameraEntries.map(([peerId, stream]) => {
                   const peer = state.peers.find((p) => p.id === peerId);
-                  const peerName = withGuestSuffix(peer?.name ?? "Alguém", peer?.isGuest);
                   const volumeKey = peer?.userId ?? peerId;
                   return (
                     <VideoTile
                       key={`camera-${peerId}`}
                       stream={stream}
-                      label={peerName}
+                      label={
+                        <DisplayUserName
+                          name={peer?.name ?? "Alguém"}
+                          isGuest={peer?.isGuest}
+                          verified={peer?.flags?.includes("VERIFIED")}
+                        />
+                      }
+                      accessibleLabel={peer?.name ?? "Alguém"}
                       badge="ao vivo · câmera"
                       muted
                       volume={transmissionVolumes[volumeKey] ?? 1}
                       onVolumeChange={(volume) => setTransmissionVolume(volumeKey, volume)}
-                      fill={isSingleTile}
+                      fill={isSingleTile || spotlightId === peerId}
+                      className={spotlightId === peerId && !isSingleTile ? "sm:col-span-2 sm:row-span-2" : ""}
                       onRenderedSizeChange={(w, h) => qualityNegotiator.report("camera", peerId, w, h)}
-                      onDoubleClick={() => setFocusedPeerId(peerId)}
+                      onStopWatching={() => stopWatchingCameraPeer(peerId)}
+                      onFocus={() => toggleSpotlight(peerId)}
+                      isSpotlighted={spotlightId === peerId}
+                      onHyperfocus={() => enterHyperfocus(peerId)}
                     />
                   );
                 })}
-                {stoppedEntries.map((peer) => (
+                {visibleStoppedEntries.map((peer) => (
                   <StoppedPeerTile
                     key={`stopped-${peer.id}`}
-                    label={withGuestSuffix(peer.name, peer.isGuest)}
+                    label={<DisplayUserName name={peer.name} isGuest={peer.isGuest} />}
                     fill={isSingleTile}
                     onResume={() => resumeWatchingPeer(peer.id)}
                   />
                 ))}
-                {resumingEntries.map((peer) => (
+                {visibleResumingEntries.map((peer) => (
                   <ResumingPeerTile key={`resuming-${peer.id}`} fill={isSingleTile} />
+                ))}
+                {visibleStoppedCameraEntries.map((peer) => (
+                  <StoppedPeerTile
+                    key={`stopped-camera-${peer.id}`}
+                    label={<DisplayUserName name={peer.name} isGuest={peer.isGuest} />}
+                    fill={isSingleTile}
+                    onResume={() => resumeWatchingCameraPeer(peer.id)}
+                  />
+                ))}
+                {visibleResumingCameraEntries.map((peer) => (
+                  <ResumingPeerTile key={`resuming-camera-${peer.id}`} fill={isSingleTile} />
                 ))}
               </div>
             </>
@@ -1432,6 +1623,12 @@ export function WatchRoom({ handle }: { handle: string }) {
 
           <div className={`${drawerExpanded ? "block" : "hidden"} lg:block`}>
             <div className={`${mobileTab === "participants" ? "block" : "hidden"} lg:block`}>
+              {connectingAudioPeers && (
+                <p className="mb-1 flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-500">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+                  Conectando...
+                </p>
+              )}
               <h2 className="mb-2 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
                 Participantes ({peerCount})
               </h2>
@@ -1440,6 +1637,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                   name={state.name}
                   isSelf
                   isGuest={!state.account}
+                  verified={state.account?.flags?.includes("VERIFIED")}
                   micOn={isMicOn}
                   sharing={isSharing}
                   micStream={localMicStream}
@@ -1451,6 +1649,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                       key={p.id}
                       name={p.name}
                       isGuest={p.isGuest}
+                      verified={p.flags?.includes("VERIFIED")}
                       micOn={p.mic}
                       sharing={p.sharing}
                       micStream={remoteMicStreams[p.id]}
@@ -1458,6 +1657,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                       onToggleMute={() => togglePeerMute(p.id)}
                       volume={peerVolumes[volumeKey] ?? 1}
                       onVolumeChange={(volume) => setPeerVolume(volumeKey, volume)}
+                      connectionLost={micConnectionStates[p.id] === "disconnected"}
                     />
                   );
                 })}
@@ -1470,7 +1670,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                 selfId={state.selfId}
                 selfName={state.name}
                 onSend={(text) => signalingClient.sendChatMessage(text)}
-                onSendGif={(url) => signalingClient.sendGif(url)}
+                onSendGif={state.account ? (url) => signalingClient.sendGif(url) : undefined}
                 blockedMessage={state.chatBlockedMessage}
                 heightClassName="h-[55vh] lg:h-72"
               />
@@ -1480,6 +1680,27 @@ export function WatchRoom({ handle }: { handle: string }) {
           <PartnerCard />
         </aside>
       </div>
+
+      {showCreateAccountModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setShowCreateAccountModal(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-black/10 bg-white p-8 shadow-xl dark:border-white/10 dark:bg-zinc-950"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
+              Criar conta
+            </h2>
+            <CreateAccountForm
+              initialDisplayName={state.name ?? ""}
+              onCancel={() => setShowCreateAccountModal(false)}
+              onSuccess={() => setShowCreateAccountModal(false)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

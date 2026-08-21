@@ -16,7 +16,7 @@ import { VideoTile, StoppedPeerTile, ResumingPeerTile } from "@/components/Video
 import { RemoteAudio } from "@/components/RemoteAudio";
 import { ParticipantRow } from "@/components/ParticipantRow";
 import { ChatPanel } from "@/components/ChatPanel";
-import { withGuestSuffix } from "@/lib/displayName";
+import { DisplayUserName } from "@/components/DisplayUserName";
 import { MdHome } from "react-icons/md";
 
 export function AdminRoomViewer({ handle }: { handle: string }) {
@@ -215,13 +215,13 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
               >
                 {focusedScreenEntries.map(([peerId, stream]) => {
                   const peer = peers.find((p) => p.id === peerId);
-                  const peerName = withGuestSuffix(peer?.name ?? "Alguém", peer?.isGuest);
                   const volumeKey = peer?.userId ?? peerId;
                   return (
                     <VideoTile
                       key={`screen-${peerId}`}
                       stream={stream}
-                      label={peerName}
+                      label={<DisplayUserName name={peer?.name ?? "Alguém"} isGuest={peer?.isGuest} />}
+                      accessibleLabel={peer?.name ?? "Alguém"}
                       badge="ao vivo · tela"
                       muted
                       volume={transmissionVolumes[volumeKey] ?? 1}
@@ -234,13 +234,13 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
                 })}
                 {focusedCameraEntries.map(([peerId, stream]) => {
                   const peer = peers.find((p) => p.id === peerId);
-                  const peerName = withGuestSuffix(peer?.name ?? "Alguém", peer?.isGuest);
                   const volumeKey = peer?.userId ?? peerId;
                   return (
                     <VideoTile
                       key={`camera-${peerId}`}
                       stream={stream}
-                      label={peerName}
+                      label={<DisplayUserName name={peer?.name ?? "Alguém"} isGuest={peer?.isGuest} />}
+                      accessibleLabel={peer?.name ?? "Alguém"}
                       badge="ao vivo · câmera"
                       muted
                       volume={transmissionVolumes[volumeKey] ?? 1}
@@ -254,7 +254,7 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
                 {stoppedScreenEntries.map((peer) => (
                   <StoppedPeerTile
                     key={`stopped-screen-${peer.id}`}
-                    label={withGuestSuffix(peer.name, peer.isGuest)}
+                    label={<DisplayUserName name={peer.name} isGuest={peer.isGuest} />}
                     fill={isSingleTile}
                     onResume={() => resumeWatchingScreenPeer(peer.id)}
                   />
@@ -265,7 +265,7 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
                 {stoppedCameraEntries.map((peer) => (
                   <StoppedPeerTile
                     key={`stopped-camera-${peer.id}`}
-                    label={withGuestSuffix(peer.name, peer.isGuest)}
+                    label={<DisplayUserName name={peer.name} isGuest={peer.isGuest} />}
                     fill={isSingleTile}
                     onResume={() => resumeWatchingCameraPeer(peer.id)}
                   />

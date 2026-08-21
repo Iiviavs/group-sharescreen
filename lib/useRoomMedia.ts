@@ -6,9 +6,11 @@ import { trackEvent } from "./analytics";
 import { iceConfigFor } from "./iceConfig";
 import { captureNoiseSuppressedMic, setGraphSuppressionEnabled, type MicNoiseGraph } from "./rnnoise";
 import {
+  getStoredAutoJoin,
   getStoredForceRelayIce,
   getStoredMicOn,
   getStoredNoiseSuppressionOn,
+  setStoredAutoJoin,
   setStoredForceRelayIce,
   setStoredMicOn,
   setStoredNoiseSuppressionOn,
@@ -226,6 +228,13 @@ function useBroadcastChannel(
   // "Impedir conexões diretas" — see iceConfig.ts's iceConfigFor. Applies to
   // every peer connection this channel opens, sending or receiving.
   forceRelayIce: boolean,
+  // "Entrar em transmissões automaticamente" — when false, a peer's very
+  // first offer for a fresh share (never one we've already decided about)
+  // is declined instead of answered: we tell them to stop (see
+  // stopWatchingPeer) without ever opening a recvPC, and the tile shows a
+  // "click to watch" placeholder instead of connecting on its own. Always
+  // true for mic — this is about screen/camera video, not audio.
+  autoJoin: boolean,
   // Only meaningful for the screen channel — mic never passes this. When it
   // changes while a share is already active, the live track and every
   // current sender get updated in place instead of requiring a restart.
@@ -256,6 +265,15 @@ function useBroadcastChannel(
   useEffect(() => {
     resumingPeersRef.current = resumingPeers;
   }, [resumingPeers]);
+  // Live RTCPeerConnection.connectionState for each peer we're receiving
+  // from — keyed by origin, same as remoteStreams, so a relayed stream's
+  // entry survives under the real broadcaster's id. Absent entirely before
+  // the first recvPC opens for that peer. This is what lets the UI tell
+  // "never connected yet" / "connecting" apart from "was connected, now
+  // isn't" (see WatchRoom's participant list and its "Conectando..." banner).
+  const [recvConnectionStates, setRecvConnectionStates] = useState<
+    Record<string, RTCPeerConnectionState>
+  >({});
   const localStreamRef = useRef<MediaStream | null>(null);
   const sendPCs = useRef<Map<string, RTCPeerConnection>>(new Map());
   const recvPCs = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -271,6 +289,17 @@ function useBroadcastChannel(
   // live value without becoming a dependency of every connection-opening
   // useCallback — same pattern as videoQualityRef.
   const forceRelayIceRef = useRef(forceRelayIce);
+  const autoJoinRef = useRef(autoJoin);
+  useEffect(() => {
+    autoJoinRef.current = autoJoin;
+  }, [autoJoin]);
+  // Peers whose first offer for a fresh share we've already decided about
+  // (declined via the autoJoin gate, or let through normally) — stops that
+  // gate from re-firing on every retry/renegotiation offer from the same
+  // share, which would otherwise decline it forever instead of just once.
+  // Cleared when the peer's share actually ends (closeRecvPCFully) so the
+  // *next* share they start is judged fresh.
+  const autoJoinDecidedRef = useRef<Set<string>>(new Set());
   // Owns one PeerQualityController per sendPC: assigned tier plus learned
   // congestion state. Replaces the old map of per-peer setInterval monitors —
   // telemetry now comes from the single shared mediaStats pump instead of one
@@ -395,6 +424,12 @@ function useBroadcastChannel(
       relaySources.current.delete(origin);
       relays.current.release(origin);
       removeRemoteStream(origin);
+      setRecvConnectionStates((prev) => {
+        if (!(origin in prev)) return prev;
+        const next = { ...prev };
+        delete next[origin];
+        return next;
+      });
     },
     [removeRemoteStream]
   );
@@ -411,6 +446,9 @@ function useBroadcastChannel(
       // their tile — otherwise the periodic re-announce keeps sending quality
       // requests to someone who left, for as long as the room stays open.
       if (channel !== "mic") qualityNegotiator.forget(channel as "screen" | "camera", peerId);
+      // Their share actually ended — the next one they start should be
+      // judged fresh by the autoJoin gate, not treated as a continuation.
+      autoJoinDecidedRef.current.delete(peerId);
     },
     [closeRecvPC, clearStopped, clearResuming, channel]
   );
@@ -756,9 +794,22 @@ function useBroadcastChannel(
       // already-large room is exactly the burst that used to overwhelm the
       // signaling rate limit and leave some viewers' connections stuck.
       openSendPCsStaggered(signalingClient.state.peers.map((peer) => peer.id));
-    } catch {
-      setError(failureMessage);
-      trackEvent(`${eventPrefix}_error`);
+    } catch (err) {
+      // Clicking "share" and then Cancel on the browser's own picker throws
+      // the same NotAllowedError a real OS/browser permission denial does —
+      // there is no reliable way to tell them apart from here. Treating it
+      // as silent is the better trade: a cancel is the overwhelmingly common
+      // case, and surfacing "verifique as permissões" every time someone
+      // just changes their mind was the actual complaint. AbortError covers
+      // the same gesture on browsers that use that name instead.
+      const cancelled =
+        err instanceof DOMException && (err.name === "NotAllowedError" || err.name === "AbortError");
+      if (cancelled) {
+        trackEvent(`${eventPrefix}_cancelled`);
+      } else {
+        setError(failureMessage);
+        trackEvent(`${eventPrefix}_error`);
+      }
     }
   }, [
     capture,
@@ -780,6 +831,7 @@ function useBroadcastChannel(
       const pc = new RTCPeerConnection(iceConfigFor(forceRelayIceRef.current));
       recvPCs.current.set(peerId, pc);
       recvOrigins.current.set(peerId, originId);
+      setRecvConnectionStates((prev) => ({ ...prev, [originId]: pc.connectionState }));
       pc.ontrack = (e) => {
         // Smooth out network jitter for viewers with fluctuating or high-latency
         // connections (absorbs micro-bursts without causing frame freezes).
@@ -818,6 +870,7 @@ function useBroadcastChannel(
       };
       pc.onconnectionstatechange = () => {
         if (recvPCs.current.get(peerId) !== pc) return;
+        setRecvConnectionStates((prev) => ({ ...prev, [originId]: pc.connectionState }));
         if (pc.connectionState === "failed" || pc.connectionState === "closed") {
           closeRecvPC(peerId);
           // Actively ask for a fresh sendPC instead of waiting on the
@@ -852,6 +905,23 @@ function useBroadcastChannel(
       if (data.channel !== channel) return;
       if (data.role === "broadcaster") {
         if (data.kind === "offer" && data.sdp) {
+          // "Entrar em transmissões automaticamente" off: decline this
+          // peer's first offer for a fresh share instead of answering it —
+          // no recvPC ever opens, so no bandwidth is spent on a tile nobody
+          // asked to see yet. stopWatchingPeer both tells them to stop
+          // retrying (mirrors what it does for a deliberate mid-call stop)
+          // and marks the tile "stopped" so the grid shows a resume prompt.
+          // Marked decided *before* calling it so the "stop" signal this
+          // sends doesn't loop back through this same gate.
+          if (
+            channel !== "mic" &&
+            !autoJoinRef.current &&
+            !autoJoinDecidedRef.current.has(from)
+          ) {
+            autoJoinDecidedRef.current.add(from);
+            stopWatchingPeer(from);
+            return;
+          }
           // A fresh offer always comes from a brand-new RTCPeerConnection on
           // the sender's side (this app never renegotiates an existing one
           // in place, including on the failure-triggered retry above) — if
@@ -1069,6 +1139,7 @@ function useBroadcastChannel(
     openSendPCsStaggered,
     closeSendPC,
     closeRecvPC,
+    stopWatchingPeer,
     closeRecvPCFully,
     clearStopped,
     clearResuming,
@@ -1121,6 +1192,7 @@ function useBroadcastChannel(
     source,
     stoppedPeers,
     resumingPeers,
+    recvConnectionStates,
     stopWatchingPeer,
     resumeWatchingPeer,
     // Getters, not values: both maps are written on the signalling hot path,
@@ -1177,6 +1249,19 @@ export function useRoomMedia(room: string) {
       const next = !prev;
       setStoredForceRelayIce(next);
       trackEvent(next ? "force_relay_ice_on" : "force_relay_ice_off");
+      return next;
+    });
+  }, []);
+
+  // "Entrar em transmissões automaticamente" — see mediaPreferences.ts and
+  // useBroadcastChannel's autoJoin gate. Screen/camera only; mic always
+  // auto-connects regardless of this.
+  const [autoJoin, setAutoJoinState] = useState(getStoredAutoJoin);
+  const toggleAutoJoin = useCallback(() => {
+    setAutoJoinState((prev: boolean) => {
+      const next = !prev;
+      setStoredAutoJoin(next);
+      trackEvent(next ? "auto_join_on" : "auto_join_off");
       return next;
     });
   }, []);
@@ -1299,6 +1384,7 @@ export function useRoomMedia(room: string) {
     "Seu navegador não suporta compartilhamento de tela nem câmera.",
     "Não foi possível iniciar o compartilhamento. Verifique as permissões do navegador.",
     forceRelayIce,
+    autoJoin,
     screenQualityPreset
   );
 
@@ -1325,6 +1411,7 @@ export function useRoomMedia(room: string) {
     "Seu navegador não suporta câmera.",
     "Não foi possível iniciar a câmera. Verifique as permissões do navegador.",
     forceRelayIce,
+    autoJoin,
     screenQualityPreset
   );
 
@@ -1416,7 +1503,8 @@ export function useRoomMedia(room: string) {
     () => Boolean(navigator.mediaDevices?.getUserMedia),
     "Seu navegador não suporta microfone.",
     "Não foi possível ativar o microfone. Verifique a permissão do navegador.",
-    forceRelayIce
+    forceRelayIce,
+    true // autoJoin: mic always auto-connects, this setting is screen/camera only
   );
 
   const toggleMic = useCallback(() => {
@@ -1464,6 +1552,10 @@ export function useRoomMedia(room: string) {
     resumingPeers: screen.resumingPeers,
     stopWatchingPeer: screen.stopWatchingPeer,
     resumeWatchingPeer: screen.resumeWatchingPeer,
+    stoppedCameraPeers: camera.stoppedPeers,
+    resumingCameraPeers: camera.resumingPeers,
+    stopWatchingCameraPeer: camera.stopWatchingPeer,
+    resumeWatchingCameraPeer: camera.resumeWatchingPeer,
     shareResolution,
     setShareResolution,
     shareFps,
@@ -1481,12 +1573,20 @@ export function useRoomMedia(room: string) {
 
     forceRelayIce,
     toggleForceRelayIce,
+    autoJoin,
+    toggleAutoJoin,
 
     isMicOn: mic.active,
     toggleMic,
     micError: mic.error,
     localMicStream: mic.localStream,
     remoteMicStreams: mic.remoteStreams,
+    // Per-peer audio recvPC state (origin id -> RTCPeerConnectionState) — the
+    // room isn't fully "connected" the instant signaling joins; each
+    // person's mic audio still needs its own peer connection to come up
+    // first. Drives the "Conectando..." banner and the per-participant
+    // connection-lost dot in WatchRoom.
+    micConnectionStates: mic.recvConnectionStates,
 
     noiseSuppressionOn,
     // Only meaningful once the mic has actually started — before that it's
