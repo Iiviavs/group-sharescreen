@@ -1384,7 +1384,21 @@ export function useRoomMedia(room: string) {
       // No fallback to the camera here — on browsers without getDisplayMedia
       // (most mobile ones) this throws synchronously, which start() below
       // turns into a visible error instead of silently switching sources.
-      return navigator.mediaDevices.getDisplayMedia({ video: videoConstraints, audio: true });
+      // Explicit false on the mic-oriented processing constraints: left
+      // unset, Chrome runs tab/system audio through the same APM pipeline
+      // as a microphone (echo cancellation, noise suppression, AGC), which
+      // mangles music/game audio into something that sounds noise-gated.
+      // Screen/tab audio isn't a voice call, so it should pass through
+      // unprocessed — stereo, uncompressed dynamic range.
+      return navigator.mediaDevices.getDisplayMedia({
+        video: videoConstraints,
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: 2,
+        },
+      });
     },
     () => hasDisplayCapture() || hasCameraCapture(),
     "Seu navegador não suporta compartilhamento de tela nem câmera.",
