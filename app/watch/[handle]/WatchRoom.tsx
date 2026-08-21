@@ -871,7 +871,7 @@ export function WatchRoom({ handle }: { handle: string }) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-4 px-4 text-center">
         <p className="text-lg font-medium text-zinc-900 dark:text-zinc-100">
-          Você foi banido do site. Faz o L
+          Você foi temporariamente banido do site pelo AntiSpam. Faz o L
         </p>
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
           Se você acredita que isso é um engano, abra um ticket em <a
