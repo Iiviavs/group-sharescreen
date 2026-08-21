@@ -97,6 +97,257 @@ function MenuToggleRow({
   );
 }
 
+type RoomMedia = ReturnType<typeof useRoomMedia>;
+
+// The quality dials + live telemetry — shared verbatim between the mobile
+// "Mais opções" dropdown (see WatchRoom below) and the desktop quick-access
+// popover, so there is exactly one copy of this markup to keep in sync
+// instead of two drifting variants of the same controls.
+function QualityControls({
+  smartQualityEnabled,
+  setSmartQualityEnabled,
+  shareProfile,
+  setShareProfile,
+  shareFps,
+  setShareFps,
+  shareResolution,
+  setShareResolution,
+  shareBitrate,
+  setShareBitrate,
+  hasAccount,
+  isSharing,
+  meshCapacity,
+  meshTopology,
+}: Pick<
+  RoomMedia,
+  | "smartQualityEnabled"
+  | "setSmartQualityEnabled"
+  | "shareProfile"
+  | "setShareProfile"
+  | "shareFps"
+  | "setShareFps"
+  | "shareResolution"
+  | "setShareResolution"
+  | "shareBitrate"
+  | "setShareBitrate"
+  | "isSharing"
+  | "meshCapacity"
+  | "meshTopology"
+> & { hasAccount: boolean }) {
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="flex flex-col gap-3">
+        <label className="flex items-start gap-2 rounded-md border border-zinc-200 bg-white p-2 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
+          <input
+            type="checkbox"
+            checked={smartQualityEnabled}
+            onChange={(e) => setSmartQualityEnabled(e.target.checked)}
+            className="mt-0.5 h-3.5 w-3.5 rounded border-zinc-300 dark:border-zinc-700"
+          />
+          <span>
+            <span className="font-medium text-zinc-900 dark:text-zinc-100">
+              Ativar controle inteligente de qualidade
+            </span>
+            <br />
+            Envia para cada pessoa só a qualidade que a tela dela realmente usa — quem
+            está num quadradinho não recebe 1080p à toa. Economiza sua internet e seu
+            processador. As opções abaixo viram o teto.
+          </span>
+        </label>
+
+        <div>
+          <span className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            O que você está compartilhando
+          </span>
+          <div className="grid grid-cols-2 gap-2">
+            {(
+              [
+                { value: "text", label: "Texto / código", hint: "prioriza nitidez" },
+                { value: "motion", label: "Vídeo / jogo", hint: "prioriza fluidez" },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setShareProfile(opt.value)}
+                className={`rounded-md border px-2 py-1.5 text-left text-xs transition ${
+                  shareProfile === opt.value
+                    ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
+                    : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                }`}
+              >
+                <span className="block font-medium">{opt.label}</span>
+                <span className="block opacity-70">{opt.hint}</span>
+              </button>
+            ))}
+          </div>
+          {shareProfile === "text" && shareFps > 60 && (
+            <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">
+              Acima de 60fps, escolha &quot;Vídeo / jogo&quot; — no modo texto o
+              navegador descarta quadros para manter a nitidez.
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label
+            htmlFor="share-resolution"
+            className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400"
+          >
+            Resolução
+          </label>
+          <select
+            id="share-resolution"
+            value={shareResolution}
+            onChange={(e) => setShareResolution(e.target.value as typeof shareResolution)}
+            className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+          >
+            {SHARE_RESOLUTION_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value} disabled={opt.accountOnly && !hasAccount}>
+                {opt.label}
+                {opt.accountOnly && !hasAccount ? " (conta necessária)" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label
+            htmlFor="share-fps"
+            className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400"
+          >
+            Taxa de quadros
+          </label>
+          <select
+            id="share-fps"
+            value={shareFps}
+            onChange={(e) => setShareFps(Number(e.target.value) as typeof shareFps)}
+            className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+          >
+            {SHARE_FPS_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value} disabled={opt.accountOnly && !hasAccount}>
+                {opt.label}
+                {opt.accountOnly && !hasAccount ? " (conta necessária)" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label
+            htmlFor="share-bitrate"
+            className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400"
+          >
+            Bitrate
+          </label>
+          <select
+            id="share-bitrate"
+            value={shareBitrate}
+            onChange={(e) => setShareBitrate(e.target.value as typeof shareBitrate)}
+            className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+          >
+            {SHARE_BITRATE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value} disabled={opt.accountOnly && !hasAccount}>
+                {opt.label}
+                {opt.accountOnly && !hasAccount ? " (conta necessária)" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Live measurements, shown only while actually transmitting. This is
+            what the quality decisions are made from — surfacing it turns "the
+            room is laggy" into something diagnosable instead of a guess. */}
+        {isSharing && meshCapacity.sampledAt > 0 && (
+          <div className="rounded-md border border-zinc-200 bg-white p-2 text-xs text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400">
+            <div className="flex justify-between gap-2">
+              <span>Sua banda de subida</span>
+              <span className="font-medium text-zinc-900 tabular-nums dark:text-zinc-100">
+                {meshCapacity.availableOutgoingKbps > 0
+                  ? `${(meshCapacity.availableOutgoingKbps / 1000).toFixed(1)} Mbps`
+                  : "medindo…"}
+              </span>
+            </div>
+            <div className="flex justify-between gap-2">
+              <span>Em uso agora</span>
+              <span className="font-medium text-zinc-900 tabular-nums dark:text-zinc-100">
+                {(meshCapacity.usedOutgoingKbps / 1000).toFixed(1)} Mbps
+              </span>
+            </div>
+            {meshCapacity.cpuPressure > 0.25 && (
+              <p className="mt-1 text-amber-600 dark:text-amber-500">
+                Seu processador está no limite — baixe a resolução ou os fps.
+              </p>
+            )}
+            {meshTopology.reason && (
+              <p className="mt-1 text-zinc-700 dark:text-zinc-300">{meshTopology.reason}</p>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Same reasoning as QualityControls above: one copy of the "switch room"
+// form, shared between the mobile dropdown and the desktop popover.
+function SwitchRoomFields({
+  switchInput,
+  setSwitchInput,
+  switchIsPrivate,
+  setSwitchIsPrivate,
+  switchError,
+  onSubmit,
+}: {
+  switchInput: string;
+  setSwitchInput: (value: string) => void;
+  switchIsPrivate: boolean;
+  setSwitchIsPrivate: (value: boolean) => void;
+  switchError: string | null;
+  onSubmit: (e: FormEvent) => void;
+}) {
+  return (
+    <form
+      onSubmit={onSubmit}
+      className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-900"
+    >
+      <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+        Nova sala
+      </label>
+      <input
+        autoFocus
+        value={switchInput}
+        onChange={(e) => setSwitchInput(e.target.value)}
+        placeholder="Ex: reuniao-time"
+        className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
+      />
+      <label className="mt-2 flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+        <input
+          type="checkbox"
+          checked={switchIsPrivate}
+          onChange={(e) => setSwitchIsPrivate(e.target.checked)}
+          className="h-3.5 w-3.5 rounded border-zinc-300 dark:border-zinc-700"
+        />
+        Sala privada
+      </label>
+      {switchError && <p className="mt-1 text-xs text-red-500">{switchError}</p>}
+      <button
+        type="submit"
+        disabled={!switchInput.trim()}
+        className="mt-2 w-full rounded-md bg-zinc-950 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+      >
+        Ir para a sala
+      </button>
+      <Link
+        href="/rooms"
+        className="mt-2 block text-center text-xs font-medium text-zinc-500 underline underline-offset-2 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
+      >
+        Ver salas públicas ativas
+      </Link>
+    </form>
+  );
+}
+
 export function WatchRoom({ handle }: { handle: string }) {
   const router = useRouter();
   const state = useSignaling();
@@ -636,10 +887,13 @@ export function WatchRoom({ handle }: { handle: string }) {
                     {isPrivateRoomHandle(handle) ? "Sala privada" : "Sala pública"}
                   </span>
 
+                  {/* Also reachable from the main row on desktop (see the
+                      quick-access group below) — kept here too since mobile
+                      has no room for it outside this menu. */}
                   <button
                     type="button"
                     onClick={handleCopyLink}
-                    className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-left text-sm font-medium transition ${linkCopied
+                    className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-left text-sm font-medium transition sm:hidden ${linkCopied
                       ? "border-emerald-600 text-emerald-600 dark:border-emerald-500 dark:text-emerald-500"
                       : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
                       }`}
@@ -699,184 +953,36 @@ export function WatchRoom({ handle }: { handle: string }) {
                   )}
                   <div className="my-2 border-t border-zinc-200 dark:border-zinc-800" />
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setQualityOpen((q) => !q);
-                    }}
-                    title="Qualidade da transmissão — reduza se a sala estiver travando"
-                    className="rounded-lg px-2 py-2 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                  >
-                    Qualidade: {shareResolution} · {shareFps}fps
-                  </button>
-
-                  {qualityOpen && (
-                    <div className="mx-2 mb-1 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900">
-                      <div className="flex flex-col gap-3">
-                        <label className="flex items-start gap-2 rounded-md border border-zinc-200 bg-white p-2 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
-                          <input
-                            type="checkbox"
-                            checked={smartQualityEnabled}
-                            onChange={(e) => setSmartQualityEnabled(e.target.checked)}
-                            className="mt-0.5 h-3.5 w-3.5 rounded border-zinc-300 dark:border-zinc-700"
-                          />
-                          <span>
-                            <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                              Ativar controle inteligente de qualidade
-                            </span>
-                            <br />
-                            Envia para cada pessoa só a qualidade que a tela dela realmente usa — quem
-                            está num quadradinho não recebe 1080p à toa. Economiza sua internet e seu
-                            processador. As opções abaixo viram o teto.
-                          </span>
-                        </label>
-
-                        <div>
-                          <span className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                            O que você está compartilhando
-                          </span>
-                          <div className="grid grid-cols-2 gap-2">
-                            {(
-                              [
-                                { value: "text", label: "Texto / código", hint: "prioriza nitidez" },
-                                { value: "motion", label: "Vídeo / jogo", hint: "prioriza fluidez" },
-                              ] as const
-                            ).map((opt) => (
-                              <button
-                                key={opt.value}
-                                type="button"
-                                onClick={() => setShareProfile(opt.value)}
-                                className={`rounded-md border px-2 py-1.5 text-left text-xs transition ${
-                                  shareProfile === opt.value
-                                    ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
-                                    : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                                }`}
-                              >
-                                <span className="block font-medium">{opt.label}</span>
-                                <span className="block opacity-70">{opt.hint}</span>
-                              </button>
-                            ))}
-                          </div>
-                          {shareProfile === "text" && shareFps > 60 && (
-                            <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">
-                              Acima de 60fps, escolha &quot;Vídeo / jogo&quot; — no modo texto o
-                              navegador descarta quadros para manter a nitidez.
-                            </p>
-                          )}
-                        </div>
-
-                        <div>
-                          <label
-                            htmlFor="share-resolution"
-                            className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400"
-                          >
-                            Resolução
-                          </label>
-                          <select
-                            id="share-resolution"
-                            value={shareResolution}
-                            onChange={(e) => setShareResolution(e.target.value as typeof shareResolution)}
-                            className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-                          >
-                            {SHARE_RESOLUTION_OPTIONS.map((opt) => (
-                              <option
-                                key={opt.value}
-                                value={opt.value}
-                                disabled={opt.accountOnly && !state.account}
-                              >
-                                {opt.label}
-                                {opt.accountOnly && !state.account ? " (conta necessária)" : ""}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div>
-                          <label
-                            htmlFor="share-fps"
-                            className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400"
-                          >
-                            Taxa de quadros
-                          </label>
-                          <select
-                            id="share-fps"
-                            value={shareFps}
-                            onChange={(e) => setShareFps(Number(e.target.value) as typeof shareFps)}
-                            className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-                          >
-                            {SHARE_FPS_OPTIONS.map((opt) => (
-                              <option
-                                key={opt.value}
-                                value={opt.value}
-                                disabled={opt.accountOnly && !state.account}
-                              >
-                                {opt.label}
-                                {opt.accountOnly && !state.account ? " (conta necessária)" : ""}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div>
-                          <label
-                            htmlFor="share-bitrate"
-                            className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400"
-                          >
-                            Bitrate
-                          </label>
-                          <select
-                            id="share-bitrate"
-                            value={shareBitrate}
-                            onChange={(e) => setShareBitrate(e.target.value as typeof shareBitrate)}
-                            className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-                          >
-                            {SHARE_BITRATE_OPTIONS.map((opt) => (
-                              <option
-                                key={opt.value}
-                                value={opt.value}
-                                disabled={opt.accountOnly && !state.account}
-                              >
-                                {opt.label}
-                                {opt.accountOnly && !state.account ? " (conta necessária)" : ""}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        {/* Live measurements, shown only while actually
-                            transmitting. This is what the quality decisions
-                            are made from — surfacing it turns "the room is
-                            laggy" into something diagnosable instead of a
-                            guess. */}
-                        {isSharing && meshCapacity.sampledAt > 0 && (
-                          <div className="rounded-md border border-zinc-200 bg-white p-2 text-xs text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400">
-                            <div className="flex justify-between gap-2">
-                              <span>Sua banda de subida</span>
-                              <span className="font-medium text-zinc-900 tabular-nums dark:text-zinc-100">
-                                {meshCapacity.availableOutgoingKbps > 0
-                                  ? `${(meshCapacity.availableOutgoingKbps / 1000).toFixed(1)} Mbps`
-                                  : "medindo…"}
-                              </span>
-                            </div>
-                            <div className="flex justify-between gap-2">
-                              <span>Em uso agora</span>
-                              <span className="font-medium text-zinc-900 tabular-nums dark:text-zinc-100">
-                                {(meshCapacity.usedOutgoingKbps / 1000).toFixed(1)} Mbps
-                              </span>
-                            </div>
-                            {meshCapacity.cpuPressure > 0.25 && (
-                              <p className="mt-1 text-amber-600 dark:text-amber-500">
-                                Seu processador está no limite — baixe a resolução ou os fps.
-                              </p>
-                            )}
-                            {meshTopology.reason && (
-                              <p className="mt-1 text-zinc-700 dark:text-zinc-300">{meshTopology.reason}</p>
-                            )}
-                          </div>
-                        )}
+                  <div className="sm:hidden">
+                    <button
+                      type="button"
+                      onClick={() => setQualityOpen((q) => !q)}
+                      title="Qualidade da transmissão — reduza se a sala estiver travando"
+                      className="rounded-lg px-2 py-2 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                    >
+                      Qualidade: {shareResolution} · {shareFps}fps
+                    </button>
+                    {qualityOpen && (
+                      <div className="mx-2 mb-1">
+                        <QualityControls
+                          smartQualityEnabled={smartQualityEnabled}
+                          setSmartQualityEnabled={setSmartQualityEnabled}
+                          shareProfile={shareProfile}
+                          setShareProfile={setShareProfile}
+                          shareFps={shareFps}
+                          setShareFps={setShareFps}
+                          shareResolution={shareResolution}
+                          setShareResolution={setShareResolution}
+                          shareBitrate={shareBitrate}
+                          setShareBitrate={setShareBitrate}
+                          hasAccount={Boolean(state.account)}
+                          isSharing={isSharing}
+                          meshCapacity={meshCapacity}
+                          meshTopology={meshTopology}
+                        />
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
 
                   {/* A logged-in account's room name is locked server-side
                       to its account record (see server/signaling.ts's
@@ -930,53 +1036,27 @@ export function WatchRoom({ handle }: { handle: string }) {
 
                   <div className="my-2 border-t border-zinc-200 dark:border-zinc-800" />
 
-                  <button
-                    type="button"
-                    onClick={() => setSwitching((s) => !s)}
-                    className="rounded-lg px-2 py-2 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                  >
-                    Trocar de sala
-                  </button>
-                  {switching && (
-                    <form
-                      onSubmit={handleSwitchSubmit}
-                      className="mx-2 mb-1 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900"
+                  <div className="sm:hidden">
+                    <button
+                      type="button"
+                      onClick={() => setSwitching((s) => !s)}
+                      className="rounded-lg px-2 py-2 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
                     >
-                      <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                        Nova sala
-                      </label>
-                      <input
-                        autoFocus
-                        value={switchInput}
-                        onChange={(e) => setSwitchInput(e.target.value)}
-                        placeholder="Ex: reuniao-time"
-                        className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
-                      />
-                      <label className="mt-2 flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-                        <input
-                          type="checkbox"
-                          checked={switchIsPrivate}
-                          onChange={(e) => setSwitchIsPrivate(e.target.checked)}
-                          className="h-3.5 w-3.5 rounded border-zinc-300 dark:border-zinc-700"
+                      Trocar de sala
+                    </button>
+                    {switching && (
+                      <div className="mx-2 mb-1">
+                        <SwitchRoomFields
+                          switchInput={switchInput}
+                          setSwitchInput={setSwitchInput}
+                          switchIsPrivate={switchIsPrivate}
+                          setSwitchIsPrivate={setSwitchIsPrivate}
+                          switchError={switchError}
+                          onSubmit={handleSwitchSubmit}
                         />
-                        Sala privada
-                      </label>
-                      {switchError && <p className="mt-1 text-xs text-red-500">{switchError}</p>}
-                      <button
-                        type="submit"
-                        disabled={!switchInput.trim()}
-                        className="mt-2 w-full rounded-md bg-zinc-950 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
-                      >
-                        Ir para a sala
-                      </button>
-                      <Link
-                        href="/rooms"
-                        className="mt-2 block text-center text-xs font-medium text-zinc-500 underline underline-offset-2 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
-                      >
-                        Ver salas públicas ativas
-                      </Link>
-                    </form>
-                  )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </>
             )}
@@ -987,6 +1067,94 @@ export function WatchRoom({ handle }: { handle: string }) {
             they're the ones actually used mid-call, not just once at setup.
             Mute-mics sits immediately right of the mic toggle on purpose. */}
         <div className="mt-2.5 flex flex-wrap items-center justify-end gap-2 sm:mt-3">
+          {/* Desktop only (hidden below sm) — on a phone these three still
+              live inside "Mais opções" (see above), the only place with
+              room for them. Above that width there's space to skip the
+              extra tap, so they get their own quick-access spot right next
+              to mic/transmit instead. */}
+          <div className="hidden items-center gap-2 border-r border-zinc-300 pr-2 dark:border-zinc-700 sm:flex">
+            <button
+              type="button"
+              onClick={handleCopyLink}
+              title={linkCopied ? "Link copiado!" : "Compartilhar sala"}
+              className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${linkCopied
+                ? "border-emerald-600 text-emerald-600 dark:border-emerald-500 dark:text-emerald-500"
+                : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                }`}
+            >
+              {linkCopied ? <CheckIcon className="h-4 w-4" /> : <LinkIcon className="h-4 w-4" />}
+              {linkCopied ? "Copiado!" : "Compartilhar sala"}
+            </button>
+
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setQualityOpen((q) => !q)}
+                aria-expanded={qualityOpen}
+                title="Qualidade da transmissão — reduza se a sala estiver travando"
+                className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${qualityOpen
+                  ? "border-zinc-400 bg-zinc-100 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                  : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                  }`}
+              >
+                Qualidade: {shareResolution} · {shareFps}fps
+              </button>
+              {qualityOpen && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setQualityOpen(false)} />
+                  <div className="absolute right-0 top-full z-40 mt-2 w-80">
+                    <QualityControls
+                      smartQualityEnabled={smartQualityEnabled}
+                      setSmartQualityEnabled={setSmartQualityEnabled}
+                      shareProfile={shareProfile}
+                      setShareProfile={setShareProfile}
+                      shareFps={shareFps}
+                      setShareFps={setShareFps}
+                      shareResolution={shareResolution}
+                      setShareResolution={setShareResolution}
+                      shareBitrate={shareBitrate}
+                      setShareBitrate={setShareBitrate}
+                      hasAccount={Boolean(state.account)}
+                      isSharing={isSharing}
+                      meshCapacity={meshCapacity}
+                      meshTopology={meshTopology}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setSwitching((s) => !s)}
+                aria-expanded={switching}
+                title="Trocar de sala"
+                className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${switching
+                  ? "border-zinc-400 bg-zinc-100 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                  : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                  }`}
+              >
+                Trocar de sala
+              </button>
+              {switching && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setSwitching(false)} />
+                  <div className="absolute right-0 top-full z-40 mt-2 w-72">
+                    <SwitchRoomFields
+                      switchInput={switchInput}
+                      setSwitchInput={setSwitchInput}
+                      switchIsPrivate={switchIsPrivate}
+                      setSwitchIsPrivate={setSwitchIsPrivate}
+                      switchError={switchError}
+                      onSubmit={handleSwitchSubmit}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
           <button
             type="button"
             onClick={toggleMic}
