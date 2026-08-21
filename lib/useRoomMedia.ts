@@ -10,10 +10,14 @@ import {
   getStoredForceRelayIce,
   getStoredMicOn,
   getStoredNoiseSuppressionOn,
+  getStoredMicDeviceId,
+  getStoredSpeakerDeviceId,
   setStoredAutoJoin,
   setStoredForceRelayIce,
   setStoredMicOn,
   setStoredNoiseSuppressionOn,
+  setStoredMicDeviceId,
+  setStoredSpeakerDeviceId,
 } from "./mediaPreferences";
 import {
   BEST_TIER,
@@ -85,7 +89,7 @@ export type ShareResolution = "1440p" | "1080p" | "720p" | "480p" | "360p";
 export type ShareFps = 15 | 24 | 30 | 60 | 120;
 // "ultra" is account-only — see SHARE_BITRATE_OPTIONS' `accountOnly` flag
 // and its doc comment above ShareResolution/ShareFps for the same pattern.
-export type ShareBitrate = "low" | "medium" | "high" | "ultra";
+export type ShareBitrate = "low" | "medium" | "high" | "ultra" | "maximo";
 
 type QualityPreset = {
   width: number;
@@ -124,6 +128,7 @@ const BITRATE_CEILING_TIER: Record<ShareBitrate, QualityTier> = {
   medium: "720p30",
   high: "1080p30",
   ultra: "1080p60",
+  maximo: "1080p60"
 };
 
 // The peer-count throttle tables that used to live here are gone on purpose.
@@ -163,7 +168,8 @@ export const SHARE_BITRATE_OPTIONS: { value: ShareBitrate; label: string; accoun
   { value: "low", label: "Bitrate baixo (~700 kbps)" },
   { value: "medium", label: "Bitrate médio (~2 Mbps)" },
   { value: "high", label: "Bitrate alto (~4 Mbps)" },
-  { value: "ultra", label: "Bitrate ultra (~8 Mbps)", accountOnly: true },
+  { value: "ultra", label: "Bitrate ultra (~8 Mbps)" },
+  { value: "maximo", label: "Bitrate maximo (~16 Mbps)" },
 ];
 
 // Codec preference. VP9 first for text-heavy screen content (its screen
@@ -1489,13 +1495,25 @@ export function useRoomMedia(room: string) {
   const micGraphRef = useRef<MicNoiseGraph | null>(null);
   const [noiseSuppressionAvailable, setNoiseSuppressionAvailable] = useState(true);
 
+  // Same "ref mirrors state, for the capture closure" pattern as
+  // noiseSuppressionOnRef above — useBroadcastChannel only calls this start
+  // callback once per mic start, so a captured `const` would go stale if the
+  // user switches input device without restarting the mic.
+  const micDeviceIdRef = useRef<string | null>(getStoredMicDeviceId());
+  const [micDeviceId, setMicDeviceIdState] = useState<string | null>(() => getStoredMicDeviceId());
+  const [speakerDeviceId, setSpeakerDeviceIdState] = useState<string | null>(() => getStoredSpeakerDeviceId());
+
   const mic = useBroadcastChannel(
     "mic",
     room,
     async () => {
-      const { stream, graph } = await captureNoiseSuppressedMic(noiseSuppressionOnRef.current, () => {
-        micGraphRef.current = null;
-      });
+      const { stream, graph } = await captureNoiseSuppressedMic(
+        noiseSuppressionOnRef.current,
+        () => {
+          micGraphRef.current = null;
+        },
+        micDeviceIdRef.current
+      );
       micGraphRef.current = graph;
       setNoiseSuppressionAvailable(graph !== null);
       return stream;
@@ -1513,6 +1531,28 @@ export function useRoomMedia(room: string) {
     if (mic.active) mic.stop();
     else mic.start();
   }, [mic]);
+
+  // Switches the input device the mic captures from. If the mic is live
+  // right now, restarts the capture (stop, then start) so the new device
+  // actually takes effect — same trade-off phone/desktop call apps make,
+  // a brief drop beats silently continuing to broadcast the old device.
+  const setMicDevice = useCallback(
+    (deviceId: string | null) => {
+      micDeviceIdRef.current = deviceId;
+      setMicDeviceIdState(deviceId);
+      setStoredMicDeviceId(deviceId);
+      if (mic.active) {
+        mic.stop();
+        mic.start();
+      }
+    },
+    [mic]
+  );
+
+  const setSpeakerDevice = useCallback((deviceId: string | null) => {
+    setSpeakerDeviceIdState(deviceId);
+    setStoredSpeakerDeviceId(deviceId);
+  }, []);
 
   // Restores a returning visitor's mic-on preference — fires on mount and
   // again after a room switch (the mic itself always stops on a room
@@ -1587,6 +1627,10 @@ export function useRoomMedia(room: string) {
     // first. Drives the "Conectando..." banner and the per-participant
     // connection-lost dot in WatchRoom.
     micConnectionStates: mic.recvConnectionStates,
+    micDeviceId,
+    setMicDevice,
+    speakerDeviceId,
+    setSpeakerDevice,
 
     noiseSuppressionOn,
     // Only meaningful once the mic has actually started — before that it's

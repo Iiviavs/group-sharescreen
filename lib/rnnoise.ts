@@ -52,9 +52,14 @@ export type MicCaptureResult = {
 // up — a noisy call still beats no call at all.
 export async function captureNoiseSuppressedMic(
   suppressionEnabled: boolean,
-  onGraphEnded?: () => void
+  onGraphEnded?: () => void,
+  // Null/undefined captures the system default input, same as before this
+  // param existed.
+  deviceId?: string | null
 ): Promise<MicCaptureResult> {
-  const rawStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const rawStream = await navigator.mediaDevices.getUserMedia({
+    audio: deviceId ? { deviceId: { exact: deviceId } } : true,
+  });
 
   if (typeof window === "undefined" || typeof AudioWorkletNode === "undefined") {
     return { stream: rawStream, graph: null };

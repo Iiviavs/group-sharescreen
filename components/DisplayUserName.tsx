@@ -32,7 +32,7 @@ export function DisplayUserName({
           className="ml-1 inline h-5.5 w-5.5 shrink-0 align-text-top text-blue-500"
         />
       )}
-      {isGuest && <span className="font-normal text-zinc-500"> (guest)</span>}
+      {isGuest && <span className="font-normal text-zinc-500">(guest)</span>}
       {connectionLost && (
         <span
           title="Conexão perdida com essa pessoa — tentando reconectar"

@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type FormEvent,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signalingClient } from "@/lib/signalingClient";
@@ -19,6 +27,7 @@ import { useRoomSoundEffects } from "@/lib/useRoomSoundEffects";
 import { getSoundEffectsEnabled, setSoundEffectsEnabled } from "@/lib/soundEffects";
 import { qualityNegotiator } from "@/lib/qualityNegotiation";
 import { TURN_CONFIGURED } from "@/lib/iceConfig";
+import { useMediaDevices } from "@/lib/useMediaDevices";
 import {
   getStoredMicsMuted,
   setStoredMicsMuted,
@@ -51,10 +60,12 @@ import {
   SpeakerMuteIcon,
   MoreIcon,
   ChevronUpIcon,
+  ChevronDownIcon,
   EyeIcon,
   EyeOffIcon,
 } from "@/components/icons";
 import { MdHome } from "react-icons/md";
+import { BsGearFill } from "react-icons/bs";
 
 // Mirrors server/signaling.ts's HANDLE_RE — must match exactly, or a name
 // this lets through but the server rejects lands the user in a dead room
@@ -98,6 +109,32 @@ function MenuToggleRow({
       >
         {active ? activeIcon : inactiveIcon}
       </span>
+    </button>
+  );
+}
+
+// One row in the mic/speaker device-picker popovers (see the split buttons
+// next to the mic and mics-muted controls below).
+function DeviceMenuOption({
+  label,
+  selected,
+  onClick,
+}: {
+  label: string;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm transition ${selected
+        ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
+        : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+        }`}
+    >
+      <span className="truncate">{label}</span>
+      {selected && <CheckIcon className="h-4 w-4 shrink-0" />}
     </button>
   );
 }
@@ -294,6 +331,74 @@ function QualityControls({
   );
 }
 
+// A "Compartilhar tela"/"Compartilhar câmera" button with a small chevron
+// glued to its left — same split-button shape as the mic/speaker device
+// pickers — that opens the same QualityControls panel used elsewhere, so
+// the quality dials are reachable right where a share is started instead of
+// only from the separate "Qualidade" quick-access button.
+function ShareButtonWithQuality({
+  label,
+  onClick,
+  disabled = false,
+  open,
+  setOpen,
+  quality,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  open: boolean;
+  setOpen: Dispatch<SetStateAction<boolean>>;
+  quality: Pick<
+    RoomMedia,
+    | "smartQualityEnabled"
+    | "setSmartQualityEnabled"
+    | "shareProfile"
+    | "setShareProfile"
+    | "shareFps"
+    | "setShareFps"
+    | "shareResolution"
+    | "setShareResolution"
+    | "shareBitrate"
+    | "setShareBitrate"
+    | "isSharing"
+    | "meshCapacity"
+    | "meshTopology"
+  > & { hasAccount: boolean };
+}) {
+  return (
+    <div className="relative flex items-stretch">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        disabled={disabled}
+        title="Qualidade da transmissão"
+        aria-label="Qualidade da transmissão"
+        className="rounded-l-lg border-r border-black/15 bg-emerald-600 px-1 text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <BsGearFill className="h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        className="rounded-r-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {label}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full z-40 mt-2 w-80 max-w-[calc(100vw-2rem)]">
+            <QualityControls {...quality} />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // Same reasoning as QualityControls above: one copy of the "switch room"
 // form, shared between the mobile dropdown and the desktop popover.
 function SwitchRoomFields({
@@ -401,6 +506,10 @@ export function WatchRoom({ handle }: { handle: string }) {
     localMicStream,
     remoteMicStreams,
     micConnectionStates,
+    micDeviceId,
+    setMicDevice,
+    speakerDeviceId,
+    setSpeakerDevice,
     noiseSuppressionOn,
     noiseSuppressionAvailable,
     toggleNoiseSuppression,
@@ -436,6 +545,11 @@ export function WatchRoom({ handle }: { handle: string }) {
   const [renameInput, setRenameInput] = useState("");
   const [qualityOpen, setQualityOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [micDeviceMenuOpen, setMicDeviceMenuOpen] = useState(false);
+  const [speakerDeviceMenuOpen, setSpeakerDeviceMenuOpen] = useState(false);
+  const { mics: micDevices, speakers: speakerDevices, canSelectSpeaker } = useMediaDevices();
+  const [screenShareQualityOpen, setScreenShareQualityOpen] = useState(false);
+  const [cameraShareQualityOpen, setCameraShareQualityOpen] = useState(false);
   // "Focar": grows one tile and shrinks the rest without touching any
   // connection — see the grid render below, which gives this id's tile a
   // 2x2 grid span instead of hiding everyone else.
@@ -539,6 +653,8 @@ export function WatchRoom({ handle }: { handle: string }) {
     setRenaming(false);
     setSwitching(false);
     setQualityOpen(false);
+    setScreenShareQualityOpen(false);
+    setCameraShareQualityOpen(false);
   }
 
   async function handleCopyLink() {
@@ -928,6 +1044,26 @@ export function WatchRoom({ handle }: { handle: string }) {
     else enterHyperfocus(id);
   }
 
+  // Shared prop bundle for every QualityControls instance on this page (the
+  // desktop quick-access popover and the two share-button pickers below) —
+  // built once so the three call sites can't quietly drift out of sync.
+  const qualityControlsProps = {
+    smartQualityEnabled,
+    setSmartQualityEnabled,
+    shareProfile,
+    setShareProfile,
+    shareFps,
+    setShareFps,
+    shareResolution,
+    setShareResolution,
+    shareBitrate,
+    setShareBitrate,
+    hasAccount: Boolean(state.account),
+    isSharing,
+    meshCapacity,
+    meshTopology,
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-zinc-50 dark:bg-black">
       <header className="border-b border-black/10 px-3 py-2.5 dark:border-white/10 sm:px-4 sm:py-3">
@@ -1080,22 +1216,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                     </button>
                     {qualityOpen && (
                       <div className="mx-2 mb-1">
-                        <QualityControls
-                          smartQualityEnabled={smartQualityEnabled}
-                          setSmartQualityEnabled={setSmartQualityEnabled}
-                          shareProfile={shareProfile}
-                          setShareProfile={setShareProfile}
-                          shareFps={shareFps}
-                          setShareFps={setShareFps}
-                          shareResolution={shareResolution}
-                          setShareResolution={setShareResolution}
-                          shareBitrate={shareBitrate}
-                          setShareBitrate={setShareBitrate}
-                          hasAccount={Boolean(state.account)}
-                          isSharing={isSharing}
-                          meshCapacity={meshCapacity}
-                          meshTopology={meshTopology}
-                        />
+                        <QualityControls {...qualityControlsProps} />
                       </div>
                     )}
                   </div>
@@ -1201,45 +1322,6 @@ export function WatchRoom({ handle }: { handle: string }) {
               {linkCopied ? <CheckIcon className="h-4 w-4" /> : <LinkIcon className="h-4 w-4" />}
               {linkCopied ? "Copiado!" : "Compartilhar sala"}
             </button>
-
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setQualityOpen((q) => !q)}
-                aria-expanded={qualityOpen}
-                title="Qualidade da transmissão — reduza se a sala estiver travando"
-                className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${qualityOpen
-                  ? "border-zinc-400 bg-zinc-100 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-                  : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                  }`}
-              >
-                Qualidade: {shareResolution} · {shareFps}fps
-              </button>
-              {qualityOpen && (
-                <>
-                  <div className="fixed inset-0 z-30" onClick={() => setQualityOpen(false)} />
-                  <div className="absolute right-0 top-full z-40 mt-2 w-80">
-                    <QualityControls
-                      smartQualityEnabled={smartQualityEnabled}
-                      setSmartQualityEnabled={setSmartQualityEnabled}
-                      shareProfile={shareProfile}
-                      setShareProfile={setShareProfile}
-                      shareFps={shareFps}
-                      setShareFps={setShareFps}
-                      shareResolution={shareResolution}
-                      setShareResolution={setShareResolution}
-                      shareBitrate={shareBitrate}
-                      setShareBitrate={setShareBitrate}
-                      hasAccount={Boolean(state.account)}
-                      isSharing={isSharing}
-                      meshCapacity={meshCapacity}
-                      meshTopology={meshTopology}
-                    />
-                  </div>
-                </>
-              )}
-            </div>
-
             <div className="relative">
               <button
                 type="button"
@@ -1271,31 +1353,111 @@ export function WatchRoom({ handle }: { handle: string }) {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={toggleMic}
-            title={isMicOn ? "Desativar microfone" : "Ativar microfone"}
-            aria-label={isMicOn ? "Desativar microfone" : "Ativar microfone"}
-            className={`rounded-lg p-2 text-white transition ${isMicOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
-              }`}
-          >
-            {isMicOn ? <MicIcon className="h-5 w-5" /> : <MicOffIcon className="h-5 w-5" />}
-          </button>
-
-          <button
-            type="button"
-            onClick={toggleMicsMuted}
-            title={micsMuted ? "Reativar microfones" : "Silenciar microfones"}
-            aria-label={micsMuted ? "Reativar microfones" : "Silenciar microfones"}
-            className={`rounded-lg p-2 text-white transition ${micsMuted ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
-              }`}
-          >
-            {micsMuted ? (
-              <HeadphonesOffIcon className="h-5 w-5" />
-            ) : (
-              <HeadphonesIcon className="h-5 w-5" />
+          <div className="relative flex items-stretch">
+            <button
+              type="button"
+              onClick={() => setMicDeviceMenuOpen((o) => !o)}
+              aria-expanded={micDeviceMenuOpen}
+              title="Escolher microfone"
+              aria-label="Escolher microfone"
+              className={`rounded-l-lg border-r border-black/15 px-1 text-white transition ${isMicOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
+                }`}
+            >
+              <ChevronDownIcon className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={toggleMic}
+              title={isMicOn ? "Desativar microfone" : "Ativar microfone"}
+              aria-label={isMicOn ? "Desativar microfone" : "Ativar microfone"}
+              className={`rounded-r-lg p-2 text-white transition ${isMicOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
+                }`}
+            >
+              {isMicOn ? <MicIcon className="h-5 w-5" /> : <MicOffIcon className="h-5 w-5" />}
+            </button>
+            {micDeviceMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setMicDeviceMenuOpen(false)} />
+                <div className="absolute left-0 top-full z-40 mt-2 w-64 rounded-lg border border-zinc-300 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+                  <DeviceMenuOption
+                    label="Padrão do sistema"
+                    selected={micDeviceId === null}
+                    onClick={() => {
+                      setMicDevice(null);
+                      setMicDeviceMenuOpen(false);
+                    }}
+                  />
+                  {micDevices.map((d) => (
+                    <DeviceMenuOption
+                      key={d.deviceId}
+                      label={d.label}
+                      selected={micDeviceId === d.deviceId}
+                      onClick={() => {
+                        setMicDevice(d.deviceId);
+                        setMicDeviceMenuOpen(false);
+                      }}
+                    />
+                  ))}
+                </div>
+              </>
             )}
-          </button>
+          </div>
+
+          <div className="relative flex items-stretch">
+            {canSelectSpeaker && (
+              <button
+                type="button"
+                onClick={() => setSpeakerDeviceMenuOpen((o) => !o)}
+                aria-expanded={speakerDeviceMenuOpen}
+                title="Escolher saída de áudio"
+                aria-label="Escolher saída de áudio"
+                className={`rounded-l-lg border-r border-black/15 px-1 text-white transition ${micsMuted ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
+                  }`}
+              >
+                <ChevronDownIcon className="h-3.5 w-3.5" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={toggleMicsMuted}
+              title={micsMuted ? "Reativar microfones" : "Silenciar microfones"}
+              aria-label={micsMuted ? "Reativar microfones" : "Silenciar microfones"}
+              className={`p-2 text-white transition ${canSelectSpeaker ? "rounded-r-lg" : "rounded-lg"} ${micsMuted ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
+                }`}
+            >
+              {micsMuted ? (
+                <HeadphonesOffIcon className="h-5 w-5" />
+              ) : (
+                <HeadphonesIcon className="h-5 w-5" />
+              )}
+            </button>
+            {speakerDeviceMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setSpeakerDeviceMenuOpen(false)} />
+                <div className="absolute left-0 top-full z-40 mt-2 w-64 rounded-lg border border-zinc-300 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+                  <DeviceMenuOption
+                    label="Padrão do sistema"
+                    selected={speakerDeviceId === null}
+                    onClick={() => {
+                      setSpeakerDevice(null);
+                      setSpeakerDeviceMenuOpen(false);
+                    }}
+                  />
+                  {speakerDevices.map((d) => (
+                    <DeviceMenuOption
+                      key={d.deviceId}
+                      label={d.label}
+                      selected={speakerDeviceId === d.deviceId}
+                      onClick={() => {
+                        setSpeakerDevice(d.deviceId);
+                        setSpeakerDeviceMenuOpen(false);
+                      }}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
 
           {isSharing ? (
             <div className="flex flex-wrap items-center gap-2 border-l border-zinc-300 pl-2 dark:border-zinc-700">
@@ -1320,32 +1482,32 @@ export function WatchRoom({ handle }: { handle: string }) {
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-2 border-l border-zinc-300 pl-2 dark:border-zinc-700">
-              <button
-                type="button"
+              <ShareButtonWithQuality
+                label="Compartilhar tela"
                 onClick={() => startShare("display")}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
-              >
-                Compartilhar tela
-              </button>
-              <button
-                type="button"
+                open={screenShareQualityOpen}
+                setOpen={setScreenShareQualityOpen}
+                quality={qualityControlsProps}
+              />
+              <ShareButtonWithQuality
+                label="Compartilhar câmera"
                 onClick={() => startCameraShare()}
                 disabled={screenShareMode === "unsupported"}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Compartilhar câmera
-              </button>
+                open={cameraShareQualityOpen}
+                setOpen={setCameraShareQualityOpen}
+                quality={qualityControlsProps}
+              />
             </div>
           )}
           {isSharing && (!localStream || !localCameraStream) && (
-            <button
-              type="button"
+            <ShareButtonWithQuality
+              label={localStream ? "Compartilhar câmera" : "Compartilhar tela"}
               onClick={localStream ? () => startCameraShare() : () => startShare("display")}
               disabled={!localStream && screenShareMode === "unsupported"}
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {localStream ? "Compartilhar câmera" : "Compartilhar tela"}
-            </button>
+              open={localStream ? cameraShareQualityOpen : screenShareQualityOpen}
+              setOpen={localStream ? setCameraShareQualityOpen : setScreenShareQualityOpen}
+              quality={qualityControlsProps}
+            />
           )}
         </div>
       </header>
@@ -1401,6 +1563,7 @@ export function WatchRoom({ handle }: { handle: string }) {
             stream={stream}
             muted={micsMuted || mutedPeerIds.has(peerId)}
             volume={peerVolumes[volumeKey] ?? 1}
+            sinkId={speakerDeviceId}
           />
         );
       })}

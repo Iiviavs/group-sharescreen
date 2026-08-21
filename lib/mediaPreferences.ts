@@ -8,6 +8,8 @@ const MICS_MUTED_KEY = "sharescreen:micsMuted";
 const FORCE_RELAY_ICE_KEY = "sharescreen:forceRelayIce";
 const GUEST_ACCOUNT_BANNER_DISMISSED_KEY = "sharescreen:guestAccountBannerDismissed";
 const AUTO_JOIN_KEY = "sharescreen:autoJoin";
+const MIC_DEVICE_ID_KEY = "sharescreen:micDeviceId";
+const SPEAKER_DEVICE_ID_KEY = "sharescreen:speakerDeviceId";
 
 function getStoredBoolean(key: string, fallback: boolean): boolean {
   if (typeof window === "undefined") return fallback;
@@ -138,4 +140,40 @@ export function getStoredAutoJoin(): boolean {
 }
 export function setStoredAutoJoin(value: boolean) {
   setStoredBoolean(AUTO_JOIN_KEY, value);
+}
+
+function getStoredString(key: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function setStoredString(key: string, value: string | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (value === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, value);
+  } catch {
+    // ignored - localStorage may be unavailable (private mode, quota, etc.)
+  }
+}
+
+// Chosen input/output device ids for the mic-source and audio-output device
+// pickers — null means "system default". Persisted so a returning visitor's
+// picked mic/speaker carries over like the rest of their media setup.
+export function getStoredMicDeviceId(): string | null {
+  return getStoredString(MIC_DEVICE_ID_KEY);
+}
+export function setStoredMicDeviceId(value: string | null) {
+  setStoredString(MIC_DEVICE_ID_KEY, value);
+}
+
+export function getStoredSpeakerDeviceId(): string | null {
+  return getStoredString(SPEAKER_DEVICE_ID_KEY);
+}
+export function setStoredSpeakerDeviceId(value: string | null) {
+  setStoredString(SPEAKER_DEVICE_ID_KEY, value);
 }
