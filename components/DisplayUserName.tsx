@@ -25,11 +25,11 @@ export function DisplayUserName({
   className?: string;
 }) {
   return (
-    <span className={className}>
+    <span className={className} style={{display: "flex"}}>
       {name}
       {verified && (
         <VerifiedBadgeIcon
-          className="ml-1 inline h-3.5 w-3.5 shrink-0 align-text-top text-blue-500"
+          className="ml-1 inline h-5.5 w-5.5 shrink-0 align-text-top text-blue-500"
         />
       )}
       {isGuest && <span className="font-normal text-zinc-500"> (guest)</span>}
