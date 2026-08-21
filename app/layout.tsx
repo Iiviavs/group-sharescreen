@@ -14,7 +14,7 @@ const SITE_URL = "https://golive.nemtudo.me";
 const SITE_NAME = "GoLive";
 const TITLE = "GoLive — Transmissão de Tela em Grupo Online Grátis";
 const DESCRIPTION =
-  "Transmita sua tela para várias pessoas ao mesmo tempo, direto do navegador. Crie uma sala em 4 cliques sem cadastro: a forma mais fácil de fazer transmissão de tela em grupo online.";
+  "Transmita sua voz, tela ou câmera para várias pessoas ao mesmo tempo, direto do navegador. Sem cadastro. A forma mais fácil de fazer chamadas em grupo online.";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -43,6 +43,27 @@ export const metadata: Metadata = {
     "compartilhar tela com amigos",
     "assistir tela em grupo",
     "sala de compartilhamento de tela",
+
+    "transmitir câmera",
+    "transmissão de câmera online",
+    "transmitir câmera em grupo",
+    "transmissão de câmera em grupo online fácil",
+    "compartilhar câmera online",
+    "compartilhamento de câmera em grupo",
+    "compartilhar câmera com amigos",
+    "assistir câmera em grupo",
+    "sala de compartilhamento de câmera",
+
+    "transmitir voz",
+    "transmissão de voz online",
+    "transmitir voz em grupo",
+    "transmissão de voz em grupo online fácil",
+    "compartilhar voz online",
+    "compartilhamento de voz em grupo",
+    "compartilhar voz com amigos",
+    "assistir voz em grupo",
+    "sala de compartilhamento de voz",
+
     "screen share online grátis",
     "GoLive",
     "AntiJanja"
