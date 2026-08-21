@@ -145,7 +145,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         </AuthProvider>
         {UMAMI_WEBSITE_ID && (
           <Script
-            src="/api/umami/script.js"
+            // src="/api/umami/script.js"
+            src={`${process.env.UMAMI_URL}/script.js`}
             data-website-id={UMAMI_WEBSITE_ID}
             strategy="afterInteractive"
           />
