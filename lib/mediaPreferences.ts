@@ -5,7 +5,7 @@
 const NOISE_SUPPRESSION_KEY = "sharescreen:noiseSuppressionOn";
 const MIC_ON_KEY = "sharescreen:micOn";
 const MICS_MUTED_KEY = "sharescreen:micsMuted";
-const PRIVACY_DIRECT_ONLY_KEY = "sharescreen:privacyDirectOnly";
+const FORCE_RELAY_ICE_KEY = "sharescreen:forceRelayIce";
 
 function getStoredBoolean(key: string, fallback: boolean): boolean {
   if (typeof window === "undefined") return fallback;
@@ -50,17 +50,17 @@ export function setStoredMicsMuted(value: boolean) {
   setStoredBoolean(MICS_MUTED_KEY, value);
 }
 
-// "Modo privado": tells whoever we're watching to always send to us
-// directly instead of routing us through another participant's browser
-// (see relayLink.ts) — that participant would otherwise decode and
-// re-forward our stream, which is exactly the exposure this exists to
-// avoid. Off by default since cascading is itself off by default and, even
-// when it engages, this can cost the room quality (see topologyPlanner.ts).
-export function getStoredPrivacyDirectOnly(): boolean {
-  return getStoredBoolean(PRIVACY_DIRECT_ONLY_KEY, false);
+// "Impedir conexões diretas": forces every peer connection this client makes
+// (sending or receiving, any channel) through the TURN relay instead of
+// negotiating direct P2P — our own host/srflx candidates are gathered but
+// never offered to the other side, so they only ever learn our TURN
+// server's address, never ours. See lib/iceConfig.ts's iceConfigFor. Off by
+// default: it costs latency and, on a slow TURN server, quality too.
+export function getStoredForceRelayIce(): boolean {
+  return getStoredBoolean(FORCE_RELAY_ICE_KEY, false);
 }
-export function setStoredPrivacyDirectOnly(value: boolean) {
-  setStoredBoolean(PRIVACY_DIRECT_ONLY_KEY, value);
+export function setStoredForceRelayIce(value: boolean) {
+  setStoredBoolean(FORCE_RELAY_ICE_KEY, value);
 }
 
 // Per-peer volume dials (mic "speaking" volume, and a shared screen/camera

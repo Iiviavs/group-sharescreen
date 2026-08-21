@@ -21,7 +21,7 @@
 // capped at 3. It is not the normal shape of a room and must never become it.
 
 import { signalingClient } from "./signalingClient";
-import { ICE_CONFIG } from "./iceConfig";
+import { iceConfigFor } from "./iceConfig";
 import { PeerQualityRegistry } from "./peerQualityController";
 import { tierSpec, type QualityTier } from "./videoQuality";
 
@@ -70,6 +70,8 @@ export class RelayLink {
     private stream: MediaStream,
     /** The recvPC the stream arrives on, watched for stalls. */
     private sourcePc: RTCPeerConnection,
+    /** This relay operator's own "Impedir conexões diretas" preference — applied to every child connection it opens below. */
+    private forceRelayIce: boolean,
     private onSourceLost: () => void
   ) {}
 
@@ -94,7 +96,7 @@ export class RelayLink {
   }
 
   private openChild(peerId: string, tier: QualityTier) {
-    const pc = new RTCPeerConnection(ICE_CONFIG);
+    const pc = new RTCPeerConnection(iceConfigFor(this.forceRelayIce));
     this.children.set(peerId, { pc, tier });
 
     for (const track of this.stream.getTracks()) {
@@ -240,11 +242,12 @@ export class RelayManager {
     originId: string,
     stream: MediaStream,
     sourcePc: RTCPeerConnection,
+    forceRelayIce: boolean,
     onSourceLost: () => void
   ): RelayLink {
     const existing = this.links.get(originId);
     if (existing) return existing;
-    const link = new RelayLink(originId, stream, sourcePc, () => {
+    const link = new RelayLink(originId, stream, sourcePc, forceRelayIce, () => {
       this.links.delete(originId);
       onSourceLost();
     });

@@ -18,6 +18,7 @@ import { toRoomHandle, isPrivateRoomHandle } from "@/lib/roomsApi";
 import { useRoomSoundEffects } from "@/lib/useRoomSoundEffects";
 import { getSoundEffectsEnabled, setSoundEffectsEnabled } from "@/lib/soundEffects";
 import { qualityNegotiator } from "@/lib/qualityNegotiation";
+import { TURN_CONFIGURED } from "@/lib/iceConfig";
 import {
   getStoredMicsMuted,
   setStoredMicsMuted,
@@ -142,8 +143,8 @@ export function WatchRoom({ handle }: { handle: string }) {
     noiseSuppressionOn,
     noiseSuppressionAvailable,
     toggleNoiseSuppression,
-    privacyDirectOnly,
-    togglePrivacyDirectOnly,
+    forceRelayIce,
+    toggleForceRelayIce,
   } = useRoomMedia(handle);
 
   const [switching, setSwitching] = useState(false);
@@ -680,15 +681,20 @@ export function WatchRoom({ handle }: { handle: string }) {
                   />
                   <MenuToggleRow
                     label="Impedir conexões diretas"
-                    active={privacyDirectOnly}
-                    onToggle={togglePrivacyDirectOnly}
-                    title="Exige conexão direta com quem está transmitindo, sem passar por outro participante"
+                    active={forceRelayIce}
+                    onToggle={toggleForceRelayIce}
+                    disabled={!TURN_CONFIGURED}
+                    title={
+                      TURN_CONFIGURED
+                        ? "Força suas conexões a passar por um servidor TURN em vez de P2P direto, sem revelar seu IP para outros participantes"
+                        : "Indisponível: nenhum servidor TURN configurado neste site"
+                    }
                     activeIcon={<ShieldIcon className="h-4 w-4" />}
                     inactiveIcon={<ShieldOffIcon className="h-4 w-4" />}
                   />
-                  {privacyDirectOnly && (
+                  {forceRelayIce && (
                     <p className="mb-1 px-2 text-xs text-amber-600 dark:text-amber-500">
-                      Sua conexão nunca passa pelo aparelho de outro participante. A qualidade das transmissões que você assiste e compartilha pode piorar.
+                      Suas conexões passam sempre por um servidor intermediário, sem revelar seu IP a quem você assiste ou transmite. Isso pode deixar a transmissão com mais atraso e piorar a qualidade.
                     </p>
                   )}
                   <div className="my-2 border-t border-zinc-200 dark:border-zinc-800" />
@@ -751,9 +757,9 @@ export function WatchRoom({ handle }: { handle: string }) {
                               </button>
                             ))}
                           </div>
-                          {shareProfile === "text" && shareFps > 30 && (
+                          {shareProfile === "text" && shareFps > 60 && (
                             <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">
-                              Acima de 30fps, escolha &quot;Vídeo / jogo&quot; — no modo texto o
+                              Acima de 60fps, escolha &quot;Vídeo / jogo&quot; — no modo texto o
                               navegador descarta quadros para manter a nitidez.
                             </p>
                           )}

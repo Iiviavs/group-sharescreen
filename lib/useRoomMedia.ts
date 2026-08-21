@@ -3,15 +3,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { signalingClient } from "./signalingClient";
 import { trackEvent } from "./analytics";
-import { ICE_CONFIG } from "./iceConfig";
+import { iceConfigFor } from "./iceConfig";
 import { captureNoiseSuppressedMic, setGraphSuppressionEnabled, type MicNoiseGraph } from "./rnnoise";
 import {
+  getStoredForceRelayIce,
   getStoredMicOn,
   getStoredNoiseSuppressionOn,
-  getStoredPrivacyDirectOnly,
+  setStoredForceRelayIce,
   setStoredMicOn,
   setStoredNoiseSuppressionOn,
-  setStoredPrivacyDirectOnly,
 } from "./mediaPreferences";
 import {
   BEST_TIER,
@@ -60,9 +60,6 @@ type SignalData = {
   uploadKbps?: number;
   encodeMpxs?: number;
   eligibleRelay?: boolean;
-  // Privacy preference: this viewer wants to be served straight from the
-  // broadcaster only, never handed off to a relay (see relayLink.ts).
-  directOnly?: boolean;
   // Present only on relayed traffic: who originally produced this stream, as
   // opposed to who forwarded it. The receiving side files the stream under
   // this so a relayed viewer still sees the real broadcaster's name on the
@@ -226,6 +223,9 @@ function useBroadcastChannel(
   isSupported: () => boolean,
   notSupportedMessage: string,
   failureMessage: string,
+  // "Impedir conexões diretas" — see iceConfig.ts's iceConfigFor. Applies to
+  // every peer connection this channel opens, sending or receiving.
+  forceRelayIce: boolean,
   // Only meaningful for the screen channel — mic never passes this. When it
   // changes while a share is already active, the live track and every
   // current sender get updated in place instead of requiring a restart.
@@ -267,6 +267,10 @@ function useBroadcastChannel(
   // peer-list-driven reconnect loop below so it doesn't just re-open a sendPC
   // that was deliberately paused the moment anyone else joins/leaves the room.
   const viewerPausedPeers = useRef<Set<string>>(new Set());
+  // Mirrors the forceRelayIce prop for callbacks below that must read the
+  // live value without becoming a dependency of every connection-opening
+  // useCallback — same pattern as videoQualityRef.
+  const forceRelayIceRef = useRef(forceRelayIce);
   // Owns one PeerQualityController per sendPC: assigned tier plus learned
   // congestion state. Replaces the old map of per-peer setInterval monitors —
   // telemetry now comes from the single shared mediaStats pump instead of one
@@ -482,7 +486,7 @@ function useBroadcastChannel(
     (peerId: string) => {
       if (sendPCs.current.has(peerId) || !localStreamRef.current) return;
       const stream = localStreamRef.current;
-      const pc = new RTCPeerConnection(ICE_CONFIG);
+      const pc = new RTCPeerConnection(iceConfigFor(forceRelayIceRef.current));
       sendPCs.current.set(peerId, pc);
       stream.getTracks().forEach((track) => {
         const sender = pc.addTrack(track, stream);
@@ -773,7 +777,7 @@ function useBroadcastChannel(
     // keyed by sender while filing the stream under the origin is what lets a
     // relayed viewer still see the real broadcaster on the tile.
     (peerId: string, originId: string = peerId) => {
-      const pc = new RTCPeerConnection(ICE_CONFIG);
+      const pc = new RTCPeerConnection(iceConfigFor(forceRelayIceRef.current));
       recvPCs.current.set(peerId, pc);
       recvOrigins.current.set(peerId, originId);
       pc.ontrack = (e) => {
@@ -912,7 +916,7 @@ function useBroadcastChannel(
           const origin = data.originId ?? from;
           const source = relaySources.current.get(origin);
           if (!source || !data.children) return;
-          const link = relays.current.ensure(origin, source.stream, source.pc, () => {
+          const link = relays.current.ensure(origin, source.stream, source.pc, forceRelayIceRef.current, () => {
             // Our own source died. Tell the broadcaster so it can re-plan
             // rather than keep routing people through a dead branch.
             signalingClient.sendSignal(origin, {
@@ -935,7 +939,6 @@ function useBroadcastChannel(
             uploadKbps: data.uploadKbps ?? 0,
             encodeMpxs: data.encodeMpxs ?? 0,
             eligibleRelay: data.eligibleRelay === true,
-            directOnly: data.directOnly === true,
             // firstSeenAt is preserved across updates on purpose: it is how
             // "has been here a while" is measured, and that is the tiebreak
             // that stops the planner promoting someone who just walked in and
@@ -1072,6 +1075,28 @@ function useBroadcastChannel(
     tierForPeer,
   ]);
 
+  // Existing connections were built under whatever ICE policy was in effect
+  // at the time — RTCPeerConnection.iceTransportPolicy can't be changed in
+  // place, only chosen at construction — so toggling "Impedir conexões
+  // diretas" mid-call must rebuild every live connection for it to actually
+  // take effect on them, not just on the next one opened. sendPCs rebuild
+  // themselves directly; recvPCs ask the other side to send us a fresh offer
+  // (see requestReconnect) since we don't initiate those ourselves. Skipped
+  // on mount (nothing to rebuild yet) via the ref-vs-prop comparison.
+  useEffect(() => {
+    const changed = forceRelayIceRef.current !== forceRelayIce;
+    forceRelayIceRef.current = forceRelayIce;
+    if (!changed) return;
+    for (const peerId of [...sendPCs.current.keys()]) {
+      closeSendPC(peerId);
+      if (activeRef.current) openSendPC(peerId);
+    }
+    for (const peerId of [...recvPCs.current.keys()]) {
+      closeRecvPC(peerId);
+      requestReconnect(peerId);
+    }
+  }, [forceRelayIce, closeSendPC, openSendPC, closeRecvPC, requestReconnect]);
+
   useEffect(() => {
     const pcs = recvPCs.current;
     const pausedPeers = viewerPausedPeers.current;
@@ -1137,6 +1162,25 @@ export function useScreenShareMode() {
 }
 
 export function useRoomMedia(room: string) {
+  // "Impedir conexões diretas": forces every peer connection this client
+  // creates — sending or receiving, any channel — through the TURN relay
+  // instead of negotiating a direct P2P path. Declared first because
+  // useBroadcastChannel (screen/camera/mic below) needs it at construction
+  // time. Deliberately unrelated to cascading (see topologyPlanner.ts): that
+  // is about avoiding a stranger's browser as a middleman for someone
+  // else's stream, this is about hiding your own IP from whoever you
+  // connect to, middleman or not. Seeded from localStorage like the other
+  // device-local preferences below.
+  const [forceRelayIce, setForceRelayIceState] = useState(getStoredForceRelayIce);
+  const toggleForceRelayIce = useCallback(() => {
+    setForceRelayIceState((prev: boolean) => {
+      const next = !prev;
+      setStoredForceRelayIce(next);
+      trackEvent(next ? "force_relay_ice_on" : "force_relay_ice_off");
+      return next;
+    });
+  }, []);
+
   // Each of the three dials is independent so the person can e.g. keep
   // 720p but drop bitrate, or keep quality but drop fps. Refs mirror the
   // state (same pattern as noiseSuppressionOnRef below) because capture()
@@ -1254,6 +1298,7 @@ export function useRoomMedia(room: string) {
     () => hasDisplayCapture() || hasCameraCapture(),
     "Seu navegador não suporta compartilhamento de tela nem câmera.",
     "Não foi possível iniciar o compartilhamento. Verifique as permissões do navegador.",
+    forceRelayIce,
     screenQualityPreset
   );
 
@@ -1279,6 +1324,7 @@ export function useRoomMedia(room: string) {
     () => hasCameraCapture(),
     "Seu navegador não suporta câmera.",
     "Não foi possível iniciar a câmera. Verifique as permissões do navegador.",
+    forceRelayIce,
     screenQualityPreset
   );
 
@@ -1294,21 +1340,7 @@ export function useRoomMedia(room: string) {
   // on video.
   const sharingAnything = screen.active || camera.active;
 
-  // "Modo privado": when on, whoever we watch is told to always send to us
-  // directly rather than via a relay peer — see mediaPreferences.ts and
-  // topologyPlanner.ts's directOnly handling. Seeded from localStorage like
-  // the other device-local preferences above.
-  const [privacyDirectOnly, setPrivacyDirectOnlyState] = useState(getStoredPrivacyDirectOnly);
-  const togglePrivacyDirectOnly = useCallback(() => {
-    setPrivacyDirectOnlyState((prev) => {
-      const next = !prev;
-      setStoredPrivacyDirectOnly(next);
-      trackEvent(next ? "privacy_direct_only_on" : "privacy_direct_only_off");
-      return next;
-    });
-  }, []);
-
-  const { capacity, self, reportLoad } = useMeshCapacity(privacyDirectOnly);
+  const { capacity, self, reportLoad } = useMeshCapacity();
   const selfRef = useRef(self);
   useEffect(() => {
     selfRef.current = self;
@@ -1383,7 +1415,8 @@ export function useRoomMedia(room: string) {
     },
     () => Boolean(navigator.mediaDevices?.getUserMedia),
     "Seu navegador não suporta microfone.",
-    "Não foi possível ativar o microfone. Verifique a permissão do navegador."
+    "Não foi possível ativar o microfone. Verifique a permissão do navegador.",
+    forceRelayIce
   );
 
   const toggleMic = useCallback(() => {
@@ -1446,8 +1479,8 @@ export function useRoomMedia(room: string) {
     meshCapacity: capacity,
     meshTopology: topology,
 
-    privacyDirectOnly,
-    togglePrivacyDirectOnly,
+    forceRelayIce,
+    toggleForceRelayIce,
 
     isMicOn: mic.active,
     toggleMic,

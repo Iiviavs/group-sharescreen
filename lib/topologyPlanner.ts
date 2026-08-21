@@ -39,15 +39,6 @@ export interface PlannerNode {
 export interface PlannerViewer extends PlannerNode {
   /** Tier this viewer actually needs, from its rendered tile size. */
   wantTier: QualityTier;
-  /**
-   * Privacy preference: this viewer must only ever be served straight from
-   * `root`, never handed off to a relay (another participant's browser
-   * would otherwise decode and re-forward their stream). Enforced by
-   * restricting them to root as the only eligible parent — if root cannot
-   * carry them directly, they get downgraded (or go unserved) right along
-   * with everyone else instead of being quietly routed around the limit.
-   */
-  directOnly?: boolean;
 }
 
 export interface PlanEdge {
@@ -87,7 +78,6 @@ interface WorkNode extends PlannerNode {
   usedEncodeMpxs: number;
   depth: number;
   served: boolean;
-  directOnly?: boolean;
 }
 
 function freeUpload(n: WorkNode): number {
@@ -175,15 +165,6 @@ function allocate(
         const child = nodes.get(childId);
         if (!child) {
           pending.splice(i, 1);
-          continue;
-        }
-        // A privacy-mode viewer only ever accepts root as a parent — never a
-        // relay — even if a relay has room. Left pending here, they get
-        // picked up once root itself has free capacity, at whatever tier
-        // that takes; if root truly has none, they end up unserved rather
-        // than quietly routed through a stranger's browser.
-        if (child.directOnly && parent.id !== root.id) {
-          i += 1;
           continue;
         }
         // Deeper hops are served one tier lower. This is not a penalty: it
