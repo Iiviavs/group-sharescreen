@@ -293,7 +293,7 @@ export function VideoTile({
           </Tooltip>
         )}
         {onHyperfocus && (
-          <Tooltip content={`Hiperfoco em ${nameForLabel} — esconde as outras transmissões`}>
+          <Tooltip content={`Hiperfoco em ${nameForLabel}. Esconde as outras transmissões`}>
             <button
               type="button"
               onClick={onHyperfocus}

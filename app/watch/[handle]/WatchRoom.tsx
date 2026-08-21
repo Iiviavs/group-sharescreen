@@ -63,6 +63,8 @@ import {
   ChevronDownIcon,
   EyeIcon,
   EyeOffIcon,
+  ScreenIcon,
+  CameraIcon,
 } from "@/components/icons";
 import { Tooltip, Popover } from "@/components/Tooltip";
 import { useMediaQuery, SM_BREAKPOINT_QUERY } from "@/lib/useMediaQuery";
@@ -337,22 +339,43 @@ function QualityControls({
   );
 }
 
-// A "Compartilhar tela"/"Compartilhar câmera" button with a small chevron
-// glued to its left — same split-button shape as the mic/speaker device
-// pickers — that opens the same QualityControls panel used elsewhere, so
-// the quality dials are reachable right where a share is started instead of
-// only from the separate "Qualidade" quick-access button.
-function ShareButtonWithQuality({
-  label,
-  onClick,
-  disabled = false,
+// The room's one transmission control: a settings gear, a screen toggle and a
+// camera toggle glued into a single segmented button.
+//
+// It replaces four wide buttons ("Compartilhar tela", "Compartilhar câmera",
+// "Parar tela", "Parar câmera") that were really two toggles wearing four
+// labels — and that had to be laid out differently for each of the four
+// combinations of what happened to be live, which is why the header row
+// reflowed every time a share started or stopped. Two icons that each carry
+// their own state say the same thing in one fixed shape.
+//
+// Colour is the state: green means "this will start", red means "this will
+// stop", matching what those four buttons already used. The gear is green
+// with them rather than neutral — it has no state of its own to report, and
+// an outlined segment between two solid ones read as a separate control
+// sitting next to the group instead of as part of it. It opens the same
+// QualityControls panel used everywhere else.
+function ShareControls({
+  screenSharing,
+  cameraSharing,
+  screenSupported,
+  cameraSupported,
+  onToggleScreen,
+  onToggleCamera,
   open,
   setOpen,
   quality,
 }: {
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
+  screenSharing: boolean;
+  cameraSharing: boolean;
+  // getDisplayMedia exists (desktop). A phone has no screen capture at all,
+  // and the old labelled button simply threw a visible error when tapped
+  // there; an icon has no room to explain itself, so it is disabled with the
+  // reason in its tooltip instead.
+  screenSupported: boolean;
+  cameraSupported: boolean;
+  onToggleScreen: () => void;
+  onToggleCamera: () => void;
   open: boolean;
   setOpen: Dispatch<SetStateAction<boolean>>;
   quality: Pick<
@@ -372,8 +395,24 @@ function ShareButtonWithQuality({
     | "meshTopology"
   > & { hasAccount: boolean };
 }) {
+  const segment =
+    "flex items-center px-3 py-2 text-white transition disabled:cursor-not-allowed disabled:opacity-50";
+  const live = "bg-red-600 hover:bg-red-700";
+  const idle = "bg-emerald-600 hover:bg-emerald-700";
+
+  const screenLabel = screenSharing
+    ? "Parar de compartilhar a tela"
+    : screenSupported
+      ? "Compartilhar tela"
+      : "Seu navegador não permite compartilhar a tela";
+  const cameraLabel = cameraSharing
+    ? "Parar câmera"
+    : cameraSupported
+      ? "Compartilhar câmera"
+      : "Seu navegador não permite usar a câmera";
+
   return (
-    <div className="flex items-stretch">
+    <div className="flex items-stretch overflow-hidden rounded-lg">
       <Popover
         open={open}
         onClose={() => setOpen(false)}
@@ -388,21 +427,38 @@ function ShareButtonWithQuality({
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
-          disabled={disabled}
           aria-label="Qualidade da transmissão"
-          className="rounded-l-lg border-r border-black/15 bg-emerald-600 px-1 text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex items-center border-r border-black/15 bg-emerald-600 px-2 text-white transition hover:bg-emerald-700"
         >
           <BsGearFill className="h-3.5 w-3.5" />
         </button>
       </Popover>
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={disabled}
-        className="rounded-r-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {label}
-      </button>
+      {/* Wrapped so the tooltip still opens while the button is disabled —
+          which is the one state where it has something to explain. */}
+      <Tooltip content={screenLabel} wrapperClassName="flex">
+        <button
+          type="button"
+          onClick={onToggleScreen}
+          disabled={!screenSupported}
+          aria-pressed={screenSharing}
+          aria-label={screenLabel}
+          className={`${segment} ${screenSharing ? live : idle}`}
+        >
+          <ScreenIcon className="h-5 w-5" />
+        </button>
+      </Tooltip>
+      <Tooltip content={cameraLabel} wrapperClassName="flex">
+        <button
+          type="button"
+          onClick={onToggleCamera}
+          disabled={!cameraSupported}
+          aria-pressed={cameraSharing}
+          aria-label={cameraLabel}
+          className={`${segment} border-l border-black/15 ${cameraSharing ? live : idle}`}
+        >
+          <CameraIcon className="h-5 w-5" />
+        </button>
+      </Tooltip>
     </div>
   );
 }
@@ -570,8 +626,10 @@ export function WatchRoom({ handle }: { handle: string }) {
   const [micDeviceMenuOpen, setMicDeviceMenuOpen] = useState(false);
   const [speakerDeviceMenuOpen, setSpeakerDeviceMenuOpen] = useState(false);
   const { mics: micDevices, speakers: speakerDevices, canSelectSpeaker } = useMediaDevices();
-  const [screenShareQualityOpen, setScreenShareQualityOpen] = useState(false);
-  const [cameraShareQualityOpen, setCameraShareQualityOpen] = useState(false);
+  // One gear now serves both toggles (see ShareControls), so there is one
+  // panel to open instead of the two that the two separate share buttons
+  // each carried their own copy of.
+  const [shareQualityOpen, setShareQualityOpen] = useState(false);
   // "Focar": grows one tile and shrinks the rest without touching any
   // connection — see the grid render below, which gives this id's tile a
   // 2x2 grid span instead of hiding everyone else.
@@ -680,8 +738,7 @@ export function WatchRoom({ handle }: { handle: string }) {
     setRenaming(false);
     setSwitching(false);
     setQualityOpen(false);
-    setScreenShareQualityOpen(false);
-    setCameraShareQualityOpen(false);
+    setShareQualityOpen(false);
   }
 
   async function handleCopyLink() {
@@ -1517,56 +1574,19 @@ export function WatchRoom({ handle }: { handle: string }) {
             </Tooltip>
           </div>
 
-          {isSharing ? (
-            <div className="flex flex-wrap items-center gap-2 border-l border-zinc-300 pl-2 dark:border-zinc-700">
-              {localStream && (
-                <button
-                  type="button"
-                  onClick={stopShare}
-                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700"
-                >
-                  Parar tela
-                </button>
-              )}
-              {localCameraStream && (
-                <button
-                  type="button"
-                  onClick={stopCameraShare}
-                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700"
-                >
-                  Parar câmera
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2 border-l border-zinc-300 pl-2 dark:border-zinc-700">
-              <ShareButtonWithQuality
-                label="Compartilhar tela"
-                onClick={() => startShare("display")}
-                open={screenShareQualityOpen}
-                setOpen={setScreenShareQualityOpen}
-                quality={qualityControlsProps}
-              />
-              <ShareButtonWithQuality
-                label="Compartilhar câmera"
-                onClick={() => startCameraShare()}
-                disabled={screenShareMode === "unsupported"}
-                open={cameraShareQualityOpen}
-                setOpen={setCameraShareQualityOpen}
-                quality={qualityControlsProps}
-              />
-            </div>
-          )}
-          {isSharing && (!localStream || !localCameraStream) && (
-            <ShareButtonWithQuality
-              label={localStream ? "Compartilhar câmera" : "Compartilhar tela"}
-              onClick={localStream ? () => startCameraShare() : () => startShare("display")}
-              disabled={!localStream && screenShareMode === "unsupported"}
-              open={localStream ? cameraShareQualityOpen : screenShareQualityOpen}
-              setOpen={localStream ? setCameraShareQualityOpen : setScreenShareQualityOpen}
+          <div className="flex items-center border-l border-zinc-300 pl-2 dark:border-zinc-700">
+            <ShareControls
+              screenSharing={Boolean(localStream)}
+              cameraSharing={Boolean(localCameraStream)}
+              screenSupported={screenShareMode === "display"}
+              cameraSupported={screenShareMode !== "unsupported"}
+              onToggleScreen={() => (localStream ? stopShare() : startShare("display"))}
+              onToggleCamera={() => (localCameraStream ? stopCameraShare() : startCameraShare())}
+              open={shareQualityOpen}
+              setOpen={setShareQualityOpen}
               quality={qualityControlsProps}
             />
-          )}
+          </div>
         </div>
       </header>
 
@@ -1651,11 +1671,40 @@ export function WatchRoom({ handle }: { handle: string }) {
               <p className="text-zinc-600 dark:text-zinc-400">
                 Ninguém está transmitindo ainda.
               </p>
-              <p className="text-sm text-zinc-500 dark:text-zinc-500">
-                {screenShareMode === "camera"
-                  ? 'Clique em "Compartilhar câmera" para começar.'
-                  : 'Clique em "Compartilhar tela" para começar.'}
-              </p>
+              {/* The empty pane is the one place with room for the labelled
+                  version of the header's icon toggles, and the one moment
+                  when starting a share is the only thing anyone can do here.
+                  Pointing at the header instead ("clique no ícone lá em
+                  cima") asked the person to go find a control while standing
+                  on the space where it fits. Only ever shown while nobody —
+                  including us — is transmitting, so these are always "start",
+                  never "stop": see nothingToShow. */}
+              {screenShareMode === "unsupported" ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-500">
+                  Seu navegador não permite compartilhar tela nem câmera.
+                </p>
+              ) : (
+                <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+                  {screenShareMode === "display" && (
+                    <button
+                      type="button"
+                      onClick={() => startShare("display")}
+                      className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+                    >
+                      <ScreenIcon className="h-5 w-5" />
+                      Compartilhar tela
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => startCameraShare()}
+                    className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+                  >
+                    <CameraIcon className="h-5 w-5" />
+                    Compartilhar câmera
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <>

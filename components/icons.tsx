@@ -97,6 +97,24 @@ export function ScreenIcon({ className }: IconProps) {
   );
 }
 
+export function CameraIcon({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect x="2" y="6" width="13" height="12" rx="2" />
+      <path d="m15 11 6-3.5v9L15 13z" />
+    </svg>
+  );
+}
+
 export function SpeakerIcon({ className }: IconProps) {
   return (
     <svg
