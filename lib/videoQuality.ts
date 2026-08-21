@@ -15,28 +15,72 @@
 // BITRATE_KBPS/THROTTLE_* tables did) is what let the app promise 1080p60 to
 // a room it could never encode for.
 
-export type QualityTier = "1080p60" | "1080p30" | "720p30" | "540p30" | "360p30" | "360p15";
+export type QualityTier =
+  | "1440p60"
+  | "1080p60"
+  | "1440p30"
+  | "1080p30"
+  | "720p60"
+  | "720p30"
+  | "576p30"
+  | "576p15";
 
 export interface TierSpec {
   tier: QualityTier;
   width: number;
   height: number;
   frameRate: number;
-  // Bitrate for *motion-heavy* content (video/game). Real cost is this times
-  // the measured content multiplier — see contentMultiplier below.
+  // What this tier costs *on average* for motion-heavy content (video/game),
+  // which is what the topology planner budgets against — real cost is this
+  // times the measured content multiplier (see contentMultiplier below).
+  //
+  // It is deliberately NOT what the encoder is capped at. An average makes a
+  // terrible ceiling: every busy moment (a scroll, a scene cut, a camera pan)
+  // wants several times the average for a fraction of a second, and clipping
+  // exactly those moments is what turns a share into a smear. What the sender
+  // actually gets told is encoderCeilingKbps() below.
   baseKbps: number;
 }
 
-// Ordered best-to-worst. Every "step down one tier" operation in this app is
-// an index walk over this array, so the order is load-bearing.
+// Ordered best-to-worst by *cost*, and both cost columns below fall
+// monotonically down the list. Every "step down one tier" in this app is an
+// index walk over this array, so that ordering is load-bearing: a step down
+// must always free both bandwidth and CPU, or the planner's "retry a tier
+// lower until it fits" loop would sometimes make things worse.
+//
+// That is why 1440p30 sits *below* 1080p60 rather than next to 1440p60. The
+// two are genuinely incomparable as quality — 2K30 is better for text, 1080p60
+// better for a game — but 1440p30 is unambiguously cheaper on both axes, and
+// cost is what this ladder exists to order.
 export const TIERS: readonly TierSpec[] = [
+  { tier: "1440p60", width: 2560, height: 1440, frameRate: 60, baseKbps: 9000 },
   { tier: "1080p60", width: 1920, height: 1080, frameRate: 60, baseKbps: 5000 },
+  { tier: "1440p30", width: 2560, height: 1440, frameRate: 30, baseKbps: 4500 },
   { tier: "1080p30", width: 1920, height: 1080, frameRate: 30, baseKbps: 3000 },
+  { tier: "720p60", width: 1280, height: 720, frameRate: 60, baseKbps: 2500 },
   { tier: "720p30", width: 1280, height: 720, frameRate: 30, baseKbps: 1500 },
-  { tier: "540p30", width: 960, height: 540, frameRate: 30, baseKbps: 900 },
-  { tier: "360p30", width: 640, height: 360, frameRate: 30, baseKbps: 500 },
-  { tier: "360p15", width: 640, height: 360, frameRate: 15, baseKbps: 300 },
+  { tier: "576p30", width: 1024, height: 576, frameRate: 30, baseKbps: 1000 },
+  { tier: "576p15", width: 1024, height: 576, frameRate: 15, baseKbps: 600 },
 ] as const;
+
+// 576p is the floor, deliberately: below it a screen share stops being
+// readable at all, and an unreadable stream is not a cheaper stream, it is a
+// wasted one. So the ladder bottoms out at 1024x576 and gives up frames
+// (576p15) rather than pixels once there is nowhere else to go.
+//
+// Note the cost of that floor. A grid thumbnail now lands on 576p30 instead
+// of the much cheaper rungs the ladder used to end with: ~2x the bitrate and
+// ~2.6x the encode for the same tile. It is a real bill, paid on purpose, and
+// it moves the point at which a big room needs a cascade or a global
+// downgrade down to a stronger machine than before.
+//
+// There is deliberately no 576p60. Every other resolution on the ladder has a
+// 60fps rung, but this one is where *every* small tile lands, and
+// tierForRenderedSize breaks resolution ties by preferring the higher frame
+// rate — so a 60fps rung here would not serve the occasional viewer who wants
+// smooth motion in a small window, it would hand 60fps to all 29 thumbnails
+// in a grid at once. A broadcaster who picks 576p and 60fps gets 576p30: the
+// resolution they asked for, at the only frame rate the floor offers.
 
 const TIER_INDEX = new Map<QualityTier, number>(TIERS.map((t, i) => [t.tier, i]));
 
@@ -69,9 +113,10 @@ export function minTier(a: QualityTier, b: QualityTier): QualityTier {
 }
 
 // Encode cost proxy: pixels per second. Encoder CPU tracks this far better
-// than it tracks bitrate — 360p15 is ~35x cheaper to encode than 1080p60
-// even though it's only ~17x cheaper in bits. That gap is exactly why
-// per-viewer tiering relieves the CPU wall harder than it relieves the link.
+// than it tracks bitrate — the bottom of the ladder is ~25x cheaper to encode
+// than the top even though it is only ~15x cheaper in bits. That gap is
+// exactly why per-viewer tiering relieves the CPU wall harder than it
+// relieves the link.
 export function encodeMpxs(tier: QualityTier): number {
   const s = tierSpec(tier);
   return (s.width * s.height * s.frameRate) / 1e6;
@@ -164,7 +209,7 @@ export function tierForRenderedSize(
   // sharing that resolution, the *highest* frame rate.
   //
   // The tie-break matters. Walking plainly from the worst tier upwards would
-  // hand a small tile 360p15, because 15fps sorts below 30fps at identical
+  // hand a small tile the reduced-fps floor, because 15fps sorts below 30fps at identical
   // resolution. Nobody asked for choppy video by making their window small:
   // tile size is evidence about how many *pixels* are useful and says nothing
   // about frame rate. Dropping frames is a response to pressure — congestion
@@ -199,9 +244,52 @@ export function tierForRenderedSize(
   return chosen;
 }
 
-/** Cap a tier by the broadcaster's own chosen ceiling (their quality dial). */
+/**
+ * Cap a tier by the broadcaster's own ceiling (their resolution + fps dials).
+ *
+ * Resolution and frame rate are clamped *independently*, which a plain walk
+ * down the ladder cannot do: with both 720p60 and 1080p30 on it, "the worse of
+ * the two" is a meaningless question — one has more pixels, the other more
+ * frames — and answering it by index picked 60fps for a broadcaster who had
+ * explicitly asked for 30, or 1080p for one who had asked for 720p. Clamping
+ * each axis to what the dials actually say and then taking the best tier that
+ * fits under both is the only reading where the dials mean what they read.
+ */
 export function capTier(requested: QualityTier, ceiling: QualityTier): QualityTier {
-  return minTier(requested, ceiling);
+  const want = tierSpec(requested);
+  const cap = tierSpec(ceiling);
+  const maxWidth = Math.min(want.width, cap.width);
+  const maxFrameRate = Math.min(want.frameRate, cap.frameRate);
+  // TIERS is ordered best-first, so the first tier that fits is the best one.
+  const fit = TIERS.find((t) => t.width <= maxWidth && t.frameRate <= maxFrameRate);
+  return (fit ?? TIERS[TIERS.length - 1]).tier;
+}
+
+// How far above a tier's average cost the encoder is allowed to spend on the
+// busy moments. Without it, maxBitrate sits exactly on the average, so every
+// scroll and scene change is clipped — and under "maintain-resolution" (text
+// mode) that clipping comes out as dropped frames, i.e. a share that looks
+// frozen rather than merely soft.
+const CEILING_HEADROOM = 1.5;
+
+/**
+ * The bitrate ceiling to hand the encoder for one viewer at `tier`.
+ *
+ * A ceiling, not a target: an encoder emits almost nothing for a still screen
+ * regardless of what it is allowed, so setting this generously costs nothing
+ * on static content and is exactly what buys a sharp picture on moving
+ * content. `dialCeilingKbps` is the broadcaster's bitrate dial, and it is the
+ * one hard limit here — both as a cap and, on the higher settings, as a lift:
+ * someone who picked "máximo" asked for more bits than the tier's average and
+ * should get them, or the setting is decoration.
+ */
+export function encoderCeilingKbps(tier: QualityTier, dialCeilingKbps: number): number {
+  const base = tierSpec(tier).baseKbps;
+  // This tier's share of a top-tier stream, so the dial scales down the
+  // ladder instead of handing a thumbnail-sized tier a 16 Mbps allowance.
+  const share = base / TIERS[0].baseKbps;
+  const generous = Math.max(base * CEILING_HEADROOM, dialCeilingKbps * share);
+  return Math.round(Math.min(dialCeilingKbps, generous));
 }
 
 /**
@@ -220,11 +308,14 @@ export function scaleFactorFor(tier: QualityTier, captureHeight: number): number
 // Absolute bitrate floor for a congested link, on top of the proportional
 // MIN_RATIO in peerQualityController. A ratio alone is not enough of a
 // guard: a share of a cheap tier can still be a genuinely unusable picture —
-// 250 kbps at 360p is not video, it is a slideshow of artefacts, and under
-// "maintain-resolution" (text mode) that shortfall comes out as dropped
-// frames rather than blur, i.e. a frozen-looking share. Below this there is
-// nothing worth sending, so stop backing off and let frames drop instead.
-const MIN_KBPS = 400;
+// a few hundred kbps at the floor resolution is not video, it is a slideshow
+// of artefacts, and under "maintain-resolution" (text mode) that shortfall
+// comes out as dropped frames rather than blur, i.e. a frozen-looking share.
+// Below this there is nothing worth sending, so stop backing off and let
+// frames drop instead. Raised alongside the 576p floor: the number has to
+// mean "enough bits for the smallest picture we are willing to send", and
+// that picture got bigger.
+const MIN_KBPS = 500;
 
 /**
  * The bitrate to actually request for one peer, given what its tier costs and
@@ -232,8 +323,8 @@ const MIN_KBPS = 400;
  *
  * The clamp is two-sided on purpose: the floor stops a congested peer from
  * being driven down to unusable video, but must never *raise* a cheap tier
- * above its own budget — a 360p15 stream asked for 250 kbps when it only
- * costs 150 would spend bits the tier deliberately does not want.
+ * above its own budget — a stream asked for more kbps than its tier costs in
+ * the first place would spend bits the tier deliberately does not want.
  */
 export function congestedBitrateKbps(tierKbps: number, ratio: number): number {
   return Math.round(Math.max(Math.min(MIN_KBPS, tierKbps), tierKbps * ratio));

@@ -9,15 +9,28 @@ Numa sala de 30 pessoas a grade dá ~320×216 px por tile. Mandar 1080p para
 esse tile joga fora ~95% dos pixels codificados — na CPU **e** no upload de
 quem transmite. A regra central é:
 
-> Cada espectador recebe a qualidade que a tela dele realmente usa.
+> Cada espectador recebe a qualidade que a tela dele realmente usa,
+> respeitando um piso de 576p.
 
-Medido contra o comportamento anterior ("todo mundo recebe o preset"): **~6×
-menos upload e ~7,8× menos encode** para o mesmo resultado visível. O encode
+Medido contra o comportamento anterior ("todo mundo recebe o preset"): **~3,7×
+menos upload e ~4,7× menos encode** para o mesmo resultado visível. O encode
 cai mais que a banda porque custo de encoder acompanha pixels/segundo — e era
 exatamente esse o muro que impedia uma sala grande em malha.
 
-Consequência prática: **um desktop comum serve 30 pessoas em malha direta,
-sem cascata nenhuma**, mesmo com jogo a 60fps. A cascata é rota de exceção.
+**O piso de 576p custa caro e é intencional.** A regra acima, levada ao pé da
+letra, mandaria uma miniatura para um tile de 320×216 — o tile só precisa
+disso. Mas abaixo de 576p uma tela compartilhada deixa de ser legível, e
+stream ilegível não é stream barato, é stream desperdiçado. Então o degrau
+mais baixo da escada é 1024×576 e, quando não há mais para onde descer, o que
+se abre mão é de quadros (576p15), nunca de pixels. A conta: um tile de grade
+custa ~2× a banda e ~2,6× o encode que custava com os degraus baixos que a
+escada tinha antes — foi isso que derrubou os números de 6×/7,8× para
+3,7×/4,7×, e que move para uma máquina mais forte o ponto em que uma sala
+grande precisa de cascata ou de rebaixamento global.
+
+Consequência prática: **um desktop de ~12 núcleos serve 30 pessoas em malha
+direta, sem cascata nenhuma**, mesmo com jogo a 60fps. A cascata é rota de
+exceção.
 
 ## Módulos
 
@@ -41,6 +54,14 @@ Nada disso exigiu mudança no backend: o servidor repassa o `data` de um
 significar "quero 15fps". Tamanho escolhe resolução; framerate cai só sob
 pressão (congestionamento ou penalidade de profundidade na árvore).
 
+**Não existe 576p60, de propósito.** Todas as outras resoluções da escada têm
+degrau de 60fps. O piso não tem, porque é onde *todo* tile pequeno cai, e o
+desempate por resolução prefere o framerate maior — um degrau de 60fps ali não
+atenderia o espectador ocasional que quer movimento suave numa janela
+pequena, entregaria 60fps às 29 miniaturas de uma grade de uma vez. Quem
+escolhe 576p com 60fps recebe 576p30: a resolução que pediu, no framerate que
+o piso oferece.
+
 **Estado de congestionamento sobrevive a mudanças de qualidade.** Antes, todo
 ajuste de qualidade reiniciava o monitor de cada peer — e como ele também
 rodava a cada mudança no número de pessoas, um espectador em link ruim voltava
@@ -57,9 +78,35 @@ quadros para preservar nitidez — certo para código, errado para jogo a 60fps.
 Agora há o seletor "Texto / código" vs "Vídeo / jogo", que muda `contentHint`,
 `degradationPreference` e a ordem de codecs de uma vez.
 
-**Custo do conteúdo é medido, não presumido.** O mesmo "1080p60" custa ~1/8
-para um IDE estático e ~1,2× para um jogo. O planejador usa o bitrate real
-observado.
+**Custo do conteúdo é medido, não presumido — mas só para planejar.** O mesmo
+"1080p60" custa ~1/8 para um IDE estático e ~1,2× para um jogo, e o
+planejador usa o bitrate real observado.
+
+Esse multiplicador **nunca** pode virar o teto do encoder, e já foi: como ele
+é derivado do bitrate que o encoder produziu, realimentá-lo como limite do
+próprio encoder fechava um laço de mão única. Qualquer trecho parado (ler uma
+página, vídeo pausado) puxava a medição para baixo, o teto acompanhava, e o
+teto então tornava impossível a medição voltar a subir. Uma transmissão que
+ficasse 20s parada seguia presa perto de 1/10 do bitrate do tier pelo resto da
+sessão — resolução, fps e bitrate desabando juntos sem nada no ambiente ter
+piorado. Medição é observação; teto é controle. Não podem ser o mesmo número.
+
+**O que vai para o encoder é teto, não média.** `baseKbps` de cada tier é o
+custo *médio* daquele tier — o número que o planejador orça. O sender recebe
+`encoderCeilingKbps()`, que é a média com folga (×1,5) limitada pelo dial de
+bitrate. Teto na média corta exatamente os momentos que precisam de mais bits
+(um scroll, um corte de cena), e no modo "Texto / código"
+(`maintain-resolution`) esse corte sai como quadro derrubado: a transmissão
+parece travada, não borrada.
+
+**Os três dials são independentes.** Resolução limita pixels, fps limita
+quadros, bitrate limita bits. O dial de bitrate mapeava para um *tier*, o que
+o tornava o dial mestre por acidente: "médio" prendia todo mundo em 720p
+independente da resolução escolhida, e qualquer coisa abaixo de "ultra"
+prendia em 30fps independente do fps escolhido — quem pedia 1080p60 no padrão
+recebia 1080p30 sem nenhum aviso. "ultra" e "máximo" eram o mesmo tier, isto
+é, a mesma opção vendida duas vezes. Hoje o teto de tier vem de resolução+fps
+(`ceilingTierFor`) e `capTier()` limita as duas dimensões separadamente.
 
 ## Cascata
 
@@ -111,6 +158,16 @@ de núcleos não diz nada sobre qualidade do núcleo, folga térmica ou encoder 
 hardware. Se as medidas de campo mostrarem que o palpite inicial erra muito,
 `seedEncodeBudget()` é o botão a girar.
 
-Margens do planejador em `lib/topologyPlanner.ts`: `UPLOAD_HEADROOM` (0,75) e
-`ENCODE_HEADROOM` (0,8). Nunca planeje contra 100% do medido — estimativa de
-banda passa do ponto, e encoder no teto exato derruba quadros.
+Margens do planejador em `lib/topologyPlanner.ts`: `UPLOAD_HEADROOM` (0,85) e
+`ENCODE_HEADROOM` (0,85). Nunca planeje contra 100% do medido — estimativa de
+banda passa do ponto, e encoder no teto exato derruba quadros. Mas margem
+larga aqui não é sobra: é qualidade tirada da sala inteira, e é a *segunda*
+linha de defesa. O estimador de banda do próprio WebRTC reage a
+congestionamento real em um ou dois segundos, muito antes de um plano que só
+é reavaliado a cada seis.
+
+O teto de upload também não é mais só a estimativa do ICE: ela é um limite
+inferior com aquecimento (só aprende que o link carrega mais quando o link
+carrega mais), então `estimatedUplinkKbps()` toma o maior entre ela e o que já
+está comprovadamente saindo. Sem isso, o rebaixamento inicial era o que
+mantinha a estimativa baixa, que mantinha o rebaixamento.

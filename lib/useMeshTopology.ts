@@ -54,6 +54,30 @@ function isRelayEligible(): boolean {
 
 const CAPACITY_BROADCAST_MS = 8000;
 
+// Assumed uplink before any measurement exists at all. Only a placeholder for
+// the first seconds of a share — but a placeholder that is too small is not
+// harmless, because the plan it produces is a downgrade, and a downgraded
+// room sends less, which is exactly what keeps a bandwidth estimate small.
+const ASSUMED_UPLINK_KBPS = 8000;
+
+/**
+ * This device's uplink, in kbps, as honestly as it can be stated.
+ *
+ * ICE's estimate is a lower bound with a warm-up: the only way it learns the
+ * link carries more is by the link actually carrying more. So it reads far
+ * below the truth in the first seconds of a share, and stays there for as
+ * long as the room is being kept deliberately cheap. Taking the larger of the
+ * estimate and what we are demonstrably already pushing breaks that circle —
+ * a link visibly carrying 12 Mbps right now is not a 4 Mbps link, whatever
+ * the estimator has caught up to believing.
+ */
+function estimatedUplinkKbps(capacity: CapacitySample): number {
+  const proven = capacity.usedOutgoingKbps * 1.25;
+  const measured = capacity.availableOutgoingKbps;
+  if (measured <= 0) return Math.max(ASSUMED_UPLINK_KBPS, proven);
+  return Math.max(measured, proven);
+}
+
 // Cascading only ever pays for itself in a room big enough that the
 // alternative — everyone downgraded a tier or two to fit the broadcaster's
 // own link — is worse than a relay hop's cost (a full decode+re-encode,
@@ -121,19 +145,20 @@ export function useMeshCapacity() {
     loadRef.current = tiers.reduce((sum, t) => sum + encodeMpxs(t), 0);
   }, []);
 
+  // A number, not the capacity object: a fresh sample lands every couple of
+  // seconds and mostly says the same thing, and `self` changing is what makes
+  // the capacity broadcast below restart its interval.
+  const uplinkKbps = estimatedUplinkKbps(capacity);
+
   const self = useMemo<PlannerNode>(
     () => ({
       id: signalingClient.state.selfId ?? "self",
-      // Fall back to a deliberately modest assumption before the estimator
-      // has produced anything: guessing high here would have the planner
-      // promise a room more than the link can carry, and the first thing
-      // anyone would notice is stuttering for everyone at once.
-      uploadKbps: capacity.availableOutgoingKbps || 5000,
+      uploadKbps: uplinkKbps,
       encodeMpxs: encodeBudget.get(),
       stableSeconds: 0,
       eligibleRelay: relayEligible,
     }),
-    [capacity.availableOutgoingKbps, relayEligible]
+    [uplinkKbps, relayEligible]
   );
 
   // Tell whoever is broadcasting what we could carry, so they can plan.

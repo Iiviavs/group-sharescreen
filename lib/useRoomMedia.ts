@@ -22,7 +22,7 @@ import {
 import {
   BEST_TIER,
   capTier,
-  tierSpec,
+  tierForRenderedSize,
   type QualityTier,
 } from "./videoQuality";
 import { PeerQualityRegistry, type DegradationMode } from "./peerQualityController";
@@ -85,7 +85,7 @@ type SignalData = {
 // rather than letting one be selected. Nothing in this file itself checks
 // account status: a guest simply never has a code path that could set any
 // of these values, since a disabled <option> can't be chosen.
-export type ShareResolution = "1440p" | "1080p" | "720p" | "480p" | "360p";
+export type ShareResolution = "1440p" | "1080p" | "720p" | "576p";
 export type ShareFps = 15 | 24 | 30 | 60 | 120;
 // "ultra" is account-only — see SHARE_BITRATE_OPTIONS' `accountOnly` flag
 // and its doc comment above ShareResolution/ShareFps for the same pattern.
@@ -95,6 +95,9 @@ type QualityPreset = {
   width: number;
   height: number;
   frameRate: number;
+  // The bitrate dial, in kbps — a hard per-viewer ceiling, and on the higher
+  // settings a lift above what the tier would spend on its own. Handed to
+  // every PeerQualityController; see encoderCeilingKbps.
   maxBitrateKbps: number;
   // The best tier any viewer may be served at, from the broadcaster's dials.
   // A viewer asking for more than this is capped; a viewer asking for less
@@ -112,32 +115,55 @@ type QualityPreset = {
   honorViewerRequests: boolean;
 };
 
+// 576p is the lowest setting offered, matching the floor of the tier ladder
+// (see videoQuality's TIERS). Below it a shared screen stops being readable,
+// and an unreadable stream is not a saving.
 const RESOLUTION_DIMENSIONS: Record<ShareResolution, { width: number; height: number }> = {
   "1440p": { width: 2560, height: 1440 },
   "1080p": { width: 1920, height: 1080 },
   "720p": { width: 1280, height: 720 },
-  "480p": { width: 854, height: 480 },
-  "360p": { width: 640, height: 360 },
+  "576p": { width: 1024, height: 576 },
 };
 
-// Bitrate ceiling per preset. This is now a *ceiling the broadcaster picks*,
-// not a per-viewer target: what each viewer actually receives is the lower of
-// this and the tier their own tile size calls for (see qualityNegotiation).
-const BITRATE_CEILING_TIER: Record<ShareBitrate, QualityTier> = {
-  low: "360p30",
-  medium: "720p30",
-  high: "1080p30",
-  ultra: "1080p60",
-  maximo: "1080p60"
+// What each dial position is worth in kbps — the numbers the picker's own
+// labels promise, and now the only thing the bitrate dial controls.
+//
+// It used to map to a *tier* instead, which quietly made it the master
+// quality control: picking "médio" capped everyone at 720p no matter what the
+// resolution dial said, and anything below "ultra" capped frame rate at 30 no
+// matter what the fps dial said. Someone who asked for 1080p60 and left
+// bitrate on its default got 1080p30 and no indication why. The three dials
+// are meant to be independent — resolution caps pixels, fps caps frames,
+// bitrate caps bits — so each now does exactly the one thing it is named for.
+//
+// "ultra" and "máximo" also used to be the identical tier, i.e. the same
+// setting listed twice under two different promises.
+const BITRATE_CEILING_KBPS: Record<ShareBitrate, number> = {
+  low: 700,
+  medium: 2000,
+  high: 4000,
+  ultra: 8000,
+  maximo: 16000,
 };
+
+// The best tier the resolution + fps dials allow. Reusing the tile-size
+// selector is deliberate: "the cheapest tier that still covers this many
+// pixels at up to this frame rate" is exactly the question, and asking it in
+// one place keeps a dial from ever landing on a tier that does not exist
+// (720p at 60fps, say) and silently rounding somewhere surprising.
+function ceilingTierFor(resolution: ShareResolution, fps: ShareFps): QualityTier {
+  const dims = RESOLUTION_DIMENSIONS[resolution];
+  return tierForRenderedSize(dims.width, dims.height, 1, undefined, fps);
+}
 
 // The peer-count throttle tables that used to live here are gone on purpose.
 // They guessed at cost from a headcount ("4 peers, shed 120 kbps each") while
 // knowing nothing about the two things that actually decide it: how big each
 // viewer renders the video, and how expensive the content really is. They
-// also forced a 1080p share down to 360p at 14+ peers, which made the stated
-// goal of 1080p in a large room unreachable by construction. Both inputs are
-// now measured — see videoQuality, mediaStats and topologyPlanner.
+// also forced a 1080p share down to the bottom of the ladder at 14+ peers,
+// which made the stated goal of 1080p in a large room unreachable by
+// construction. Both inputs are now measured — see videoQuality, mediaStats
+// and topologyPlanner.
 
 function getPeerCount() {
   return signalingClient.state.peers.length;
@@ -152,8 +178,7 @@ export const SHARE_RESOLUTION_OPTIONS: { value: ShareResolution; label: string; 
   { value: "1440p", label: "2K (1440p)", accountOnly: true },
   { value: "1080p", label: "1080p" },
   { value: "720p", label: "720p" },
-  { value: "480p", label: "480p" },
-  { value: "360p", label: "360p" },
+  { value: "576p", label: "576p" },
 ];
 
 export const SHARE_FPS_OPTIONS: { value: ShareFps; label: string; accountOnly?: boolean }[] = [
@@ -334,8 +359,8 @@ function useBroadcastChannel(
   // Stable getter identities so consumers' effects don't re-run every render.
   // useCallback rather than a ref holding a closure: reading .current during
   // render is exactly what the react-hooks/refs rule forbids, and these are
-  // handed out from the render path.
-  const getRequestedTiers = useCallback(() => requestedTiers.current, []);
+  // handed out from the render path. (getRequestedTiers is defined below,
+  // next to the tierForPeer it depends on.)
   const getPeerCapacities = useCallback(() => peerCapacities.current, []);
   // Pending timers scheduled by openSendPCsStaggered — cleared in stop() so
   // a share that already ended never opens a late connection.
@@ -387,6 +412,25 @@ function useBroadcastChannel(
     const requested = requestedTiers.current.get(peerId);
     return requested ? capTier(requested, ceiling) : ceiling;
   }, []);
+
+  // What every viewer would actually be served right now — each one's request
+  // already capped by our ceiling, and every peer present, not only the ones
+  // who have reported a size yet.
+  //
+  // Both consumers need it in that form. The topology planner budgets the
+  // room against these numbers, and budgeting against the raw request means
+  // reserving link and CPU for quality the ceiling forbids anyone from ever
+  // receiving — capacity that is reserved but unusable is exactly what tips a
+  // room into a global downgrade it did not need. The encode-load estimate
+  // has the same problem in the same direction.
+  const getRequestedTiers = useCallback(() => {
+    const served = new Map<string, QualityTier>();
+    for (const peer of signalingClient.state.peers) {
+      if (peer.role === "moderator") continue;
+      served.set(peer.id, tierForPeer(peer.id));
+    }
+    return served;
+  }, [tierForPeer]);
 
   const removeRemoteStream = useCallback((peerId: string) => {
     setRemoteStreams((prev) => {
@@ -549,6 +593,8 @@ function useBroadcastChannel(
           const captureHeight =
             track.getSettings().height ?? videoQualityRef.current?.height ?? 1080;
           qualityRegistry.current.setDegradation(mode);
+          const ceilingKbps = videoQualityRef.current?.maxBitrateKbps;
+          if (ceilingKbps) qualityRegistry.current.setBitrateCeiling(ceilingKbps);
           qualityRegistry.current.add(peerId, pc, sender, tier, captureHeight);
         }
       });
@@ -716,6 +762,7 @@ function useBroadcastChannel(
     const captureHeight = track?.getSettings().height ?? videoQuality.height;
     qualityRegistry.current.setCaptureHeight(captureHeight);
     qualityRegistry.current.setDegradation(videoQuality.degradation);
+    qualityRegistry.current.setBitrateCeiling(videoQuality.maxBitrateKbps);
 
     // Re-cap every peer against the new ceiling. Crucially this only moves
     // the *assigned tier*: each controller keeps the congestion ratio it has
@@ -1333,8 +1380,8 @@ export function useRoomMedia(room: string) {
   // Other peers in the room. Still surfaced (the UI shows it, and the
   // topology hook needs it) but deliberately no longer an input to quality:
   // headcount is a bad proxy for cost, and using it is what previously
-  // forced a 1080p share down to 360p at 14 peers regardless of whether
-  // anyone's link or CPU was actually under strain.
+  // forced a 1080p share down to the bottom of the ladder at 14 peers
+  // regardless of whether anyone's link or CPU was actually under strain.
   const peerCount = useSyncExternalStore(signalingClient.subscribe, getPeerCount, getPeerCountServer);
   const peerCountRef = useRef(peerCount);
   useEffect(() => {
@@ -1349,13 +1396,12 @@ export function useRoomMedia(room: string) {
   // viewer whose tile actually changed.
   const screenQualityPreset = useMemo<QualityPreset>(() => {
     const dims = RESOLUTION_DIMENSIONS[shareResolution];
-    const ceiling = BITRATE_CEILING_TIER[shareBitrate];
     return {
       width: dims.width,
       height: dims.height,
       frameRate: shareFps,
-      maxBitrateKbps: tierSpec(ceiling).baseKbps,
-      ceilingTier: ceiling,
+      maxBitrateKbps: BITRATE_CEILING_KBPS[shareBitrate],
+      ceilingTier: ceilingTierFor(shareResolution, shareFps),
       degradation: shareProfile,
       honorViewerRequests: smartQualityEnabled,
     };

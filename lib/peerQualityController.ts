@@ -23,45 +23,58 @@
 import { mediaStats, type SenderSample } from "./mediaStats";
 import {
   congestedBitrateKbps,
+  encoderCeilingKbps,
   scaleFactorFor,
   tierSpec,
-  uploadKbps,
   type QualityTier,
 } from "./videoQuality";
 
 export type DegradationMode = "text" | "motion";
 
-// Congestion thresholds. Deliberately asymmetric: back off faster than we
-// recover, because oscillating between bitrates looks far worse to a viewer
-// than sitting slightly below the ceiling for a bit. But the ratio now
-// survives room churn (see setTier's comment), which makes it a permanent
-// scar rather than a transient dip — so a single noisy sample (one dropped
-// ack, a brief wifi retransmit, a GC pause) can no longer cut bitrate on its
-// own; it takes BAD_STREAK_TO_BACKOFF consecutive bad samples, same as
-// recovery already requires a streak of good ones. Backoff and recovery
-// steps are also both gentler than they used to be, and the floor is higher,
-// so genuine congestion settles at a still-watchable bitrate instead of
-// ratcheting all the way down toward an unusable one.
+// Congestion thresholds.
+//
+// The ratio survives room churn (see setTier's comment), which makes every
+// step down a lasting scar rather than a transient dip — so the evidence
+// required for one is deliberately high: it takes BAD_STREAK_TO_BACKOFF
+// consecutive bad samples, and no single noisy sample (one dropped ack, a
+// brief wifi retransmit, a GC pause) can cut anyone's bitrate on its own.
+//
+// The asymmetry runs the other way from what a congestion controller usually
+// wants. Backing off hard and recovering slowly is right when the cost of
+// overshooting is everyone's stream stalling; here the sender is one of many
+// and the browser's own bandwidth estimator is already the fast, correct
+// reflex for real congestion. This layer is the slow one on top, so it now
+// recovers faster than it retreats (RECOVER > 1/BACKOFF) and stops at a floor
+// that is still comfortably watchable, instead of ratcheting toward the
+// bottom on the strength of a bad minute.
 const LOSS_BAD = 0.04;
 const RTT_BAD = 0.35;
 const LOSS_GOOD = 0.01;
 const RTT_GOOD = 0.2;
-const BACKOFF = 0.85;
-const RECOVER = 1.2;
-const BAD_STREAK_TO_BACKOFF = 2;
+const BACKOFF = 0.9;
+const RECOVER = 1.25;
+const BAD_STREAK_TO_BACKOFF = 3;
 const HEALTHY_STREAK_TO_RECOVER = 2;
-const MIN_RATIO = 0.4;
+const MIN_RATIO = 0.45;
 
-// Below this share of the tier's bitrate, extra spatial downscaling buys the
-// encoder headroom — half resolution encoded well beats full resolution
-// encoded into mush.
+// Below this share of what the tier costs on average, extra spatial
+// downscaling buys the encoder headroom — half resolution encoded well beats
+// full resolution encoded into mush.
 //
-// These are shares of the tier, not absolute bitrates, and that difference
-// matters: judging by absolute kbps (as the previous implementation did)
-// meant a deliberately cheap 360p tier was permanently treated as congested
-// and downscaled, simply because its healthy bitrate is a small number.
-const SCALE_HARD = 0.4;
-const SCALE_SOFT = 0.65;
+// Measured against the tier's average cost (baseKbps), not against the
+// ceiling the sender was handed, and not against absolute kbps. Absolute kbps
+// was wrong because a deliberately cheap low tier then looked permanently
+// congested simply for having a small healthy bitrate. The ceiling is wrong
+// for the mirror-image reason: it carries deliberate headroom above the
+// average (see encoderCeilingKbps), so a share of *it* would read as
+// congestion at bitrates that are in fact perfectly comfortable.
+//
+// The practical effect is that a healthy link never gets downscaled twice.
+// It still engages where it should: a broadcaster who picks a bitrate far
+// too low for the resolution they asked for gets a smaller, clean picture
+// instead of a full-size broken one.
+const SCALE_HARD = 0.35;
+const SCALE_SOFT = 0.55;
 
 export class PeerQualityController {
   private ratio = 1;
@@ -76,7 +89,9 @@ export class PeerQualityController {
     private sender: RTCRtpSender,
     private tier: QualityTier,
     private captureHeight: number,
-    private contentMultiplier: number,
+    // The broadcaster's bitrate dial, in kbps. A hard limit on what this
+    // viewer may be given; the tier decides how much of it is actually used.
+    private bitrateCeilingKbps: number,
     private degradation: DegradationMode
   ) {}
 
@@ -97,11 +112,9 @@ export class PeerQualityController {
     this.apply();
   }
 
-  setContentMultiplier(multiplier: number) {
-    // Only react to meaningful moves; this value is smoothed upstream but
-    // still wanders, and setParameters is not free.
-    if (Math.abs(multiplier - this.contentMultiplier) < 0.1) return;
-    this.contentMultiplier = multiplier;
+  setBitrateCeiling(kbps: number) {
+    if (!kbps || this.bitrateCeilingKbps === kbps) return;
+    this.bitrateCeilingKbps = kbps;
     this.apply();
   }
 
@@ -146,11 +159,27 @@ export class PeerQualityController {
   /** Pushes the current target onto the sender, if it actually changed. */
   apply() {
     if (this.disposed) return;
-    const tierKbps = uploadKbps(this.tier, this.contentMultiplier);
-    const targetKbps = congestedBitrateKbps(tierKbps, this.ratio);
+    // Deliberately NOT scaled by the measured content multiplier, which is
+    // what this used to do and what made quality collapse and never come
+    // back. That multiplier is derived from the bitrate the encoder actually
+    // produced — so feeding it back in as the encoder's own cap closed a
+    // loop with only one direction of travel: any quiet stretch (reading a
+    // page, a paused video) drove the measurement down, the cap followed it
+    // down, and the cap then made the measurement impossible to ever exceed
+    // again. A share that idled for twenty seconds was pinned near a tenth
+    // of its tier's bitrate for the rest of the session.
+    //
+    // The multiplier is still exactly right for *planning* — how much of the
+    // uplink a stream really consumes, see topologyPlanner — because there it
+    // is an observation that changes nothing about what is observed. Here it
+    // is a control input, and a control input must never be the thing it
+    // controls.
+    const tierKbps = tierSpec(this.tier).baseKbps;
+    const ceilingKbps = encoderCeilingKbps(this.tier, this.bitrateCeilingKbps);
+    const targetKbps = congestedBitrateKbps(ceilingKbps, this.ratio);
     const tierScale = scaleFactorFor(this.tier, this.captureHeight);
-    const congestionScale =
-      this.ratio <= SCALE_HARD ? 2 : this.ratio <= SCALE_SOFT ? 1.5 : 1;
+    const share = tierKbps > 0 ? targetKbps / tierKbps : 1;
+    const congestionScale = share <= SCALE_HARD ? 2 : share <= SCALE_SOFT ? 1.5 : 1;
     const scale = Math.round(tierScale * congestionScale * 100) / 100;
 
     // setParameters triggers an encoder reconfiguration; calling it with
@@ -202,18 +231,15 @@ export class PeerQualityController {
 export class PeerQualityRegistry {
   private controllers = new Map<string, PeerQualityController>();
   private unsubscribeSender: (() => void) | null = null;
-  private unsubscribeCapacity: (() => void) | null = null;
-  private contentMultiplier = 1;
+  // Seeded to the "alto" dial position, which is also useRoomMedia's default.
+  // Overwritten by setBitrateCeiling as soon as a share's preset is known.
+  private bitrateCeilingKbps = 4000;
   private degradation: DegradationMode = "text";
 
   start() {
     if (this.unsubscribeSender) return;
     this.unsubscribeSender = mediaStats.onSender((sample) => {
       this.controllers.get(sample.peerId)?.onSample(sample);
-    });
-    this.unsubscribeCapacity = mediaStats.onCapacity((cap) => {
-      this.contentMultiplier = cap.contentMultiplier;
-      for (const c of this.controllers.values()) c.setContentMultiplier(cap.contentMultiplier);
     });
   }
 
@@ -230,7 +256,7 @@ export class PeerQualityRegistry {
       sender,
       tier,
       captureHeight,
-      this.contentMultiplier,
+      this.bitrateCeilingKbps,
       this.degradation
     );
     this.controllers.set(peerId, controller);
@@ -255,6 +281,13 @@ export class PeerQualityRegistry {
     for (const c of this.controllers.values()) c.setDegradation(mode);
   }
 
+  /** The broadcaster moved the bitrate dial mid-share. */
+  setBitrateCeiling(kbps: number) {
+    if (!kbps || this.bitrateCeilingKbps === kbps) return;
+    this.bitrateCeilingKbps = kbps;
+    for (const c of this.controllers.values()) c.setBitrateCeiling(kbps);
+  }
+
   setCaptureHeight(height: number) {
     for (const c of this.controllers.values()) c.setCaptureHeight(height);
   }
@@ -262,8 +295,6 @@ export class PeerQualityRegistry {
   clear() {
     for (const peerId of [...this.controllers.keys()]) this.remove(peerId);
     this.unsubscribeSender?.();
-    this.unsubscribeCapacity?.();
     this.unsubscribeSender = null;
-    this.unsubscribeCapacity = null;
   }
 }

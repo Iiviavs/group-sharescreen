@@ -21,6 +21,7 @@ import {
   tierIndex,
   uploadKbps,
   TIERS,
+  WORST_TIER,
   type QualityTier,
 } from "./videoQuality";
 
@@ -64,8 +65,16 @@ export interface TopologyPlan {
 
 // Never plan against 100% of a measured link or CPU: bandwidth estimates
 // overshoot, and an encoder pinned at exactly its ceiling drops frames.
-const UPLOAD_HEADROOM = 0.75;
-const ENCODE_HEADROOM = 0.8;
+//
+// Kept deliberately narrow, though. Every percent held back here is quality
+// taken from the whole room — the reserve is not spare capacity, it is the
+// difference between everyone watching at 1080p and everyone watching at
+// 720p — and it is the *second* line of defence, not the first: WebRTC's own
+// bandwidth estimator reacts to real congestion within a second or two, long
+// before a plan that only re-evaluates every six could. A quarter of the link
+// permanently unspent was paying twice for the same insurance.
+const UPLOAD_HEADROOM = 0.85;
+const ENCODE_HEADROOM = 0.85;
 
 // Hard cap on tree depth. Each hop adds ~120-220 ms and one re-encode
 // generation; past three the picture is visibly degraded and the latency is
@@ -171,7 +180,7 @@ function allocate(
         // cuts the relay's upload and encode cost, limits how much quality
         // compounding re-encodes can destroy, and matches who actually ends
         // up deep in the tree (grid tiles, not fullscreen viewers).
-        const tier = stepDown(wanted.get(childId) ?? "360p15", globalDowngrade + (childDepth - 1));
+        const tier = stepDown(wanted.get(childId) ?? WORST_TIER, globalDowngrade + (childDepth - 1));
         if (slotsFor(parent, tier, contentMultiplier) < 1) {
           i += 1;
           continue;

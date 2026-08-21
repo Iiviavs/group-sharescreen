@@ -275,9 +275,28 @@ function seedEncodeBudget(): number {
   return Math.max(120, Math.min(2400, cores * 100));
 }
 
+// Fraction of sampled senders that must report a CPU limitation before the
+// budget moves, and how many consecutive observations must say so.
+//
+// qualityLimitationReason is a momentary reading and a sticky one: a single
+// keyframe burst, another tab compiling something, one slow pass over a busy
+// frame all raise it for a sample or two. Treating any one of those as
+// evidence about the machine's ceiling — which the old single-sender, single
+// -sample trigger did — meant a transient hiccup cut the estimate 15%, and
+// then the next hiccup cut the reduced figure again. Nothing in that loop
+// ever needed the device to actually be slow.
+const CPU_PRESSURE_BAD = 0.4;
+const CPU_BAD_STREAK = 2;
+// Never fall below roughly one 1080p60 stream's worth. A budget under that
+// makes the planner conclude it cannot serve even a single fullscreen viewer
+// at full quality, which is a statement about this estimator rather than
+// about any real machine.
+const MIN_ENCODE_MPXS = 150;
+
 class EncodeBudget {
   private budget = seedEncodeBudget();
   private lastAdjust = 0;
+  private badStreak = 0;
 
   /** Current estimate, in megapixels/second. */
   get(): number {
@@ -285,27 +304,40 @@ class EncodeBudget {
   }
 
   /**
-   * Feed observed CPU pressure back in. Backs off fast when the encoder is
-   * visibly struggling and recovers slowly, because being wrong in the
-   * optimistic direction means dropped frames for every viewer at once,
-   * while being wrong pessimistically only costs some quality.
+   * Feed observed CPU pressure back in.
+   *
+   * Backing off is deliberately slower to trigger than it used to be, and
+   * recovery deliberately quicker. Being wrong optimistically costs dropped
+   * frames until the next observation four seconds later; being wrong
+   * pessimistically costs the whole room a quality tier for as long as the
+   * share lasts, because nothing else ever pushes the estimate back up.
    */
   observe(cpuPressure: number, currentLoadMpxs: number) {
     const now = Date.now();
     if (now - this.lastAdjust < 4000) return;
     this.lastAdjust = now;
-    if (cpuPressure > 0.25 && currentLoadMpxs > 0) {
-      // The load we are already carrying is evidently above what this device
-      // sustains, so the real ceiling is below it.
-      this.budget = Math.max(80, Math.min(this.budget, currentLoadMpxs) * 0.85);
-    } else if (cpuPressure === 0) {
-      this.budget = Math.min(seedEncodeBudget() * 1.5, this.budget * 1.05);
+    if (cpuPressure >= CPU_PRESSURE_BAD && currentLoadMpxs > 0) {
+      this.badStreak += 1;
+      if (this.badStreak >= CPU_BAD_STREAK) {
+        // The load we are already carrying is evidently above what this
+        // device sustains, so the real ceiling is below it.
+        this.budget = Math.max(
+          MIN_ENCODE_MPXS,
+          Math.min(this.budget, currentLoadMpxs) * 0.9
+        );
+      }
+    } else {
+      this.badStreak = 0;
+      if (cpuPressure <= 0.1) {
+        this.budget = Math.min(seedEncodeBudget() * 2, this.budget * 1.12);
+      }
     }
   }
 
   reset() {
     this.budget = seedEncodeBudget();
     this.lastAdjust = 0;
+    this.badStreak = 0;
   }
 }
 
