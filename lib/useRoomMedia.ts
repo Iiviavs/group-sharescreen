@@ -8,8 +8,10 @@ import { captureNoiseSuppressedMic, setGraphSuppressionEnabled, type MicNoiseGra
 import {
   getStoredMicOn,
   getStoredNoiseSuppressionOn,
+  getStoredPrivacyDirectOnly,
   setStoredMicOn,
   setStoredNoiseSuppressionOn,
+  setStoredPrivacyDirectOnly,
 } from "./mediaPreferences";
 import {
   BEST_TIER,
@@ -54,6 +56,9 @@ type SignalData = {
   uploadKbps?: number;
   encodeMpxs?: number;
   eligibleRelay?: boolean;
+  // Privacy preference: this viewer wants to be served straight from the
+  // broadcaster only, never handed off to a relay (see relayLink.ts).
+  directOnly?: boolean;
   // Present only on relayed traffic: who originally produced this stream, as
   // opposed to who forwarded it. The receiving side files the stream under
   // this so a relayed viewer still sees the real broadcaster's name on the
@@ -905,6 +910,7 @@ function useBroadcastChannel(
             uploadKbps: data.uploadKbps ?? 0,
             encodeMpxs: data.encodeMpxs ?? 0,
             eligibleRelay: data.eligibleRelay === true,
+            directOnly: data.directOnly === true,
             // firstSeenAt is preserved across updates on purpose: it is how
             // "has been here a while" is measured, and that is the tiebreak
             // that stops the planner promoting someone who just walked in and
@@ -1253,7 +1259,22 @@ export function useRoomMedia(room: string) {
   // latency to conversation, which is far more noticeable than the same delay
   // on video.
   const sharingAnything = screen.active || camera.active;
-  const { capacity, self, reportLoad } = useMeshCapacity();
+
+  // "Modo privado": when on, whoever we watch is told to always send to us
+  // directly rather than via a relay peer — see mediaPreferences.ts and
+  // topologyPlanner.ts's directOnly handling. Seeded from localStorage like
+  // the other device-local preferences above.
+  const [privacyDirectOnly, setPrivacyDirectOnlyState] = useState(getStoredPrivacyDirectOnly);
+  const togglePrivacyDirectOnly = useCallback(() => {
+    setPrivacyDirectOnlyState((prev) => {
+      const next = !prev;
+      setStoredPrivacyDirectOnly(next);
+      trackEvent(next ? "privacy_direct_only_on" : "privacy_direct_only_off");
+      return next;
+    });
+  }, []);
+
+  const { capacity, self, reportLoad } = useMeshCapacity(privacyDirectOnly);
   const selfRef = useRef(self);
   useEffect(() => {
     selfRef.current = self;
@@ -1390,6 +1411,9 @@ export function useRoomMedia(room: string) {
     // cost, and whether the room currently needs anyone to relay.
     meshCapacity: capacity,
     meshTopology: topology,
+
+    privacyDirectOnly,
+    togglePrivacyDirectOnly,
 
     isMicOn: mic.active,
     toggleMic,

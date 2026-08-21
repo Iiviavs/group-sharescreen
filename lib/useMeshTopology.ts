@@ -31,6 +31,8 @@ export interface PeerCapacity {
   encodeMpxs: number;
   /** false for phones/tablets and anything on battery — never promoted. */
   eligibleRelay: boolean;
+  /** This peer's own privacy preference: never route them through a relay. */
+  directOnly: boolean;
   firstSeenAt: number;
   updatedAt: number;
 }
@@ -62,7 +64,7 @@ const CAPACITY_BROADCAST_MS = 8000;
  * reflects the actual path to actual peers, and probing separately would
  * mean deliberately congesting the very link we are trying to measure.
  */
-export function useMeshCapacity() {
+export function useMeshCapacity(directOnly: boolean = false) {
   const [capacity, setCapacity] = useState<CapacitySample>(() => mediaStats.getCapacity());
   const [relayEligible, setRelayEligible] = useState(() => isRelayEligible());
   const loadRef = useRef(0);
@@ -146,13 +148,14 @@ export function useMeshCapacity() {
           uploadKbps: self.uploadKbps,
           encodeMpxs: self.encodeMpxs,
           eligibleRelay: self.eligibleRelay,
+          directOnly,
         });
       }
     };
     broadcast();
     const timer = setInterval(broadcast, CAPACITY_BROADCAST_MS);
     return () => clearInterval(timer);
-  }, [self]);
+  }, [self, directOnly]);
 
   return { capacity, self, relayEligible, reportLoad };
 }
@@ -229,6 +232,7 @@ export function useMeshTopology(
           // relay; silence is not evidence of capability.
           eligibleRelay: cap?.eligibleRelay ?? false,
           wantTier: requestedTiers.get(p.id) ?? "720p30",
+          directOnly: cap?.directOnly ?? false,
         };
       });
 

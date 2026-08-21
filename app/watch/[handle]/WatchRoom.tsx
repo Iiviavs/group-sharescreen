@@ -39,6 +39,8 @@ import {
   HeadphonesOffIcon,
   NoiseSuppressionIcon,
   NoiseSuppressionOffIcon,
+  ShieldIcon,
+  ShieldOffIcon,
   LinkIcon,
   CheckIcon,
   SpeakerIcon,
@@ -140,6 +142,8 @@ export function WatchRoom({ handle }: { handle: string }) {
     noiseSuppressionOn,
     noiseSuppressionAvailable,
     toggleNoiseSuppression,
+    privacyDirectOnly,
+    togglePrivacyDirectOnly,
   } = useRoomMedia(handle);
 
   const [switching, setSwitching] = useState(false);
@@ -674,6 +678,19 @@ export function WatchRoom({ handle }: { handle: string }) {
                     activeIcon={<NoiseSuppressionIcon className="h-4 w-4" />}
                     inactiveIcon={<NoiseSuppressionOffIcon className="h-4 w-4" />}
                   />
+                  <MenuToggleRow
+                    label="Modo privado"
+                    active={privacyDirectOnly}
+                    onToggle={togglePrivacyDirectOnly}
+                    title="Exige conexão direta com quem está transmitindo, sem passar por outro participante"
+                    activeIcon={<ShieldIcon className="h-4 w-4" />}
+                    inactiveIcon={<ShieldOffIcon className="h-4 w-4" />}
+                  />
+                  {privacyDirectOnly && (
+                    <p className="mb-1 px-2 text-xs text-amber-600 dark:text-amber-500">
+                      Sua conexão nunca passa pelo aparelho de outro participante. A qualidade das transmissões que você assiste e compartilha pode piorar.
+                    </p>
+                  )}
                   <div className="my-2 border-t border-zinc-200 dark:border-zinc-800" />
 
                   <button

@@ -5,6 +5,7 @@
 const NOISE_SUPPRESSION_KEY = "sharescreen:noiseSuppressionOn";
 const MIC_ON_KEY = "sharescreen:micOn";
 const MICS_MUTED_KEY = "sharescreen:micsMuted";
+const PRIVACY_DIRECT_ONLY_KEY = "sharescreen:privacyDirectOnly";
 
 function getStoredBoolean(key: string, fallback: boolean): boolean {
   if (typeof window === "undefined") return fallback;
@@ -47,6 +48,19 @@ export function getStoredMicsMuted(): boolean {
 }
 export function setStoredMicsMuted(value: boolean) {
   setStoredBoolean(MICS_MUTED_KEY, value);
+}
+
+// "Modo privado": tells whoever we're watching to always send to us
+// directly instead of routing us through another participant's browser
+// (see relayLink.ts) — that participant would otherwise decode and
+// re-forward our stream, which is exactly the exposure this exists to
+// avoid. Off by default since cascading is itself off by default and, even
+// when it engages, this can cost the room quality (see topologyPlanner.ts).
+export function getStoredPrivacyDirectOnly(): boolean {
+  return getStoredBoolean(PRIVACY_DIRECT_ONLY_KEY, false);
+}
+export function setStoredPrivacyDirectOnly(value: boolean) {
+  setStoredBoolean(PRIVACY_DIRECT_ONLY_KEY, value);
 }
 
 // Per-peer volume dials (mic "speaking" volume, and a shared screen/camera
