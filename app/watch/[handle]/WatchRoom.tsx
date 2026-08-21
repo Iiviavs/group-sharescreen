@@ -679,7 +679,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                     inactiveIcon={<NoiseSuppressionOffIcon className="h-4 w-4" />}
                   />
                   <MenuToggleRow
-                    label="Modo privado"
+                    label="Impedir conexões diretas"
                     active={privacyDirectOnly}
                     onToggle={togglePrivacyDirectOnly}
                     title="Exige conexão direta com quem está transmitindo, sem passar por outro participante"

@@ -99,6 +99,11 @@ export function PartnerCard() {
   const [peopleOnline, setPeopleOnline] = useState<number | null>(null);
   const [statsOpen, setStatsOpen] = useState(false);
   const [showingExample, setShowingExample] = useState(false);
+  // Lets someone looking at a real, paid ad discover they could buy this
+  // slot too — toggled by the "Anuncie aqui você também!" header shown over
+  // a real ad below, and swaps the card to the same house ad that's shown
+  // by default when no real partner is active (FALLBACK_PARTNER).
+  const [showingHouseAd, setShowingHouseAd] = useState(false);
   const [customizerOpen, setCustomizerOpen] = useState(false);
   // Below lg, this starts collapsed to just a slim title bar — full-size,
   // it was eating a big enough chunk of a phone's height (image, multi-line
@@ -182,11 +187,10 @@ export function PartnerCard() {
     return () => document.removeEventListener("visibilitychange", maybeReportView);
   }, [partner]);
 
-  // Only meaningful for the house ad below (a real, paid partner slot isn't
-  // the place for the site's own stats plug) — skipped entirely once a real
-  // partner is configured, so this never fires an extra poll for nothing.
+  // Runs regardless of whether a real partner is configured: the count now
+  // shows next to "Anuncie aqui você também!" over a real ad too, not just
+  // inside the house ad itself, so there's no state where it's unneeded.
   useEffect(() => {
-    if (partner !== null) return;
     let cancelled = false;
     const controller = new AbortController();
 
@@ -207,17 +211,32 @@ export function PartnerCard() {
       controller.abort();
       clearInterval(interval);
     };
-  }, [partner]);
+  }, []);
 
   if (!loaded) return null;
 
   const data = partner ?? FALLBACK_PARTNER;
   const isFallback = partner === null;
-  // Hidden while showingExample — the whole point of the example is to be a
+  // True only when the real ad is what's actually on screen — false for the
+  // plain house ad, the "ver exemplo" preview, and a real ad temporarily
+  // swapped out for the house ad via showingHouseAd below. Drives both the
+  // header above the card and what counts as a click on the real ad.
+  const showingRealAd = !isFallback && !showingHouseAd;
+  // True whenever FALLBACK_PARTNER is what's on screen — the plain default
+  // (no real ad configured) as much as a real ad temporarily swapped out via
+  // showingHouseAd. Everything that's specific to the house ad (the online
+  // counter, the "ver exemplo" button) keys off this, not off isFallback
+  // alone, so toggling into the house ad from a real one gets the full
+  // experience instead of a stripped-down version of it.
+  const showingHouseAdContent = !showingRealAd && !showingExample;
+  // Whether the online-count popover has a trigger to anchor to anywhere on
+  // the card right now — one renders inside the house ad, another sits next
+  // to "Anuncie aqui você também!" over a real ad (see below), but never
+  // during showingExample: the whole point of the example is to be a
   // faithful preview of a real ad slot, which never has this site's own
   // counter riding inside it.
-  const showOnlineWidget = isFallback && !showingExample && peopleOnline !== null;
-  const displayData = isFallback && showingExample ? EXAMPLE_PARTNER : data;
+  const showOnlineWidget = !showingExample && peopleOnline !== null;
+  const displayData = showingRealAd ? data : showingExample ? EXAMPLE_PARTNER : FALLBACK_PARTNER;
 
   return (
     <div className="relative mt-auto w-full shrink-0">
@@ -261,7 +280,7 @@ export function PartnerCard() {
         </div>
       )}
 
-      {isFallback && showingExample && (
+      {showingExample && (
         <div className="mb-2">
           <div className="mb-1.5 flex items-center justify-between gap-2">
             <button
@@ -289,15 +308,60 @@ export function PartnerCard() {
         </div>
       )}
 
+      {showingRealAd && (
+        <div className="mb-1.5 flex items-center gap-2">
+          {peopleOnline !== null && (
+            <button
+              type="button"
+              onClick={() => setStatsOpen((open) => !open)}
+              aria-expanded={statsOpen}
+              className="flex shrink-0 items-center gap-1 rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs font-medium text-emerald-600 transition hover:bg-zinc-200 dark:bg-zinc-900 dark:text-emerald-400 dark:hover:bg-zinc-800"
+            >
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+              {peopleOnline} online
+              <ChevronUpIcon
+                className={`h-3 w-3 transition-transform ${statsOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              trackEvent("partner_house_ad_from_real_ad");
+              setShowingHouseAd(true);
+            }}
+            className="flex-1 rounded-lg bg-zinc-100 px-3 py-1.5 text-center text-xs font-semibold text-zinc-600 transition hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+          >
+            Anuncie aqui também!
+          </button>
+        </div>
+      )}
+
+      {!isFallback && showingHouseAd && !showingExample && (
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => setShowingHouseAd(false)}
+            className="flex items-center gap-1 text-xs font-medium text-zinc-500 transition hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
+          >
+            <ArrowLeftIcon className="h-3 w-3" />
+            Voltar
+          </button>
+          <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-600">
+            Anuncie aqui
+          </span>
+        </div>
+      )}
+
       <div
         className="w-full overflow-hidden rounded-lg border border-zinc-200 p-3 dark:border-zinc-800 sm:p-4"
         style={{
-          backgroundColor: data.backgroundColor ?? "#ffffff",
-          color: data.textColor ?? "#18181b",
+          backgroundColor: displayData.backgroundColor ?? "#ffffff",
+          color: displayData.textColor ?? "#18181b",
         }}
       >
         <div className="mb-2 flex items-center justify-between gap-2">
-          {showOnlineWidget && (
+          {showingHouseAdContent && showOnlineWidget && (
             <button
               type="button"
               onClick={() => setStatsOpen((open) => !open)}
@@ -335,10 +399,14 @@ export function PartnerCard() {
           target="_blank"
           rel="noopener noreferrer"
           onClick={() => {
-            if (!isFallback && data.id) signalingClient.reportPartnerClick(data.id);
+            // Only counts as a click on the real ad while it's actually the
+            // thing being shown — not while a real advertiser's slot is
+            // temporarily swapped out for the house ad via showingHouseAd.
+            if (showingRealAd && data.id) signalingClient.reportPartnerClick(data.id);
             trackEvent("partner_card_clicked", {
               fallback: isFallback,
-              example: isFallback && showingExample,
+              example: showingExample,
+              houseAd: !isFallback && showingHouseAd,
             });
           }}
           className="mt-3 block rounded-lg px-3 py-2 text-center text-sm font-semibold transition hover:opacity-90"
@@ -350,7 +418,7 @@ export function PartnerCard() {
           {displayData.buttonLabel}
         </a>
 
-        {isFallback && !showingExample && (
+        {showingHouseAdContent && (
           <button
             type="button"
             onClick={() => {
