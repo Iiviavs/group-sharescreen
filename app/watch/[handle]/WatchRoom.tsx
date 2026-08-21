@@ -64,6 +64,8 @@ import {
   EyeIcon,
   EyeOffIcon,
 } from "@/components/icons";
+import { Tooltip, Popover } from "@/components/Tooltip";
+import { useMediaQuery, SM_BREAKPOINT_QUERY } from "@/lib/useMediaQuery";
 import { MdHome } from "react-icons/md";
 import { BsGearFill } from "react-icons/bs";
 
@@ -84,7 +86,7 @@ function MenuToggleRow({
   activeIcon,
   inactiveIcon,
   disabled = false,
-  title,
+  hint,
 }: {
   label: string;
   active: boolean;
@@ -92,24 +94,28 @@ function MenuToggleRow({
   activeIcon: ReactNode;
   inactiveIcon: ReactNode;
   disabled?: boolean;
-  title?: string;
+  hint?: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      disabled={disabled}
-      title={title}
-      className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-zinc-300 dark:hover:bg-zinc-900"
-    >
-      <span>{label}</span>
-      <span
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white ${active ? "bg-emerald-600" : "bg-zinc-500"
-          }`}
+    // The wrapper is what a disabled row's hint hangs off of: a disabled
+    // button emits no pointer events of its own, and "why is this off?" is
+    // exactly the row that most needs explaining.
+    <Tooltip content={hint} wrapperClassName="flex w-full">
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={disabled}
+        className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-zinc-300 dark:hover:bg-zinc-900"
       >
-        {active ? activeIcon : inactiveIcon}
-      </span>
-    </button>
+        <span>{label}</span>
+        <span
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white ${active ? "bg-emerald-600" : "bg-zinc-500"
+            }`}
+        >
+          {active ? activeIcon : inactiveIcon}
+        </span>
+      </button>
+    </Tooltip>
   );
 }
 
@@ -367,18 +373,28 @@ function ShareButtonWithQuality({
   > & { hasAccount: boolean };
 }) {
   return (
-    <div className="relative flex items-stretch">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        disabled={disabled}
-        title="Qualidade da transmissão"
-        aria-label="Qualidade da transmissão"
-        className="rounded-l-lg border-r border-black/15 bg-emerald-600 px-1 text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+    <div className="flex items-stretch">
+      <Popover
+        open={open}
+        onClose={() => setOpen(false)}
+        placement="bottom-end"
+        tooltip="Qualidade da transmissão"
+        content={
+          <div className="w-80 max-w-[calc(100vw-1rem)]">
+            <QualityControls {...quality} />
+          </div>
+        }
       >
-        <BsGearFill className="h-3.5 w-3.5" />
-      </button>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          disabled={disabled}
+          aria-label="Qualidade da transmissão"
+          className="rounded-l-lg border-r border-black/15 bg-emerald-600 px-1 text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <BsGearFill className="h-3.5 w-3.5" />
+        </button>
+      </Popover>
       <button
         type="button"
         onClick={onClick}
@@ -387,14 +403,6 @@ function ShareButtonWithQuality({
       >
         {label}
       </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full z-40 mt-2 w-80 max-w-[calc(100vw-2rem)]">
-            <QualityControls {...quality} />
-          </div>
-        </>
-      )}
     </div>
   );
 }
@@ -566,6 +574,11 @@ export function WatchRoom({ handle }: { handle: string }) {
   // buttons, so closing the panel also collapses whichever of them was left
   // open (see closeMenu below).
   const [menuOpen, setMenuOpen] = useState(false);
+  // Picks which shell that panel gets: a popover anchored to the button from
+  // sm up, the bottom sheet below it (see menuItems further down). Reports
+  // false until the first client paint, so the sheet is what a phone gets
+  // without waiting on JS to agree.
+  const isDesktopLayout = useMediaQuery(SM_BREAKPOINT_QUERY);
   // Below lg, the participants list and chat share one pane and take turns
   // via this tab switcher instead of being stacked in one long scroll — see
   // the aside below. Unused (both always shown) from lg up.
@@ -1064,6 +1077,199 @@ export function WatchRoom({ handle }: { handle: string }) {
     meshTopology,
   };
 
+  // The body of the header's "Mais opções" panel. Extracted because it is
+  // rendered by two different shells: a Tippy popover hanging off the button
+  // from sm up, and the full-width bottom sheet below it — a sheet is fixed
+  // to the viewport rather than positioned against the button, which is
+  // exactly what a popover cannot be.
+  const menuItems = (
+    <>
+      <div className="mb-1 flex items-center justify-between gap-2 sm:hidden">
+        <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Mais opções</p>
+        <button
+          type="button"
+          onClick={closeMenu}
+          aria-label="Fechar"
+          className="text-xl leading-none text-zinc-400 transition hover:text-zinc-700 dark:hover:text-zinc-200"
+        >
+          ×
+        </button>
+      </div>
+
+      <span
+        className={`mb-2 inline-block w-fit shrink-0 rounded-full px-2.5 py-1 text-xs font-medium text-white sm:hidden ${isPrivateRoomHandle(handle) ? "bg-red-600" : "bg-emerald-600"
+          }`}
+      >
+        {isPrivateRoomHandle(handle) ? "Sala privada" : "Sala pública"}
+      </span>
+
+      {/* Also reachable from the main row on desktop (see the
+          quick-access group below) — kept here too since mobile
+          has no room for it outside this menu. */}
+      <button
+        type="button"
+        onClick={handleCopyLink}
+        className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-left text-sm font-medium transition sm:hidden ${linkCopied
+          ? "border-emerald-600 text-emerald-600 dark:border-emerald-500 dark:text-emerald-500"
+          : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+          }`}
+      >
+        {linkCopied ? <CheckIcon className="h-4 w-4" /> : <LinkIcon className="h-4 w-4" />}
+        {linkCopied ? "Link copiado!" : "Compartilhar sala"}
+      </button>
+
+      <a
+        href="https://discord.gg/nemtudo"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="rounded-lg px-2 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50 dark:text-red-500 dark:hover:bg-red-950/40"
+      >
+        Reportar bug
+      </a>
+
+      <div className="my-2 border-t border-zinc-200 dark:border-zinc-800" />
+
+      <MenuToggleRow
+        label="Efeitos sonoros do site"
+        active={soundEffectsOn}
+        onToggle={toggleSoundEffects}
+        activeIcon={<SpeakerIcon className="h-4 w-4" />}
+        inactiveIcon={<SpeakerMuteIcon className="h-4 w-4" />}
+      />
+      <MenuToggleRow
+        label="Supressão de ruído"
+        active={noiseSuppressionOn}
+        onToggle={toggleNoiseSuppression}
+        disabled={isMicOn && !noiseSuppressionAvailable}
+        hint={
+          isMicOn && !noiseSuppressionAvailable
+            ? "Supressão de ruído indisponível neste navegador"
+            : undefined
+        }
+        activeIcon={<NoiseSuppressionIcon className="h-4 w-4" />}
+        inactiveIcon={<NoiseSuppressionOffIcon className="h-4 w-4" />}
+      />
+      <MenuToggleRow
+        label="Entrar em transmissões automaticamente"
+        active={autoJoin}
+        onToggle={toggleAutoJoin}
+        hint="Quando desligado, uma nova tela/câmera só conecta depois que você clicar pra assistir"
+        activeIcon={<EyeIcon className="h-4 w-4" />}
+        inactiveIcon={<EyeOffIcon className="h-4 w-4" />}
+      />
+      <MenuToggleRow
+        label="Impedir conexões diretas"
+        active={forceRelayIce}
+        onToggle={toggleForceRelayIce}
+        disabled={!TURN_CONFIGURED}
+        hint={
+          TURN_CONFIGURED
+            ? "Força suas conexões a passar por um servidor TURN em vez de P2P direto, sem revelar seu IP para outros participantes"
+            : "Indisponível: nenhum servidor TURN configurado neste site"
+        }
+        activeIcon={<ShieldIcon className="h-4 w-4" />}
+        inactiveIcon={<ShieldOffIcon className="h-4 w-4" />}
+      />
+      {forceRelayIce && (
+        <p className="mb-1 px-2 text-xs text-amber-600 dark:text-amber-500">
+          Suas conexões passam sempre por um servidor intermediário, sem revelar seu IP a quem você assiste ou transmite. Isso pode deixar a transmissão com mais atraso e piorar a qualidade.
+        </p>
+      )}
+      <div className="my-2 border-t border-zinc-200 dark:border-zinc-800" />
+
+      <div className="sm:hidden">
+        <Tooltip content="Qualidade da transmissão — reduza se a sala estiver travando">
+          <button
+            type="button"
+            onClick={() => setQualityOpen((q) => !q)}
+            className="rounded-lg px-2 py-2 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+          >
+            Qualidade: {shareResolution} · {shareFps}fps
+          </button>
+        </Tooltip>
+        {qualityOpen && (
+          <div className="mx-2 mb-1">
+            <QualityControls {...qualityControlsProps} />
+          </div>
+        )}
+      </div>
+
+      {/* A logged-in account's room name is locked server-side
+          to its account record (see server/signaling.ts's
+          "register" handler) — offering a rename control here
+          would just error on every attempt (or worse, silently
+          look like it did nothing), so it's hidden entirely
+          instead of a confusing dead end. */}
+      {!state.account && (
+        <>
+          <div className="my-2 border-t border-zinc-200 dark:border-zinc-800" />
+          <button
+            type="button"
+            onClick={() => {
+              setRenaming((r) => {
+                if (!r) setRenameInput(state.name ?? "");
+                return !r;
+              });
+            }}
+            className="rounded-lg px-2 py-2 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+          >
+            Mudar nome
+          </button>
+          {renaming && (
+            <form
+              onSubmit={handleRenameSubmit}
+              className="mx-2 mb-1 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900"
+            >
+              <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                Novo nome
+              </label>
+              <input
+                autoFocus
+                value={renameInput}
+                onChange={(e) => setRenameInput(e.target.value)}
+                maxLength={24}
+                placeholder="Ex: Maria"
+                className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
+              />
+              {state.nameError && <p className="mt-1 text-xs text-red-500">{state.nameError}</p>}
+              <button
+                type="submit"
+                disabled={!renameInput.trim() || renameInput.trim() === state.name}
+                className="mt-2 w-full rounded-md bg-zinc-950 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+              >
+                Salvar nome
+              </button>
+            </form>
+          )}
+        </>
+      )}
+
+      <div className="my-2 border-t border-zinc-200 dark:border-zinc-800" />
+
+      <div className="sm:hidden">
+        <button
+          type="button"
+          onClick={() => setSwitching((s) => !s)}
+          className="rounded-lg px-2 py-2 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
+        >
+          Trocar de sala
+        </button>
+        {switching && (
+          <div className="mx-2 mb-1">
+            <SwitchRoomFields
+              switchInput={switchInput}
+              setSwitchInput={setSwitchInput}
+              switchIsPrivate={switchIsPrivate}
+              setSwitchIsPrivate={setSwitchIsPrivate}
+              switchError={switchError}
+              onSubmit={handleSwitchSubmit}
+            />
+          </div>
+        )}
+      </div>
+    </>
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-zinc-50 dark:bg-black">
       <header className="border-b border-black/10 px-3 py-2.5 dark:border-white/10 sm:px-4 sm:py-3">
@@ -1072,9 +1278,11 @@ export function WatchRoom({ handle }: { handle: string }) {
             <Link href={"/"} className="shrink-0 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
               <MdHome />
             </Link>
-            <h1 className="truncate text-base font-semibold text-zinc-950 dark:text-zinc-50 sm:text-lg">
-              {handle}
-            </h1>
+            <Tooltip content={handle} placement="bottom">
+              <h1 className="truncate text-base font-semibold text-zinc-950 dark:text-zinc-50 sm:text-lg">
+                {handle}
+              </h1>
+            </Tooltip>
             <span
               className={`hidden shrink-0 rounded-full px-2.5 py-1 text-xs font-medium text-white sm:inline-block ${isPrivateRoomHandle(handle) ? "bg-red-600" : "bg-emerald-600"
                 }`}
@@ -1091,209 +1299,39 @@ export function WatchRoom({ handle }: { handle: string }) {
               in here — on a phone, the old one-row-per-button layout
               wrapped into a wall of buttons taller than the video area
               itself. */}
-          <div className="relative shrink-0">
-            <button
-              type="button"
-              onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}
-              aria-label="Mais opções"
-              aria-expanded={menuOpen}
-              className={`rounded-lg border p-2 transition ${menuOpen
-                ? "border-zinc-400 bg-zinc-100 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-                : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                }`}
+          <div className="shrink-0">
+            <Popover
+              open={isDesktopLayout && menuOpen}
+              onClose={closeMenu}
+              placement="bottom-end"
+              tooltip="Mais opções"
+              content={
+                <div className="flex max-h-[80vh] w-80 flex-col gap-1 overflow-y-auto rounded-xl border border-zinc-200 bg-white p-3 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
+                  {menuItems}
+                </div>
+              }
             >
-              <MoreIcon className="h-5 w-5" />
-            </button>
+              <button
+                type="button"
+                onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}
+                aria-label="Mais opções"
+                className={`rounded-lg border p-2 transition ${menuOpen
+                  ? "border-zinc-400 bg-zinc-100 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                  : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                  }`}
+              >
+                <MoreIcon className="h-5 w-5" />
+              </button>
+            </Popover>
 
-            {menuOpen && (
+            {!isDesktopLayout && menuOpen && (
               <>
                 {/* Full-screen tap-to-close catcher — also what turns this
-                    into a proper bottom sheet on mobile (the panel below is
-                    fixed to the viewport, not this button). */}
+                    into a proper bottom sheet on a phone (the panel below is
+                    fixed to the viewport, not to this button). */}
                 <div className="fixed inset-0 z-30" onClick={closeMenu} />
-                <div className="fixed inset-x-0 bottom-0 z-40 flex max-h-[85vh] flex-col gap-1 overflow-y-auto rounded-t-2xl border-t border-zinc-200 bg-white p-4 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950 sm:absolute sm:inset-x-auto sm:bottom-auto sm:right-0 sm:top-full sm:mt-2 sm:max-h-[80vh] sm:w-80 sm:rounded-xl sm:border sm:p-3">
-                  <div className="mb-1 flex items-center justify-between gap-2 sm:hidden">
-                    <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Mais opções</p>
-                    <button
-                      type="button"
-                      onClick={closeMenu}
-                      aria-label="Fechar"
-                      className="text-xl leading-none text-zinc-400 transition hover:text-zinc-700 dark:hover:text-zinc-200"
-                    >
-                      ×
-                    </button>
-                  </div>
-
-                  <span
-                    className={`mb-2 inline-block w-fit shrink-0 rounded-full px-2.5 py-1 text-xs font-medium text-white sm:hidden ${isPrivateRoomHandle(handle) ? "bg-red-600" : "bg-emerald-600"
-                      }`}
-                  >
-                    {isPrivateRoomHandle(handle) ? "Sala privada" : "Sala pública"}
-                  </span>
-
-                  {/* Also reachable from the main row on desktop (see the
-                      quick-access group below) — kept here too since mobile
-                      has no room for it outside this menu. */}
-                  <button
-                    type="button"
-                    onClick={handleCopyLink}
-                    className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-left text-sm font-medium transition sm:hidden ${linkCopied
-                      ? "border-emerald-600 text-emerald-600 dark:border-emerald-500 dark:text-emerald-500"
-                      : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                      }`}
-                  >
-                    {linkCopied ? <CheckIcon className="h-4 w-4" /> : <LinkIcon className="h-4 w-4" />}
-                    {linkCopied ? "Link copiado!" : "Compartilhar sala"}
-                  </button>
-
-                  <a
-                    href="https://discord.gg/nemtudo"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="rounded-lg px-2 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50 dark:text-red-500 dark:hover:bg-red-950/40"
-                  >
-                    Reportar bug
-                  </a>
-
-                  <div className="my-2 border-t border-zinc-200 dark:border-zinc-800" />
-
-                  <MenuToggleRow
-                    label="Efeitos sonoros do site"
-                    active={soundEffectsOn}
-                    onToggle={toggleSoundEffects}
-                    activeIcon={<SpeakerIcon className="h-4 w-4" />}
-                    inactiveIcon={<SpeakerMuteIcon className="h-4 w-4" />}
-                  />
-                  <MenuToggleRow
-                    label="Supressão de ruído"
-                    active={noiseSuppressionOn}
-                    onToggle={toggleNoiseSuppression}
-                    disabled={isMicOn && !noiseSuppressionAvailable}
-                    title={
-                      isMicOn && !noiseSuppressionAvailable
-                        ? "Supressão de ruído indisponível neste navegador"
-                        : undefined
-                    }
-                    activeIcon={<NoiseSuppressionIcon className="h-4 w-4" />}
-                    inactiveIcon={<NoiseSuppressionOffIcon className="h-4 w-4" />}
-                  />
-                  <MenuToggleRow
-                    label="Entrar em transmissões automaticamente"
-                    active={autoJoin}
-                    onToggle={toggleAutoJoin}
-                    title="Quando desligado, uma nova tela/câmera só conecta depois que você clicar pra assistir"
-                    activeIcon={<EyeIcon className="h-4 w-4" />}
-                    inactiveIcon={<EyeOffIcon className="h-4 w-4" />}
-                  />
-                  <MenuToggleRow
-                    label="Impedir conexões diretas"
-                    active={forceRelayIce}
-                    onToggle={toggleForceRelayIce}
-                    disabled={!TURN_CONFIGURED}
-                    title={
-                      TURN_CONFIGURED
-                        ? "Força suas conexões a passar por um servidor TURN em vez de P2P direto, sem revelar seu IP para outros participantes"
-                        : "Indisponível: nenhum servidor TURN configurado neste site"
-                    }
-                    activeIcon={<ShieldIcon className="h-4 w-4" />}
-                    inactiveIcon={<ShieldOffIcon className="h-4 w-4" />}
-                  />
-                  {forceRelayIce && (
-                    <p className="mb-1 px-2 text-xs text-amber-600 dark:text-amber-500">
-                      Suas conexões passam sempre por um servidor intermediário, sem revelar seu IP a quem você assiste ou transmite. Isso pode deixar a transmissão com mais atraso e piorar a qualidade.
-                    </p>
-                  )}
-                  <div className="my-2 border-t border-zinc-200 dark:border-zinc-800" />
-
-                  <div className="sm:hidden">
-                    <button
-                      type="button"
-                      onClick={() => setQualityOpen((q) => !q)}
-                      title="Qualidade da transmissão — reduza se a sala estiver travando"
-                      className="rounded-lg px-2 py-2 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                    >
-                      Qualidade: {shareResolution} · {shareFps}fps
-                    </button>
-                    {qualityOpen && (
-                      <div className="mx-2 mb-1">
-                        <QualityControls {...qualityControlsProps} />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* A logged-in account's room name is locked server-side
-                      to its account record (see server/signaling.ts's
-                      "register" handler) — offering a rename control here
-                      would just error on every attempt (or worse, silently
-                      look like it did nothing), so it's hidden entirely
-                      instead of a confusing dead end. */}
-                  {!state.account && (
-                    <>
-                      <div className="my-2 border-t border-zinc-200 dark:border-zinc-800" />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setRenaming((r) => {
-                            if (!r) setRenameInput(state.name ?? "");
-                            return !r;
-                          });
-                        }}
-                        className="rounded-lg px-2 py-2 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                      >
-                        Mudar nome
-                      </button>
-                      {renaming && (
-                        <form
-                          onSubmit={handleRenameSubmit}
-                          className="mx-2 mb-1 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900"
-                        >
-                          <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                            Novo nome
-                          </label>
-                          <input
-                            autoFocus
-                            value={renameInput}
-                            onChange={(e) => setRenameInput(e.target.value)}
-                            maxLength={24}
-                            placeholder="Ex: Maria"
-                            className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
-                          />
-                          {state.nameError && <p className="mt-1 text-xs text-red-500">{state.nameError}</p>}
-                          <button
-                            type="submit"
-                            disabled={!renameInput.trim() || renameInput.trim() === state.name}
-                            className="mt-2 w-full rounded-md bg-zinc-950 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
-                          >
-                            Salvar nome
-                          </button>
-                        </form>
-                      )}
-                    </>
-                  )}
-
-                  <div className="my-2 border-t border-zinc-200 dark:border-zinc-800" />
-
-                  <div className="sm:hidden">
-                    <button
-                      type="button"
-                      onClick={() => setSwitching((s) => !s)}
-                      className="rounded-lg px-2 py-2 text-left text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                    >
-                      Trocar de sala
-                    </button>
-                    {switching && (
-                      <div className="mx-2 mb-1">
-                        <SwitchRoomFields
-                          switchInput={switchInput}
-                          setSwitchInput={setSwitchInput}
-                          switchIsPrivate={switchIsPrivate}
-                          setSwitchIsPrivate={setSwitchIsPrivate}
-                          switchError={switchError}
-                          onSubmit={handleSwitchSubmit}
-                        />
-                      </div>
-                    )}
-                  </div>
+                <div className="fixed inset-x-0 bottom-0 z-40 flex max-h-[85vh] flex-col gap-1 overflow-y-auto rounded-t-2xl border-t border-zinc-200 bg-white p-4 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
+                  {menuItems}
                 </div>
               </>
             )}
@@ -1310,24 +1348,39 @@ export function WatchRoom({ handle }: { handle: string }) {
               extra tap, so they get their own quick-access spot right next
               to mic/transmit instead. */}
           <div className="hidden items-center gap-2 border-r border-zinc-300 pr-2 dark:border-zinc-700 sm:flex">
-            <button
-              type="button"
-              onClick={handleCopyLink}
-              title={linkCopied ? "Link copiado!" : "Compartilhar sala"}
-              className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${linkCopied
-                ? "border-emerald-600 text-emerald-600 dark:border-emerald-500 dark:text-emerald-500"
-                : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                }`}
+            <Tooltip content={linkCopied ? "Link copiado!" : "Copiar o link desta sala"}>
+              <button
+                type="button"
+                onClick={handleCopyLink}
+                className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${linkCopied
+                  ? "border-emerald-600 text-emerald-600 dark:border-emerald-500 dark:text-emerald-500"
+                  : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                  }`}
+              >
+                {linkCopied ? <CheckIcon className="h-4 w-4" /> : <LinkIcon className="h-4 w-4" />}
+                {linkCopied ? "Copiado!" : "Compartilhar sala"}
+              </button>
+            </Tooltip>
+            <Popover
+              open={switching}
+              onClose={() => setSwitching(false)}
+              placement="bottom-end"
+              content={
+                <div className="w-72 max-w-[calc(100vw-1rem)]">
+                  <SwitchRoomFields
+                    switchInput={switchInput}
+                    setSwitchInput={setSwitchInput}
+                    switchIsPrivate={switchIsPrivate}
+                    setSwitchIsPrivate={setSwitchIsPrivate}
+                    switchError={switchError}
+                    onSubmit={handleSwitchSubmit}
+                  />
+                </div>
+              }
             >
-              {linkCopied ? <CheckIcon className="h-4 w-4" /> : <LinkIcon className="h-4 w-4" />}
-              {linkCopied ? "Copiado!" : "Compartilhar sala"}
-            </button>
-            <div className="relative">
               <button
                 type="button"
                 onClick={() => setSwitching((s) => !s)}
-                aria-expanded={switching}
-                title="Trocar de sala"
                 className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${switching
                   ? "border-zinc-400 bg-zinc-100 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
                   : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
@@ -1335,50 +1388,17 @@ export function WatchRoom({ handle }: { handle: string }) {
               >
                 Trocar de sala
               </button>
-              {switching && (
-                <>
-                  <div className="fixed inset-0 z-30" onClick={() => setSwitching(false)} />
-                  <div className="absolute right-0 top-full z-40 mt-2 w-72">
-                    <SwitchRoomFields
-                      switchInput={switchInput}
-                      setSwitchInput={setSwitchInput}
-                      switchIsPrivate={switchIsPrivate}
-                      setSwitchIsPrivate={setSwitchIsPrivate}
-                      switchError={switchError}
-                      onSubmit={handleSwitchSubmit}
-                    />
-                  </div>
-                </>
-              )}
-            </div>
+            </Popover>
           </div>
 
-          <div className="relative flex items-stretch">
-            <button
-              type="button"
-              onClick={() => setMicDeviceMenuOpen((o) => !o)}
-              aria-expanded={micDeviceMenuOpen}
-              title="Escolher microfone"
-              aria-label="Escolher microfone"
-              className={`rounded-l-lg border-r border-black/15 px-1 text-white transition ${isMicOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
-                }`}
-            >
-              <ChevronDownIcon className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={toggleMic}
-              title={isMicOn ? "Desativar microfone" : "Ativar microfone"}
-              aria-label={isMicOn ? "Desativar microfone" : "Ativar microfone"}
-              className={`rounded-r-lg p-2 text-white transition ${isMicOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
-                }`}
-            >
-              {isMicOn ? <MicIcon className="h-5 w-5" /> : <MicOffIcon className="h-5 w-5" />}
-            </button>
-            {micDeviceMenuOpen && (
-              <>
-                <div className="fixed inset-0 z-30" onClick={() => setMicDeviceMenuOpen(false)} />
-                <div className="absolute left-0 top-full z-40 mt-2 w-64 rounded-lg border border-zinc-300 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+          <div className="flex items-stretch">
+            <Popover
+              open={micDeviceMenuOpen}
+              onClose={() => setMicDeviceMenuOpen(false)}
+              placement="bottom-start"
+              tooltip="Escolher microfone"
+              content={
+                <div className="w-64 max-w-[calc(100vw-1rem)] rounded-lg border border-zinc-300 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
                   <DeviceMenuOption
                     label="Padrão do sistema"
                     selected={micDeviceId === null}
@@ -1399,64 +1419,88 @@ export function WatchRoom({ handle }: { handle: string }) {
                     />
                   ))}
                 </div>
-              </>
-            )}
-          </div>
-
-          <div className="relative flex items-stretch">
-            {canSelectSpeaker && (
+              }
+            >
               <button
                 type="button"
-                onClick={() => setSpeakerDeviceMenuOpen((o) => !o)}
-                aria-expanded={speakerDeviceMenuOpen}
-                title="Escolher saída de áudio"
-                aria-label="Escolher saída de áudio"
-                className={`rounded-l-lg border-r border-black/15 px-1 text-white transition ${micsMuted ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
+                onClick={() => setMicDeviceMenuOpen((o) => !o)}
+                aria-label="Escolher microfone"
+                className={`rounded-l-lg border-r border-black/15 px-1 text-white transition ${isMicOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
                   }`}
               >
                 <ChevronDownIcon className="h-3.5 w-3.5" />
               </button>
-            )}
-            <button
-              type="button"
-              onClick={toggleMicsMuted}
-              title={micsMuted ? "Reativar microfones" : "Silenciar microfones"}
-              aria-label={micsMuted ? "Reativar microfones" : "Silenciar microfones"}
-              className={`p-2 text-white transition ${canSelectSpeaker ? "rounded-r-lg" : "rounded-lg"} ${micsMuted ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
-                }`}
-            >
-              {micsMuted ? (
-                <HeadphonesOffIcon className="h-5 w-5" />
-              ) : (
-                <HeadphonesIcon className="h-5 w-5" />
-              )}
-            </button>
-            {speakerDeviceMenuOpen && (
-              <>
-                <div className="fixed inset-0 z-30" onClick={() => setSpeakerDeviceMenuOpen(false)} />
-                <div className="absolute left-0 top-full z-40 mt-2 w-64 rounded-lg border border-zinc-300 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
-                  <DeviceMenuOption
-                    label="Padrão do sistema"
-                    selected={speakerDeviceId === null}
-                    onClick={() => {
-                      setSpeakerDevice(null);
-                      setSpeakerDeviceMenuOpen(false);
-                    }}
-                  />
-                  {speakerDevices.map((d) => (
+            </Popover>
+            <Tooltip content={isMicOn ? "Desativar microfone" : "Ativar microfone"}>
+              <button
+                type="button"
+                onClick={toggleMic}
+                aria-label={isMicOn ? "Desativar microfone" : "Ativar microfone"}
+                className={`rounded-r-lg p-2 text-white transition ${isMicOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
+                  }`}
+              >
+                {isMicOn ? <MicIcon className="h-5 w-5" /> : <MicOffIcon className="h-5 w-5" />}
+              </button>
+            </Tooltip>
+          </div>
+
+          <div className="flex items-stretch">
+            {canSelectSpeaker && (
+              <Popover
+                open={speakerDeviceMenuOpen}
+                onClose={() => setSpeakerDeviceMenuOpen(false)}
+                placement="bottom-start"
+                tooltip="Escolher saída de áudio"
+                content={
+                  <div className="w-64 max-w-[calc(100vw-1rem)] rounded-lg border border-zinc-300 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
                     <DeviceMenuOption
-                      key={d.deviceId}
-                      label={d.label}
-                      selected={speakerDeviceId === d.deviceId}
+                      label="Padrão do sistema"
+                      selected={speakerDeviceId === null}
                       onClick={() => {
-                        setSpeakerDevice(d.deviceId);
+                        setSpeakerDevice(null);
                         setSpeakerDeviceMenuOpen(false);
                       }}
                     />
-                  ))}
-                </div>
-              </>
+                    {speakerDevices.map((d) => (
+                      <DeviceMenuOption
+                        key={d.deviceId}
+                        label={d.label}
+                        selected={speakerDeviceId === d.deviceId}
+                        onClick={() => {
+                          setSpeakerDevice(d.deviceId);
+                          setSpeakerDeviceMenuOpen(false);
+                        }}
+                      />
+                    ))}
+                  </div>
+                }
+              >
+                <button
+                  type="button"
+                  onClick={() => setSpeakerDeviceMenuOpen((o) => !o)}
+                  aria-label="Escolher saída de áudio"
+                  className={`rounded-l-lg border-r border-black/15 px-1 text-white transition ${micsMuted ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
+                    }`}
+                >
+                  <ChevronDownIcon className="h-3.5 w-3.5" />
+                </button>
+              </Popover>
             )}
+            <Tooltip content={micsMuted ? "Reativar microfones" : "Silenciar microfones"}>
+              <button
+                type="button"
+                onClick={toggleMicsMuted}
+                aria-label={micsMuted ? "Reativar microfones" : "Silenciar microfones"}
+                className={`p-2 text-white transition ${canSelectSpeaker ? "rounded-r-lg" : "rounded-lg"} ${micsMuted ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
+                  }`}
+              >
+                {micsMuted ? (
+                  <HeadphonesOffIcon className="h-5 w-5" />
+                ) : (
+                  <HeadphonesIcon className="h-5 w-5" />
+                )}
+              </button>
+            </Tooltip>
           </div>
 
           {isSharing ? (
@@ -1525,17 +1569,19 @@ export function WatchRoom({ handle }: { handle: string }) {
             </button>{" "}
             pra reservar seu nome e manter suas configurações. Mas só se quiser, é opcional :)
           </p>
-          <button
-            type="button"
-            onClick={() => {
-              setGuestBannerDismissed(true);
-              setStoredGuestAccountBannerDismissed(true);
-            }}
-            aria-label="Fechar aviso"
-            className="shrink-0 text-lg leading-none text-blue-500 transition hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200"
-          >
-            ×
-          </button>
+          <Tooltip content="Fechar aviso">
+            <button
+              type="button"
+              onClick={() => {
+                setGuestBannerDismissed(true);
+                setStoredGuestAccountBannerDismissed(true);
+              }}
+              aria-label="Fechar aviso"
+              className="shrink-0 text-lg leading-none text-blue-500 transition hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200"
+            >
+              ×
+            </button>
+          </Tooltip>
         </div>
       )}
 

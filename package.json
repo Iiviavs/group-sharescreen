@@ -13,6 +13,7 @@
   "dependencies": {
     "@sapphi-red/web-noise-suppressor": "^0.4.0",
     "@tailwindcss/postcss": "^4",
+    "@tippyjs/react": "^4.2.6",
     "next": "16.3.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",

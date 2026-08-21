@@ -5,6 +5,7 @@ import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { InstallAppButton } from "@/components/InstallAppButton";
 import { AuthProvider } from "@/lib/AuthContext";
 import "./globals.css";
+import SupressErrors from "./middlewares/SupressErrors";
 
 const UMAMI_WEBSITE_ID = process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID;
 const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
@@ -138,11 +139,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
-        <AuthProvider>
-          <AnnouncementBanner />
-          {children}
-          <InstallAppButton />
-        </AuthProvider>
+        <SupressErrors>
+          <AuthProvider>
+            <AnnouncementBanner />
+            {children}
+            <InstallAppButton />
+          </AuthProvider>
+        </SupressErrors>
         {UMAMI_WEBSITE_ID && (
           <Script
             // src="/api/umami/script.js"

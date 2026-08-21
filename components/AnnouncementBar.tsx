@@ -1,6 +1,7 @@
 "use client";
 
 import { ANNOUNCEMENT_COLOR_PRESETS, type Announcement } from "@/lib/announcement";
+import { Tooltip } from "@/components/Tooltip";
 
 // Pure presentational — reused both by the real site-wide banner
 // (AnnouncementBanner, wired to signalingClient) and by the admin panel's
@@ -54,16 +55,17 @@ export function AnnouncementBar({
             </button>
           )}
           {announcement.dismissible && onDismiss && (
-            <button
-              type="button"
-              onClick={onDismiss}
-              aria-label="Fechar aviso"
-              title="Fechar aviso"
-              className="text-lg leading-none opacity-80 transition hover:opacity-100"
-              style={{ color: preset.text }}
-            >
-              ×
-            </button>
+            <Tooltip content="Fechar aviso">
+              <button
+                type="button"
+                onClick={onDismiss}
+                aria-label="Fechar aviso"
+                className="text-lg leading-none opacity-80 transition hover:opacity-100"
+                style={{ color: preset.text }}
+              >
+                ×
+              </button>
+            </Tooltip>
           )}
         </div>
       )}

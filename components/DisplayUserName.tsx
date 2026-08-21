@@ -1,4 +1,5 @@
 import { VerifiedBadgeIcon } from "./icons";
+import { Tooltip } from "./Tooltip";
 
 // Single place that renders a person's display name — every "name" shown
 // anywhere in the app (participant list, video tile labels, chat messages,
@@ -34,11 +35,12 @@ export function DisplayUserName({
       )}
       {isGuest && <span className="font-normal text-zinc-500" style={{ marginLeft: "4px" }}>(guest)</span>}
       {connectionLost && (
-        <span
-          title="Conexão perdida com essa pessoa — tentando reconectar"
-          aria-label="Conexão perdida"
-          className="ml-1.5 inline-block h-2 w-2 shrink-0 rounded-full bg-red-500 align-middle"
-        />
+        <Tooltip content="Conexão perdida com essa pessoa — tentando reconectar">
+          <span
+            aria-label="Conexão perdida"
+            className="ml-1.5 inline-block h-2 w-2 shrink-0 rounded-full bg-red-500 align-middle"
+          />
+        </Tooltip>
       )}
     </span>
   );

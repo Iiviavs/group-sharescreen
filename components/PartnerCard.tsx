@@ -7,6 +7,7 @@ import { useSignaling } from "@/lib/useSignaling";
 import { signalingClient } from "@/lib/signalingClient";
 import { ArrowLeftIcon, ChartIcon, ChevronUpIcon } from "@/components/icons";
 import { PartnerAdCustomizer, type AdForm } from "@/components/PartnerAdCustomizer";
+import { Popover } from "@/components/Tooltip";
 
 const STATS_DASHBOARD_URL = process.env.NEXT_PUBLIC_STATS_DASHBOARD_URL;
 const PEOPLE_COUNT_POLL_MS = 8000;
@@ -238,6 +239,32 @@ export function PartnerCard() {
   const showOnlineWidget = !showingExample && peopleOnline !== null;
   const displayData = showingRealAd ? data : showingExample ? EXAMPLE_PARTNER : FALLBACK_PARTNER;
 
+  // One panel, two possible triggers (the counter inside the house ad, and
+  // the one next to "Anuncie aqui também!" over a real ad) — only ever one of
+  // them is on screen at a time, so they share both this markup and the
+  // statsOpen state.
+  const statsPanel = (
+    <div className="w-72 max-w-[calc(100vw-1rem)] rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-950">
+      <p className="text-xs text-zinc-600 dark:text-zinc-400">
+        Curioso(a) pra saber quantas pessoas estão compartilhando tela agora, quantas
+        salas estão rolando e muito mais? Acompanhe tudo ao vivo no painel de
+        estatísticas do site!
+      </p>
+      {STATS_DASHBOARD_URL && (
+        <a
+          href={STATS_DASHBOARD_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={() => trackEvent("stats_dashboard_opened")}
+          className="mt-2 flex items-center justify-center gap-1.5 rounded-lg bg-zinc-950 px-3 py-1.5 text-center text-xs font-semibold text-white transition hover:opacity-90 dark:bg-zinc-50 dark:text-zinc-950"
+        >
+          <ChartIcon className="h-3.5 w-3.5" />
+          Ver estatísticas ao vivo
+        </a>
+      )}
+    </div>
+  );
+
   return (
     <div className="relative mt-auto w-full shrink-0">
       <button
@@ -258,28 +285,6 @@ export function PartnerCard() {
       </button>
 
       <div className={`${collapsed ? "hidden" : "block"} lg:block`}>
-      {statsOpen && showOnlineWidget && (
-        <div className="absolute inset-x-0 bottom-full z-10 mb-2 rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-950">
-          <p className="text-xs text-zinc-600 dark:text-zinc-400">
-            Curioso(a) pra saber quantas pessoas estão compartilhando tela agora, quantas
-            salas estão rolando e muito mais? Acompanhe tudo ao vivo no painel de
-            estatísticas do site!
-          </p>
-          {STATS_DASHBOARD_URL && (
-            <a
-              href={STATS_DASHBOARD_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => trackEvent("stats_dashboard_opened")}
-              className="mt-2 flex items-center justify-center gap-1.5 rounded-lg bg-zinc-950 px-3 py-1.5 text-center text-xs font-semibold text-white transition hover:opacity-90 dark:bg-zinc-50 dark:text-zinc-950"
-            >
-              <ChartIcon className="h-3.5 w-3.5" />
-              Ver estatísticas ao vivo
-            </a>
-          )}
-        </div>
-      )}
-
       {showingExample && (
         <div className="mb-2">
           <div className="mb-1.5 flex items-center justify-between gap-2">
@@ -311,18 +316,24 @@ export function PartnerCard() {
       {showingRealAd && (
         <div className="mb-1.5 flex items-center gap-2">
           {peopleOnline !== null && (
-            <button
-              type="button"
-              onClick={() => setStatsOpen((open) => !open)}
-              aria-expanded={statsOpen}
-              className="flex shrink-0 items-center gap-1 rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs font-medium text-emerald-600 transition hover:bg-zinc-200 dark:bg-zinc-900 dark:text-emerald-400 dark:hover:bg-zinc-800"
+            <Popover
+              open={statsOpen}
+              onClose={() => setStatsOpen(false)}
+              placement="top"
+              content={statsPanel}
             >
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
-              {peopleOnline} on
-              <ChevronUpIcon
-                className={`h-3 w-3 transition-transform ${statsOpen ? "rotate-180" : ""}`}
-              />
-            </button>
+              <button
+                type="button"
+                onClick={() => setStatsOpen((open) => !open)}
+                className="flex shrink-0 items-center gap-1 rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs font-medium text-emerald-600 transition hover:bg-zinc-200 dark:bg-zinc-900 dark:text-emerald-400 dark:hover:bg-zinc-800"
+              >
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                {peopleOnline} on
+                <ChevronUpIcon
+                  className={`h-3 w-3 transition-transform ${statsOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+            </Popover>
           )}
           <button
             type="button"
@@ -362,18 +373,24 @@ export function PartnerCard() {
       >
         <div className="mb-2 flex items-center justify-between gap-2">
           {showingHouseAdContent && showOnlineWidget && (
-            <button
-              type="button"
-              onClick={() => setStatsOpen((open) => !open)}
-              aria-expanded={statsOpen}
-              className="flex items-center gap-1 text-xs font-medium text-emerald-400 cursor-pointer"
+            <Popover
+              open={statsOpen}
+              onClose={() => setStatsOpen(false)}
+              placement="top"
+              content={statsPanel}
             >
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
-              {peopleOnline} online agora
-              <ChevronUpIcon
-                className={`h-3 w-3 transition-transform ${statsOpen ? "rotate-180" : ""}`}
-              />
-            </button>
+              <button
+                type="button"
+                onClick={() => setStatsOpen((open) => !open)}
+                className="flex items-center gap-1 text-xs font-medium text-emerald-400 cursor-pointer"
+              >
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
+                {peopleOnline} online agora
+                <ChevronUpIcon
+                  className={`h-3 w-3 transition-transform ${statsOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+            </Popover>
           )}
           <span className="shrink-0 rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide opacity-70 dark:bg-white/10">
             Patrocinado

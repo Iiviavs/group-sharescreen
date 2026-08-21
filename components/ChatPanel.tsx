@@ -5,6 +5,7 @@ import type { ChatMessage } from "@/lib/signalingClient";
 import type { GifResult } from "@/app/api/giphy/search/route";
 import { GifPicker } from "@/components/GifPicker";
 import { DisplayUserName } from "@/components/DisplayUserName";
+import { Popover } from "@/components/Tooltip";
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
@@ -86,7 +87,6 @@ export function ChatPanel({
   const [input, setInput] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
-  const gifButtonRef = useRef<HTMLButtonElement>(null);
   // Tracks whether we've already jumped to bottom for the current batch of
   // messages, so a room's preloaded history opens scrolled to the bottom
   // (like a real chat) instead of at the top where it first renders.
@@ -183,24 +183,23 @@ export function ChatPanel({
           onSubmit={handleSubmit}
           className="flex gap-2 border-t border-zinc-200 p-2 dark:border-zinc-800"
         >
-          {pickerOpen && (
-            <GifPicker
-              anchorRef={gifButtonRef}
-              onSelect={handleGifSelect}
-              onClose={() => setPickerOpen(false)}
-            />
-          )}
           {onSendGif && (
-            <button
-              ref={gifButtonRef}
-              type="button"
-              onClick={() => setPickerOpen((open) => !open)}
-              aria-label="Adicionar GIF"
-              aria-expanded={pickerOpen}
-              className="shrink-0 rounded-md border border-zinc-300 px-2.5 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            <Popover
+              open={pickerOpen}
+              onClose={() => setPickerOpen(false)}
+              placement="top-start"
+              content={<GifPicker onSelect={handleGifSelect} />}
+              tooltip="Adicionar GIF"
             >
-              GIF
-            </button>
+              <button
+                type="button"
+                onClick={() => setPickerOpen((open) => !open)}
+                aria-label="Adicionar GIF"
+                className="shrink-0 rounded-md border border-zinc-300 px-2.5 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                GIF
+              </button>
+            </Popover>
           )}
           <input
             value={input}

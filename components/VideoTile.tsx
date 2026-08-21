@@ -14,6 +14,7 @@ import {
   HyperfocusIcon,
 } from "@/components/icons";
 import { VolumeSlider } from "@/components/VolumeSlider";
+import { Tooltip } from "@/components/Tooltip";
 import { MAX_GAIN } from "@/lib/audioGain";
 import { useGainedAudio } from "@/lib/useGainedAudio";
 
@@ -247,74 +248,92 @@ export function VideoTile({
           />
         )}
         {allowUnmute && (
-          <button
-            type="button"
-            onClick={() => setIsMuted((m) => !m)}
-            title={isMuted ? "Ativar som" : "Silenciar"}
-            aria-label={isMuted ? "Ativar som" : "Silenciar"}
-            className="rounded-full bg-black/60 p-2 text-white hover:bg-black/80 active:bg-black/80"
-          >
-            {isMuted ? <SpeakerMuteIcon className="h-5 w-5" /> : <SpeakerIcon className="h-5 w-5" />}
-          </button>
+          <Tooltip content={isMuted ? "Ativar som" : "Silenciar"}>
+            <button
+              type="button"
+              onClick={() => setIsMuted((m) => !m)}
+              aria-label={isMuted ? "Ativar som" : "Silenciar"}
+              className="rounded-full bg-black/60 p-2 text-white hover:bg-black/80 active:bg-black/80"
+            >
+              {isMuted ? (
+                <SpeakerMuteIcon className="h-5 w-5" />
+              ) : (
+                <SpeakerIcon className="h-5 w-5" />
+              )}
+            </button>
+          </Tooltip>
         )}
         {pipSupported && (
-          <button
-            type="button"
-            onClick={togglePiP}
-            title={isPiP ? "Sair do picture-in-picture" : "Picture-in-picture"}
-            aria-label={isPiP ? "Sair do picture-in-picture" : "Picture-in-picture"}
-            className="rounded-full bg-black/60 p-2 text-white hover:bg-black/80 active:bg-black/80"
-          >
-            {isPiP ? <PipExitIcon className="h-5 w-5" /> : <PipIcon className="h-5 w-5" />}
-          </button>
+          <Tooltip content={isPiP ? "Sair do picture-in-picture" : "Picture-in-picture"}>
+            <button
+              type="button"
+              onClick={togglePiP}
+              aria-label={isPiP ? "Sair do picture-in-picture" : "Picture-in-picture"}
+              className="rounded-full bg-black/60 p-2 text-white hover:bg-black/80 active:bg-black/80"
+            >
+              {isPiP ? <PipExitIcon className="h-5 w-5" /> : <PipIcon className="h-5 w-5" />}
+            </button>
+          </Tooltip>
         )}
         {onFocus && (
-          <button
-            type="button"
-            onClick={onFocus}
-            title={isSpotlighted ? "Remover destaque" : `Focar em ${nameForLabel}`}
-            aria-label={isSpotlighted ? "Remover destaque" : `Focar em ${nameForLabel}`}
-            aria-pressed={isSpotlighted}
-            className={`rounded-full p-2 text-white active:bg-black/80 ${
-              isSpotlighted ? "bg-emerald-600 hover:bg-emerald-700" : "bg-black/60 hover:bg-black/80"
-            }`}
-          >
-            <FocusIcon className="h-5 w-5" />
-          </button>
+          <Tooltip content={isSpotlighted ? "Remover destaque" : `Focar em ${nameForLabel}`}>
+            <button
+              type="button"
+              onClick={onFocus}
+              aria-label={isSpotlighted ? "Remover destaque" : `Focar em ${nameForLabel}`}
+              aria-pressed={isSpotlighted}
+              className={`rounded-full p-2 text-white active:bg-black/80 ${
+                isSpotlighted
+                  ? "bg-emerald-600 hover:bg-emerald-700"
+                  : "bg-black/60 hover:bg-black/80"
+              }`}
+            >
+              <FocusIcon className="h-5 w-5" />
+            </button>
+          </Tooltip>
         )}
         {onHyperfocus && (
-          <button
-            type="button"
-            onClick={onHyperfocus}
-            title={`Hiperfoco em ${nameForLabel} — esconde as outras transmissões`}
-            aria-label={`Hiperfoco em ${nameForLabel}`}
-            aria-pressed={isHyperfocused}
-            className={`rounded-full p-2 text-white active:bg-black/80 ${
-              isHyperfocused ? "bg-emerald-600 hover:bg-emerald-700" : "bg-black/60 hover:bg-black/80"
-            }`}
-          >
-            <HyperfocusIcon className="h-5 w-5" />
-          </button>
+          <Tooltip content={`Hiperfoco em ${nameForLabel} — esconde as outras transmissões`}>
+            <button
+              type="button"
+              onClick={onHyperfocus}
+              aria-label={`Hiperfoco em ${nameForLabel}`}
+              aria-pressed={isHyperfocused}
+              className={`rounded-full p-2 text-white active:bg-black/80 ${
+                isHyperfocused
+                  ? "bg-emerald-600 hover:bg-emerald-700"
+                  : "bg-black/60 hover:bg-black/80"
+              }`}
+            >
+              <HyperfocusIcon className="h-5 w-5" />
+            </button>
+          </Tooltip>
         )}
-        <button
-          type="button"
-          onClick={toggleFullscreen}
-          title={isFullscreen ? "Sair da tela cheia" : "Tela cheia"}
-          aria-label={isFullscreen ? "Sair da tela cheia" : "Tela cheia"}
-          className="rounded-full bg-black/60 p-2 text-white hover:bg-black/80 active:bg-black/80"
-        >
-          {isFullscreen ? <FullscreenExitIcon className="h-5 w-5" /> : <FullscreenIcon className="h-5 w-5" />}
-        </button>
-        {onStopWatching && (
+        <Tooltip content={isFullscreen ? "Sair da tela cheia" : "Tela cheia"}>
           <button
             type="button"
-            onClick={onStopWatching}
-            title="Parar de assistir"
-            aria-label="Parar de assistir"
+            onClick={toggleFullscreen}
+            aria-label={isFullscreen ? "Sair da tela cheia" : "Tela cheia"}
             className="rounded-full bg-black/60 p-2 text-white hover:bg-black/80 active:bg-black/80"
           >
-            <EyeOffIcon className="h-5 w-5" />
+            {isFullscreen ? (
+              <FullscreenExitIcon className="h-5 w-5" />
+            ) : (
+              <FullscreenIcon className="h-5 w-5" />
+            )}
           </button>
+        </Tooltip>
+        {onStopWatching && (
+          <Tooltip content="Parar de assistir">
+            <button
+              type="button"
+              onClick={onStopWatching}
+              aria-label="Parar de assistir"
+              className="rounded-full bg-black/60 p-2 text-white hover:bg-black/80 active:bg-black/80"
+            >
+              <EyeOffIcon className="h-5 w-5" />
+            </button>
+          </Tooltip>
         )}
       </div>
     </div>

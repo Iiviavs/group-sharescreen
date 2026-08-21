@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { fetchBans, banIp, unbanIp, type IpBan } from "@/lib/adminApi";
+import { Tooltip } from "@/components/Tooltip";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -96,15 +97,16 @@ export function IpBansPanel() {
           placeholder="Motivo (opcional)"
           className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
         />
-        <input
-          value={durationMinutes}
-          onChange={(e) => setDurationMinutes(e.target.value)}
-          type="number"
-          min={1}
-          placeholder="Minutos (vazio = permanente)"
-          title="Duração em minutos — deixe vazio para um banimento permanente"
-          className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-        />
+        <Tooltip content="Duração em minutos — deixe vazio para um banimento permanente">
+          <input
+            value={durationMinutes}
+            onChange={(e) => setDurationMinutes(e.target.value)}
+            type="number"
+            min={1}
+            placeholder="Minutos (vazio = permanente)"
+            className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+          />
+        </Tooltip>
         <button
           type="submit"
           disabled={banning || !ip.trim()}

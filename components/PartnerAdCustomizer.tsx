@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { trackEvent } from "@/lib/analytics";
+import { Tooltip } from "@/components/Tooltip";
 
 // Kept separate from PartnerCard's PartnerCardData on purpose — every field
 // here is a plain required string so each input can stay a normal
@@ -60,15 +61,16 @@ export function PartnerAdCustomizer({
               que você imaginou e a gente ainda não pensou. Chama no Discord que nós resolvemos tudo
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Fechar"
-            title="Fechar"
-            className="shrink-0 text-2xl leading-none text-zinc-400 transition hover:text-zinc-700 dark:hover:text-zinc-200"
-          >
-            ×
-          </button>
+          <Tooltip content="Fechar">
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Fechar"
+              className="shrink-0 text-2xl leading-none text-zinc-400 transition hover:text-zinc-700 dark:hover:text-zinc-200"
+            >
+              ×
+            </button>
+          </Tooltip>
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">

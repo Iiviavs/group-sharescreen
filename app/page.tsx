@@ -10,6 +10,7 @@ import { toRoomHandle, fetchPeopleOnline } from "@/lib/roomsApi";
 import { useAuth } from "@/lib/AuthContext";
 import { CreateAccountForm } from "@/components/CreateAccountForm";
 import { GlobeIcon } from "@/components/icons";
+import { Tooltip } from "@/components/Tooltip";
 
 // Mirrors server/signaling.ts's HANDLE_RE — must match exactly, or a name
 // this lets through but the server rejects lands the user in a dead room
@@ -382,14 +383,16 @@ export default function Home() {
             <label htmlFor="room" className={labelClass}>
               Para qual sala você quer ir ou criar?
             </label>
-            <input
-              id="room"
-              autoFocus
-              value={roomInput}
-              onChange={(e) => setRoomInput(e.target.value)}
-              placeholder="Ex: reuniao-time"
-              className={inputClass}
-            />
+            <Tooltip content="De 1 a 32 letras, números, - e _. Se a sala já existir, você entra nela.">
+              <input
+                id="room"
+                autoFocus
+                value={roomInput}
+                onChange={(e) => setRoomInput(e.target.value)}
+                placeholder="Ex: reuniao-time"
+                className={inputClass}
+              />
+            </Tooltip>
             <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
               <input
                 type="checkbox"

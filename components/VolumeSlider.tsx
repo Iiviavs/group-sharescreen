@@ -1,6 +1,7 @@
 "use client";
 
 import { SpeakerIcon, SpeakerMuteIcon } from "./icons";
+import { Tooltip } from "./Tooltip";
 
 function clampVolume(value: number, max: number) {
   return Math.min(max, Math.max(0, value));
@@ -46,39 +47,46 @@ export function VolumeSlider({
   return (
     <div
       className={`${collapseOnIdle ? "group relative z-20" : ""} flex min-w-0 items-center gap-1.5 ${className}`}
-      title={`${label}: ${Math.round(normalizedValue * 100)}%`}
       onClick={(event) => event.stopPropagation()}
     >
       {showIcon &&
         (onToggleMute ? (
-          <button
-            type="button"
-            onClick={handleIconClick}
-            title={muted || normalizedValue === 0 ? "Reativar áudio" : "Silenciar áudio"}
-            aria-label={
-              muted || normalizedValue === 0 ? "Reativar áudio" : "Silenciar áudio"
-            }
-            className="rounded p-1 transition hover:text-zinc-700 dark:hover:text-zinc-200"
+          <Tooltip
+            content={muted || normalizedValue === 0 ? "Reativar áudio" : "Silenciar áudio"}
           >
-            {icon}
-          </button>
+            <button
+              type="button"
+              onClick={handleIconClick}
+              aria-label={
+                muted || normalizedValue === 0 ? "Reativar áudio" : "Silenciar áudio"
+              }
+              className="rounded p-1 transition hover:text-zinc-700 dark:hover:text-zinc-200"
+            >
+              {icon}
+            </button>
+          </Tooltip>
         ) : (
           icon
         ))}
-      <input
-        type="range"
-        min="0"
-        max={max}
-        step="0.01"
-        value={normalizedValue}
-        onChange={(event) => onChange(Number(event.target.value))}
-        aria-label={label}
-        className={`min-w-0 cursor-pointer accent-current transition-opacity duration-150 ${
-          collapseOnIdle
-            ? "pointer-events-none absolute right-6 top-1/2 z-10 w-24 -translate-y-1/2 rounded-full bg-zinc-50/95 px-2 py-1 opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 dark:bg-zinc-900/95"
-            : "h-1.5 w-20 sm:w-24"
-        }`}
-      />
+      {/* The reading sits on the slider itself rather than on the row: a
+          hint on the row would fire for the mute button too, stacking two
+          bubbles over one small control. */}
+      <Tooltip content={`${label}: ${Math.round(normalizedValue * 100)}%`}>
+        <input
+          type="range"
+          min="0"
+          max={max}
+          step="0.01"
+          value={normalizedValue}
+          onChange={(event) => onChange(Number(event.target.value))}
+          aria-label={label}
+          className={`min-w-0 cursor-pointer accent-current transition-opacity duration-150 ${
+            collapseOnIdle
+              ? "pointer-events-none absolute right-6 top-1/2 z-10 w-24 -translate-y-1/2 rounded-full bg-zinc-50/95 px-2 py-1 opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 dark:bg-zinc-900/95"
+              : "h-1.5 w-20 sm:w-24"
+          }`}
+        />
+      </Tooltip>
     </div>
   );
 }

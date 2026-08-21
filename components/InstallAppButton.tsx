@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { trackEvent } from "@/lib/analytics";
 import { DownloadIcon, ShareIcon } from "@/components/icons";
+import { Tooltip } from "@/components/Tooltip";
 
 // Fired by Chromium browsers (Chrome/Edge on Android, desktop Chrome) when
 // the page meets PWA installability criteria (manifest + icons + served
@@ -128,15 +129,16 @@ export function InstallAppButton() {
           Instalar
         </button>
       )}
-      <button
-        type="button"
-        onClick={dismiss}
-        aria-label="Fechar"
-        title="Fechar"
-        className="shrink-0 text-lg leading-none text-zinc-400 transition hover:text-zinc-700 dark:hover:text-zinc-200"
-      >
-        ×
-      </button>
+      <Tooltip content="Fechar">
+        <button
+          type="button"
+          onClick={dismiss}
+          aria-label="Fechar"
+          className="shrink-0 text-lg leading-none text-zinc-400 transition hover:text-zinc-700 dark:hover:text-zinc-200"
+        >
+          ×
+        </button>
+      </Tooltip>
     </div>
   );
 }
