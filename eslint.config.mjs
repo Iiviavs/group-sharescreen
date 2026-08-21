@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored, already-minified third-party assets. Without this, linting
+    // the repo reports dozens of warnings from public/rnnoise's minified
+    // worklet — noise that buries every real finding and trains you to
+    // ignore the output.
+    "public/**",
   ]),
 ]);
 

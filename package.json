@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import ./lib/ts-resolve.mjs --experimental-strip-types --test lib/*.test.mts"
   },
   "dependencies": {
     "@sapphi-red/web-noise-suppressor": "^0.4.0",

@@ -11,6 +11,16 @@ import {
   setStoredMicOn,
   setStoredNoiseSuppressionOn,
 } from "./mediaPreferences";
+import {
+  BEST_TIER,
+  capTier,
+  tierSpec,
+  type QualityTier,
+} from "./videoQuality";
+import { PeerQualityRegistry, type DegradationMode } from "./peerQualityController";
+import { qualityNegotiator } from "./qualityNegotiation";
+import { useMeshCapacity, useMeshTopology, type PeerCapacity } from "./useMeshTopology";
+import { RelayManager, RELAY_ENABLED, type RelayChild } from "./relayLink";
 
 type Channel = "screen" | "camera" | "mic";
 type ShareSource = "display" | "camera";
@@ -18,9 +28,38 @@ type ShareSource = "display" | "camera";
 type SignalData = {
   channel?: Channel;
   role?: "broadcaster" | "viewer";
-  kind?: "offer" | "answer" | "ice" | "stop" | "resume" | "peer-left";
+  // "quality" is a viewer telling us the tier it actually needs, derived
+  // from the size it renders our video at (see qualityNegotiation.ts). The
+  // signalling server relays `data` opaquely, so this kind needed no backend
+  // change to exist.
+  // "capacity" is a peer advertising what it could carry if it were asked to
+  // relay. Collected continuously so that, on the rare occasion the room
+  // stops fitting in a direct mesh, the plan is built from measurements that
+  // already exist rather than from a scramble of probes at the worst moment.
+  // "relay-assign" is the broadcaster telling us to forward what we are
+  // receiving from them on to a list of other viewers (see relayLink.ts).
+  kind?:
+    | "offer"
+    | "answer"
+    | "ice"
+    | "stop"
+    | "resume"
+    | "peer-left"
+    | "quality"
+    | "capacity"
+    | "relay-assign";
   sdp?: RTCSessionDescriptionInit;
   candidate?: RTCIceCandidateInit;
+  tier?: QualityTier;
+  uploadKbps?: number;
+  encodeMpxs?: number;
+  eligibleRelay?: boolean;
+  // Present only on relayed traffic: who originally produced this stream, as
+  // opposed to who forwarded it. The receiving side files the stream under
+  // this so a relayed viewer still sees the real broadcaster's name on the
+  // tile rather than whoever happened to relay it.
+  originId?: string;
+  children?: RelayChild[];
 };
 
 // Mesh P2P means whoever shares their screen uploads one full encode per
@@ -45,6 +84,20 @@ type QualityPreset = {
   height: number;
   frameRate: number;
   maxBitrateKbps: number;
+  // The best tier any viewer may be served at, from the broadcaster's dials.
+  // A viewer asking for more than this is capped; a viewer asking for less
+  // gets less. Nobody is served above it, so the dials still mean something.
+  ceilingTier: QualityTier;
+  // "text" biases the encoder towards a sharp picture and lets frame rate
+  // fall; "motion" does the reverse. Getting this backwards is what turns a
+  // 60fps share into a slideshow — see degradationPreference in
+  // peerQualityController.
+  degradation: DegradationMode;
+  // When false ("smart quality" off) every viewer is pinned to ceilingTier
+  // and their size-based requests are ignored — the broadcaster's pick wins
+  // outright, which is what someone presenting to a few fullscreen viewers
+  // actually wants.
+  honorViewerRequests: boolean;
 };
 
 const RESOLUTION_DIMENSIONS: Record<ShareResolution, { width: number; height: number }> = {
@@ -55,71 +108,23 @@ const RESOLUTION_DIMENSIONS: Record<ShareResolution, { width: number; height: nu
   "360p": { width: 640, height: 360 },
 };
 
-const BITRATE_KBPS: Record<ShareBitrate, number> = {
-  low: 700,
-  medium: 2000,
-  high: 4000,
-  ultra: 8000,
+// Bitrate ceiling per preset. This is now a *ceiling the broadcaster picks*,
+// not a per-viewer target: what each viewer actually receives is the lower of
+// this and the tier their own tile size calls for (see qualityNegotiation).
+const BITRATE_CEILING_TIER: Record<ShareBitrate, QualityTier> = {
+  low: "360p30",
+  medium: "720p30",
+  high: "1080p30",
+  ultra: "1080p60",
 };
 
-// Mesh upload cost grows with every extra viewer, so past a few people in
-// the room the sender's bitrate is throttled down automatically instead of
-// letting the browser keep trying to push the full preset to everyone.
-// Presets that are already conservative have little slack to give up, so
-// they hold out longer before cutting anything; "ultra" has the most room
-// to spare (and the heaviest upload cost per peer to begin with) and starts
-// giving it up first.
-const THROTTLE_START_PEERS: Record<ShareBitrate, number> = {
-  low: 6,
-  medium: 4,
-  high: 3,
-  ultra: 3,
-};
-// kbps shed per peer beyond the start threshold.
-const THROTTLE_STEP_KBPS: Record<ShareBitrate, number> = {
-  low: 40,
-  medium: 120,
-  high: 250,
-  ultra: 400,
-};
-// Never throttled below this, no matter how crowded the room gets.
-const THROTTLE_FLOOR_KBPS: Record<ShareBitrate, number> = {
-  low: 350,
-  medium: 800,
-  high: 1200,
-  ultra: 1500,
-};
-
-function throttledBitrateKbps(preset: ShareBitrate, peerCount: number): number {
-  const base = BITRATE_KBPS[preset];
-  const startAt = THROTTLE_START_PEERS[preset];
-  if (peerCount <= startAt) return base;
-  const excessPeers = peerCount - startAt;
-  const reduced = base - excessPeers * THROTTLE_STEP_KBPS[preset];
-  return Math.max(THROTTLE_FLOOR_KBPS[preset], reduced);
-}
-
-const RESOLUTION_ORDER: ShareResolution[] = ["1440p", "1080p", "720p", "480p", "360p"];
-
-// Same idea as the bitrate throttle, one tier at a time: each peer-count
-// threshold in the list drops resolution one more step. A preset that's
-// already low starts from a shorter (or empty) list, so it takes more
-// people in the room before it has anything left to give up. 1440p steps
-// down sooner than 1080p — it's a heavier encode to begin with, on top of
-// mesh P2P already uploading one full copy per viewer.
-const RESOLUTION_STEP_DOWN_PEERS: Record<ShareResolution, number[]> = {
-  "1440p": [2, 6, 10, 14],
-  "1080p": [3, 10, 14],
-  "720p": [6, 12],
-  "480p": [8],
-  "360p": [],
-};
-
-function throttledResolution(preset: ShareResolution, peerCount: number): ShareResolution {
-  const stepsDown = RESOLUTION_STEP_DOWN_PEERS[preset].filter((threshold) => peerCount >= threshold).length;
-  const targetIndex = Math.min(RESOLUTION_ORDER.indexOf(preset) + stepsDown, RESOLUTION_ORDER.length - 1);
-  return RESOLUTION_ORDER[targetIndex];
-}
+// The peer-count throttle tables that used to live here are gone on purpose.
+// They guessed at cost from a headcount ("4 peers, shed 120 kbps each") while
+// knowing nothing about the two things that actually decide it: how big each
+// viewer renders the video, and how expensive the content really is. They
+// also forced a 1080p share down to 360p at 14+ peers, which made the stated
+// goal of 1080p in a large room unreachable by construction. Both inputs are
+// now measured — see videoQuality, mediaStats and topologyPlanner.
 
 function getPeerCount() {
   return signalingClient.state.peers.length;
@@ -127,10 +132,9 @@ function getPeerCount() {
 function getPeerCountServer() {
   return 0;
 }
-
-// `accountOnly` — WatchRoom.tsx still lists these for a guest (so the
-// picker itself advertises they exist), but renders them as a disabled
-// option suffixed "(conta necessária)" instead of a selectable one.
+// `accountOnly` — WatchRoom.tsx still lists these for a guest (so the picker
+// itself advertises they exist), but renders them as a disabled option
+// suffixed "(conta necessária)" instead of a selectable one.
 export const SHARE_RESOLUTION_OPTIONS: { value: ShareResolution; label: string; accountOnly?: boolean }[] = [
   { value: "1440p", label: "2K (1440p)", accountOnly: true },
   { value: "1080p", label: "1080p" },
@@ -154,34 +158,24 @@ export const SHARE_BITRATE_OPTIONS: { value: ShareBitrate; label: string; accoun
   { value: "ultra", label: "Bitrate ultra (~8 Mbps)", accountOnly: true },
 ];
 
-// Updated sender helper: also controls resolution scale-down and degradation mode.
-// For screen sharing, "maintain-resolution" keeps text and UI crisp by preferring
-// frame-rate drops over blurry pixels when the encoder is under pressure.
-function applySenderBitrateAndScale(
-  sender: RTCRtpSender,
-  maxBitrateKbps: number | undefined,
-  scaleResolutionDownBy: number = 1.0
-) {
-  if (!maxBitrateKbps) return;
-  const params = sender.getParameters();
-  const encodings = params.encodings && params.encodings.length > 0 ? params.encodings : [{}];
-  encodings[0].maxBitrate = Math.round(maxBitrateKbps * 1000);
-  encodings[0].scaleResolutionDownBy = scaleResolutionDownBy;
-  // Prefer dropping frame rate over blurring resolution when bandwidth is tight.
-  // This keeps screen-share text readable even during congestion.
-  params.degradationPreference = "maintain-resolution";
-  params.encodings = encodings;
-  sender.setParameters(params).catch(() => {});
-}
-
-// Prefer VP9 > AV1 > H264 > VP8 for ~30–50% bandwidth savings over VP8 at
-// equivalent quality. Falls back gracefully on browsers that don't support
-// setCodecPreferences or that lack a given codec entirely.
-function applyVideoCodecPreferences(transceiver: RTCRtpTransceiver) {
+// Codec preference. VP9 first for text-heavy screen content (its screen
+// content mode is what keeps small text legible at low bitrate), but AV1 is
+// preferred for motion because it holds up far better at 60fps for the same
+// bits. H264 outranks VP8 in both because it is the one with broad hardware
+// encode support, which matters enormously here: a relay or a busy
+// broadcaster encoding several streams at once lives or dies on whether the
+// GPU can take that work off the main thread.
+//
+// Note the deliberate ordering difference from the previous version, which
+// always put VP9 first regardless of content.
+function applyVideoCodecPreferences(transceiver: RTCRtpTransceiver, mode: DegradationMode) {
   if (typeof RTCRtpSender.getCapabilities !== "function") return;
   const capabilities = RTCRtpSender.getCapabilities("video");
   if (!capabilities?.codecs) return;
-  const order = ["video/VP9", "video/AV1", "video/H264", "video/VP8"];
+  const order =
+    mode === "text"
+      ? ["video/VP9", "video/AV1", "video/H264", "video/VP8"]
+      : ["video/AV1", "video/H264", "video/VP9", "video/VP8"];
   const sorted = [...capabilities.codecs].sort((a, b) => {
     const ia = order.indexOf(a.mimeType);
     const ib = order.indexOf(b.mimeType);
@@ -190,91 +184,15 @@ function applyVideoCodecPreferences(transceiver: RTCRtpTransceiver) {
   try {
     transceiver.setCodecPreferences(sorted);
   } catch {
-    // Ignored — some older browser versions reject the call entirely.
+    // Ignored - some older browser versions reject the call entirely.
   }
 }
-
-// Stats-driven adaptive bitrate controller for a single sender. Polls
-// `remote-inbound-rtp` every 2 s and backs the bitrate off when the peer
-// reports congestion (high packet-loss or RTT), then gradually recovers once
-// the link is healthy again. Operates per peer-connection so a single slow
-// viewer doesn't degrade everyone else's stream.
-//
-// `initialKbps` lets a caller resume a monitor mid-convergence (e.g. after
-// the room's peer count changed the base bitrate) instead of always starting
-// back at 100% of base — see the videoQuality-change effect below, which
-// rescales a peer's last-known kbps by the new base instead of discarding
-// what this monitor learned about that viewer's link.
-//
-// Returns a cleanup function plus a getter for the last-known kbps, so a
-// caller replacing this monitor (as opposed to tearing it down for good) can
-// carry that state into the replacement.
-function startPeerAdaptiveBitrateMonitor(
-  pc: RTCPeerConnection,
-  sender: RTCRtpSender,
-  baseBitrateKbps: number,
-  initialKbps: number = baseBitrateKbps
-): { cleanup: () => void; getCurrentKbps: () => number; baseKbps: number } {
-  // Per-peer mutable state — deliberately not React state so updates are
-  // synchronous inside the interval without triggering re-renders.
-  let currentKbps = Math.min(baseBitrateKbps, Math.max(250, Math.round(initialKbps)));
-  let scaleDown = currentKbps < 500 ? 2.0 : currentKbps < 900 ? 1.5 : 1.0;
-  let healthyStreak = 0;
-
-  const id = setInterval(async () => {
-    // Don't poke a dead connection — both guards needed because some browsers
-    // leave `connectionState` at "disconnected" rather than "failed"/"closed".
-    if (pc.connectionState !== "connected") return;
-    if (sender.track === null) return;
-
-    let fractionLost = 0;
-    let rtt = 0;
-    try {
-      const stats = await pc.getStats(sender.track);
-      stats.forEach((report) => {
-        if (report.type === "remote-inbound-rtp" && report.kind === "video") {
-          const remoteReport = report as { fractionLost?: number; roundTripTime?: number };
-          fractionLost = remoteReport.fractionLost ?? 0;
-          rtt = remoteReport.roundTripTime ?? 0;
-        }
-      });
-    } catch {
-      return; // getStats can throw if the pc is in a transitional state.
-    }
-
-    if (fractionLost > 0.04 || rtt > 0.35) {
-      // Congestion detected — back off 25 %, floor at 250 kbps.
-      healthyStreak = 0;
-      currentKbps = Math.max(250, Math.round(currentKbps * 0.75));
-      // If bitrate is already very constrained, also downscale resolution to
-      // give the encoder headroom — half-res at low bitrate beats full-res
-      // encoded badly (macro-blocking, freezes).
-      scaleDown = currentKbps < 500 ? 2.0 : currentKbps < 900 ? 1.5 : 1.0;
-      applySenderBitrateAndScale(sender, currentKbps, scaleDown);
-    } else if (fractionLost <= 0.01 && rtt < 0.2) {
-      // Link is healthy — cautiously ramp back up (15 % per clean streak of 3).
-      healthyStreak++;
-      if (healthyStreak >= 3 && currentKbps < baseBitrateKbps) {
-        currentKbps = Math.min(baseBitrateKbps, Math.round(currentKbps * 1.15));
-        scaleDown = currentKbps >= baseBitrateKbps * 0.8 ? 1.0 : 1.25;
-        applySenderBitrateAndScale(sender, currentKbps, scaleDown);
-        healthyStreak = 0;
-      }
-    } else {
-      // Neutral zone — reset streak so recovery only happens after a clean run.
-      healthyStreak = 0;
-    }
-  }, 2000);
-
-  return { cleanup: () => clearInterval(id), getCurrentKbps: () => currentKbps, baseKbps: baseBitrateKbps };
-}
-
 // How far apart (in ms) openSendPCsStaggered spaces out opening sendPCs to
-// many peers at once — see its own doc comment for why. 150ms means a
-// 50-person room's initial burst spreads across ~7.5s instead of landing in
-// a single instant, so it no longer clusters entirely inside one
-// wsSignalLimiter window (server/rateLimiter.ts) or spikes the encoder for
-// every peer's addTrack/createOffer at the same moment.
+// many peers at once. 150ms means a 50-person room's burst spreads across
+// ~7.5s instead of landing in a single instant, so it no longer clusters
+// entirely inside one wsSignalLimiter window (server/rateLimiter.ts) or
+// spikes the encoder with every peer's addTrack/createOffer at the same
+// moment.
 const STAGGER_MS = 150;
 
 // If a sendPC hasn't reached "connected" within this long, treat it as dead
@@ -340,12 +258,37 @@ function useBroadcastChannel(
   // peer-list-driven reconnect loop below so it doesn't just re-open a sendPC
   // that was deliberately paused the moment anyone else joins/leaves the room.
   const viewerPausedPeers = useRef<Set<string>>(new Set());
-  // Cleanup functions for per-peer adaptive bitrate monitors (see
-  // startPeerAdaptiveBitrateMonitor). Keyed by peerId; called when the sendPC
-  // for that peer closes so the setInterval is always torn down with the PC.
-  const sendPCMonitors = useRef<
-    Map<string, { cleanup: () => void; getCurrentKbps: () => number; baseKbps: number }>
-  >(new Map());
+  // Owns one PeerQualityController per sendPC: assigned tier plus learned
+  // congestion state. Replaces the old map of per-peer setInterval monitors —
+  // telemetry now comes from the single shared mediaStats pump instead of one
+  // timer and one getStats() pass per peer, which in a 30-person room was 29
+  // uncoordinated polls competing with the encoding those same 29 peers need.
+  const qualityRegistry = useRef(new PeerQualityRegistry());
+  // Tier each viewer has asked us for, from the size they render us at (see
+  // qualityNegotiation). Kept outside the controllers because a request can
+  // arrive before that peer's sendPC exists, and must survive a reconnect.
+  const requestedTiers = useRef<Map<string, QualityTier>>(new Map());
+  // What each peer says it could carry if promoted to relay. Only ever read
+  // when a direct mesh stops fitting — see useMeshTopology.
+  const peerCapacities = useRef<Map<string, PeerCapacity>>(new Map());
+  // Which peer's stream arrived over which connection. Equal to the sender
+  // for everything except relayed traffic — see openRecvPC.
+  const recvOrigins = useRef<Map<string, string>>(new Map());
+  // Source material for anything we are relaying: the pc it arrives on (so a
+  // stall can be detected) and the stream itself (so it can be forwarded).
+  const relaySources = useRef<Map<string, { pc: RTCPeerConnection; stream: MediaStream }>>(new Map());
+  const relays = useRef(new RelayManager());
+  // Peers that a relay is serving on our behalf. We must NOT also open a
+  // direct sendPC to them: doing so would double-encode and double-send the
+  // very stream the cascade exists to avoid sending twice.
+  const relayedAway = useRef<Set<string>>(new Set());
+
+  // Stable getter identities so consumers' effects don't re-run every render.
+  // useCallback rather than a ref holding a closure: reading .current during
+  // render is exactly what the react-hooks/refs rule forbids, and these are
+  // handed out from the render path.
+  const getRequestedTiers = useCallback(() => requestedTiers.current, []);
+  const getPeerCapacities = useCallback(() => peerCapacities.current, []);
   // Pending timers scheduled by openSendPCsStaggered — cleared in stop() so
   // a share that already ended never opens a late connection.
   const staggerTimers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
@@ -377,9 +320,25 @@ function useBroadcastChannel(
     });
   }, []);
   const videoQualityRef = useRef(videoQuality);
+  const qualityCeilingRef = useRef<QualityTier>(videoQuality?.ceilingTier ?? BEST_TIER);
+  const degradationModeRef = useRef<DegradationMode>(videoQuality?.degradation ?? "text");
+  const honorRequestsRef = useRef<boolean>(videoQuality?.honorViewerRequests ?? true);
   useEffect(() => {
     videoQualityRef.current = videoQuality;
+    qualityCeilingRef.current = videoQuality?.ceilingTier ?? BEST_TIER;
+    degradationModeRef.current = videoQuality?.degradation ?? "text";
+    honorRequestsRef.current = videoQuality?.honorViewerRequests ?? true;
   }, [videoQuality]);
+
+  // The tier one peer should actually be served at: their size-based request
+  // capped by our ceiling, or the ceiling flat out when the broadcaster has
+  // turned per-viewer sizing off.
+  const tierForPeer = useCallback((peerId: string): QualityTier => {
+    const ceiling = qualityCeilingRef.current;
+    if (!honorRequestsRef.current) return ceiling;
+    const requested = requestedTiers.current.get(peerId);
+    return requested ? capTier(requested, ceiling) : ceiling;
+  }, []);
 
   const removeRemoteStream = useCallback((peerId: string) => {
     setRemoteStreams((prev) => {
@@ -396,9 +355,11 @@ function useBroadcastChannel(
       pc.close();
       sendPCs.current.delete(peerId);
     }
-    // Stop the per-peer adaptive bitrate monitor if one is running.
-    sendPCMonitors.current.get(peerId)?.cleanup();
-    sendPCMonitors.current.delete(peerId);
+    // Drops this peer's controller and unregisters it from the stats pump.
+    // The requested tier deliberately survives in requestedTiers: a reconnect
+    // should resume at the size that viewer actually renders us at, not snap
+    // back to full quality and have to re-learn it.
+    qualityRegistry.current.remove(peerId);
     pendingSendCandidates.current.delete(peerId);
     const connectTimeout = connectTimeouts.current.get(peerId);
     if (connectTimeout) clearTimeout(connectTimeout);
@@ -414,7 +375,13 @@ function useBroadcastChannel(
         recvPCs.current.delete(peerId);
       }
       pendingRecvCandidates.current.delete(peerId);
-      removeRemoteStream(peerId);
+      // The tile is filed under the origin, not the sender, so a relayed
+      // stream must be removed by origin or it would linger forever.
+      const origin = recvOrigins.current.get(peerId) ?? peerId;
+      recvOrigins.current.delete(peerId);
+      relaySources.current.delete(origin);
+      relays.current.release(origin);
+      removeRemoteStream(origin);
     },
     [removeRemoteStream]
   );
@@ -427,8 +394,12 @@ function useBroadcastChannel(
       closeRecvPC(peerId);
       clearStopped(peerId);
       clearResuming(peerId);
+      // This peer is genuinely gone, so drop the size we were tracking for
+      // their tile — otherwise the periodic re-announce keeps sending quality
+      // requests to someone who left, for as long as the room stays open.
+      if (channel !== "mic") qualityNegotiator.forget(channel as "screen" | "camera", peerId);
     },
-    [closeRecvPC, clearStopped, clearResuming]
+    [closeRecvPC, clearStopped, clearResuming, channel]
   );
 
   // Lets a viewer stop receiving one specific peer's stream without touching
@@ -489,16 +460,19 @@ function useBroadcastChannel(
         if (track.kind === "video") {
           const transceivers = pc.getTransceivers();
           const transceiver = transceivers.find((t) => t.sender === sender);
-          if (transceiver) applyVideoCodecPreferences(transceiver);
+          const mode = degradationModeRef.current;
+          if (transceiver) applyVideoCodecPreferences(transceiver, mode);
 
-          const baseBitrate = videoQualityRef.current?.maxBitrateKbps;
-          applySenderBitrateAndScale(sender, baseBitrate, 1.0);
-
-          if (baseBitrate) {
-            sendPCMonitors.current.get(peerId)?.cleanup();
-            const monitor = startPeerAdaptiveBitrateMonitor(pc, sender, baseBitrate);
-            sendPCMonitors.current.set(peerId, monitor);
-          }
+          // Serve this peer at the lower of what they asked for and the
+          // ceiling we picked. Before their first request arrives we assume
+          // they need the ceiling — erring towards too much quality for a
+          // second or two is far less noticeable than starting everyone at
+          // thumbnail resolution and visibly ramping up.
+          const tier = tierForPeer(peerId);
+          const captureHeight =
+            track.getSettings().height ?? videoQualityRef.current?.height ?? 1080;
+          qualityRegistry.current.setDegradation(mode);
+          qualityRegistry.current.add(peerId, pc, sender, tier, captureHeight);
         }
       });
       pc.onicecandidate = (e) => {
@@ -575,7 +549,7 @@ function useBroadcastChannel(
           scheduleSendRetry(peerId);
         });
     },
-    [channel, closeSendPC, scheduleSendRetry]
+    [channel, closeSendPC, scheduleSendRetry, tierForPeer]
   );
 
   useEffect(() => {
@@ -607,6 +581,45 @@ function useBroadcastChannel(
     [openSendPC]
   );
 
+  // Pushes a topology plan out to the room: tells each relay who to serve,
+  // and stops serving those people directly ourselves.
+  //
+  // Idempotent by design — it runs on every planning pass, and the common
+  // outcome is an empty relay list, in which case it must cost nothing and
+  // change nothing.
+  const applyRelayPlan = useCallback(
+    (relayAssignments: Map<string, RelayChild[]>) => {
+      if (!RELAY_ENABLED) return;
+      const nowRelayed = new Set<string>();
+      for (const children of relayAssignments.values()) {
+        for (const child of children) nowRelayed.add(child.id);
+      }
+
+      for (const [relayId, children] of relayAssignments) {
+        signalingClient.sendSignal(relayId, {
+          channel,
+          role: "broadcaster",
+          kind: "relay-assign",
+          originId: signalingClient.state.selfId ?? undefined,
+          children,
+        });
+      }
+
+      // Someone a relay has taken over: drop our direct connection to them.
+      for (const peerId of nowRelayed) {
+        if (!relayedAway.current.has(peerId) && sendPCs.current.has(peerId)) {
+          closeSendPC(peerId);
+        }
+      }
+      // Someone a relay used to serve but no longer does: we own them again.
+      for (const peerId of relayedAway.current) {
+        if (!nowRelayed.has(peerId) && activeRef.current) openSendPCRef.current(peerId);
+      }
+      relayedAway.current = nowRelayed;
+    },
+    [channel, closeSendPC]
+  );
+
   // Lets the broadcaster change resolution/fps/bitrate mid-share to react to
   // a room bogging down, instead of having to stop and restart the whole
   // capture. Skipped while inactive — a change picked before starting is
@@ -622,33 +635,23 @@ function useBroadcastChannel(
         frameRate: { ideal: videoQuality.frameRate },
       })
       .catch(() => {});
-    for (const [peerId, pc] of sendPCs.current) {
-      const sender = pc.getSenders().find((s) => s.track?.kind === "video");
-      if (sender) {
-        const newBase = videoQuality.maxBitrateKbps;
-        if (newBase) {
-          // Rescale by the monitor's last-known ratio (currentKbps/baseKbps)
-          // instead of resetting to 100% of the new base — otherwise every
-          // peer join/leave in the room (which recomputes this preset) would
-          // wipe out what the monitor learned about each viewer's link and
-          // force it to reconverge from scratch.
-          const prevMonitor = sendPCMonitors.current.get(peerId);
-          const ratio = prevMonitor ? prevMonitor.getCurrentKbps() / prevMonitor.baseKbps : 1.0;
-          const initialKbps = Math.round(newBase * ratio);
-          applySenderBitrateAndScale(
-            sender,
-            initialKbps,
-            initialKbps < 500 ? 2.0 : initialKbps < 900 ? 1.5 : 1.0
-          );
-          prevMonitor?.cleanup();
-          const monitor = startPeerAdaptiveBitrateMonitor(pc, sender, newBase, initialKbps);
-          sendPCMonitors.current.set(peerId, monitor);
-        } else {
-          applySenderBitrateAndScale(sender, newBase, 1.0);
-        }
-      }
+
+    const captureHeight = track?.getSettings().height ?? videoQuality.height;
+    qualityRegistry.current.setCaptureHeight(captureHeight);
+    qualityRegistry.current.setDegradation(videoQuality.degradation);
+
+    // Re-cap every peer against the new ceiling. Crucially this only moves
+    // the *assigned tier*: each controller keeps the congestion ratio it has
+    // learned for that viewer's link. The previous implementation rebuilt
+    // every monitor from scratch here, and since this effect also ran on
+    // every peer-count change, a viewer on a weak link was reset to full
+    // bitrate every time anyone joined or left the room and never converged.
+    for (const peerId of sendPCs.current.keys()) {
+      const controller = qualityRegistry.current.get(peerId);
+      if (!controller) continue;
+      controller.setTier(tierForPeer(peerId));
     }
-  }, [videoQuality]);
+  }, [videoQuality, tierForPeer]);
 
   const stop = useCallback(() => {
     if (!activeRef.current) return;
@@ -658,8 +661,8 @@ function useBroadcastChannel(
     localStreamRef.current = null;
     setLocalStream(null);
     setSource(undefined);
-    for (const monitor of sendPCMonitors.current.values()) monitor.cleanup();
-    sendPCMonitors.current.clear();
+    qualityRegistry.current.clear();
+    requestedTiers.current.clear();
     // Nothing still pending from openSendPCsStaggered should open once this
     // share has already ended.
     for (const timer of staggerTimers.current) clearTimeout(timer);
@@ -691,10 +694,21 @@ function useBroadcastChannel(
     }
     try {
       const stream = await capture(requestedSource);
-      // Give the browser encoder a hint: screen shares prioritize sharp detail
-      // (text/UI readability), camera shares prioritize smooth motion.
+      // contentHint steers the encoder's whole strategy, and the right value
+      // depends entirely on what is being shared — which is why this is a
+      // user-facing choice rather than a constant.
+      //
+      // The previous code hardcoded "detail" for every screen share. That is
+      // correct for code and documents, but for a 60fps game or video it is
+      // actively harmful: combined with maintain-resolution it tells the
+      // encoder to protect sharpness and throw away frames, so a share
+      // advertised as 60fps degrades into a slideshow under any load. Worse,
+      // "detail" is reported to interact badly with VP9 specifically (see
+      // analise/codec-diagnostico.html, which measures this on real content).
+      // Camera is always motion.
+      const hint = channel === "screen" && degradationModeRef.current === "text" ? "text" : "motion";
       stream.getVideoTracks().forEach((track) => {
-        track.contentHint = channel === "screen" ? "detail" : "motion";
+        track.contentHint = hint;
       });
       localStreamRef.current = stream;
       activeRef.current = true;
@@ -725,9 +739,14 @@ function useBroadcastChannel(
   ]);
 
   const openRecvPC = useCallback(
-    (peerId: string) => {
+    // peerId is who is sending to us; originId is who actually produced
+    // the stream. They differ only for relayed traffic. Keeping the recvPC
+    // keyed by sender while filing the stream under the origin is what lets a
+    // relayed viewer still see the real broadcaster on the tile.
+    (peerId: string, originId: string = peerId) => {
       const pc = new RTCPeerConnection(ICE_CONFIG);
       recvPCs.current.set(peerId, pc);
+      recvOrigins.current.set(peerId, originId);
       pc.ontrack = (e) => {
         // Smooth out network jitter for viewers with fluctuating or high-latency
         // connections (absorbs micro-bursts without causing frame freezes).
@@ -738,8 +757,21 @@ function useBroadcastChannel(
             // Ignored on unsupported browsers
           }
         }
-        setRemoteStreams((prev) => ({ ...prev, [peerId]: e.streams[0] }));
-        clearResuming(peerId);
+        const origin = recvOrigins.current.get(peerId) ?? peerId;
+        setRemoteStreams((prev) => ({ ...prev, [origin]: e.streams[0] }));
+        clearResuming(origin);
+        // Only a relay needs to hold on to the pc and stream: it is the source
+        // it will forward, and the thing it must watch for stalls.
+        if (RELAY_ENABLED && channel === "screen") {
+          relaySources.current.set(origin, { pc, stream: e.streams[0] });
+        }
+        // A fresh track means a brand new sender on their side, which has
+        // never heard what size we render them at — so it is currently
+        // encoding at its own ceiling for us. Re-announce immediately rather
+        // than waiting for the next resize or the periodic refresh.
+        if (channel !== "mic") {
+          qualityNegotiator.announce(channel as "screen" | "camera", peerId);
+        }
       };
       pc.onicecandidate = (e) => {
         if (e.candidate) {
@@ -795,7 +827,7 @@ function useBroadcastChannel(
           // two live tracks feeding the same rendered stream (duplicated,
           // echoing audio) rather than one.
           if (recvPCs.current.has(from)) closeRecvPC(from);
-          const thisPc = openRecvPC(from);
+          const thisPc = openRecvPC(from, data.originId ?? from);
           thisPc
             .setRemoteDescription(data.sdp)
             .then(async () => {
@@ -841,7 +873,53 @@ function useBroadcastChannel(
           closeRecvPCFully(from);
         }
       } else if (data.role === "viewer") {
-        if (data.kind === "stop") {
+        if (data.kind === "relay-assign") {
+          // The broadcaster has asked us to forward their stream onward. We
+          // can only do that if we are actually receiving it — if the source
+          // has not arrived yet the assignment is dropped rather than queued,
+          // because by the time it did arrive the plan would likely be stale.
+          if (!RELAY_ENABLED || channel !== "screen") return;
+          const origin = data.originId ?? from;
+          const source = relaySources.current.get(origin);
+          if (!source || !data.children) return;
+          const link = relays.current.ensure(origin, source.stream, source.pc, () => {
+            // Our own source died. Tell the broadcaster so it can re-plan
+            // rather than keep routing people through a dead branch.
+            signalingClient.sendSignal(origin, {
+              channel: "screen",
+              role: "viewer",
+              kind: "capacity",
+              uploadKbps: 0,
+              encodeMpxs: 0,
+              eligibleRelay: false,
+            });
+          });
+          link.setChildren(data.children);
+          return;
+        }
+        if (data.kind === "capacity") {
+          const existing = peerCapacities.current.get(from);
+          const now = Date.now();
+          peerCapacities.current.set(from, {
+            peerId: from,
+            uploadKbps: data.uploadKbps ?? 0,
+            encodeMpxs: data.encodeMpxs ?? 0,
+            eligibleRelay: data.eligibleRelay === true,
+            // firstSeenAt is preserved across updates on purpose: it is how
+            // "has been here a while" is measured, and that is the tiebreak
+            // that stops the planner promoting someone who just walked in and
+            // may walk straight back out.
+            firstSeenAt: existing?.firstSeenAt ?? now,
+            updatedAt: now,
+          });
+        } else if (data.kind === "quality" && data.tier) {
+          // This viewer told us how large they actually render our video.
+          // Recorded even when no sendPC exists yet (a request can beat the
+          // connection, and must survive a reconnect), then applied to the
+          // live controller if there is one.
+          requestedTiers.current.set(from, data.tier);
+          qualityRegistry.current.get(from)?.setTier(tierForPeer(from));
+        } else if (data.kind === "stop") {
           // This peer (as a viewer of OUR stream) asked us to stop sending —
           // free the upload-side connection and remember not to reopen it on
           // our own until they explicitly ask to resume.
@@ -851,6 +929,13 @@ function useBroadcastChannel(
           viewerPausedPeers.current.delete(from);
           if (activeRef.current) openSendPC(from);
         } else if (data.kind === "answer" && data.sdp) {
+          // A relay child answers us, not the original broadcaster, so route
+          // it to the RelayLink before falling through to our own senders.
+          const relayLink = relays.current.findByChild(from);
+          if (relayLink) {
+            relayLink.acceptAnswer(from, data.sdp);
+            return;
+          }
           const pc = sendPCs.current.get(from);
           pc?.setRemoteDescription(data.sdp)
             .then(async () => {
@@ -864,6 +949,11 @@ function useBroadcastChannel(
             })
             .catch(() => {});
         } else if (data.kind === "ice" && data.candidate) {
+          const relayLink = relays.current.findByChild(from);
+          if (relayLink) {
+            relayLink.acceptCandidate(from, data.candidate);
+            return;
+          }
           const pc = sendPCs.current.get(from);
           if (pc && pc.remoteDescription) {
             pc.addIceCandidate(data.candidate).catch(() => {});
@@ -885,6 +975,7 @@ function useBroadcastChannel(
       if (activeRef.current) {
         const readyPeerIds = signalingClient.state.peers
           .filter((peer) => !viewerPausedPeers.current.has(peer.id))
+          .filter((peer) => !relayedAway.current.has(peer.id))
           .map((peer) => peer.id);
         openSendPCsStaggered(readyPeerIds);
       }
@@ -938,6 +1029,7 @@ function useBroadcastChannel(
     closeRecvPCFully,
     clearStopped,
     clearResuming,
+    tierForPeer,
   ]);
 
   useEffect(() => {
@@ -966,6 +1058,12 @@ function useBroadcastChannel(
     resumingPeers,
     stopWatchingPeer,
     resumeWatchingPeer,
+    // Getters, not values: both maps are written on the signalling hot path,
+    // and surfacing them as state would re-render every tile in the room each
+    // time a single viewer resized its window.
+    getRequestedTiers,
+    getPeerCapacities,
+    applyRelayPlan,
   };
 }
 
@@ -1007,14 +1105,22 @@ export function useRoomMedia(room: string) {
   const [shareResolution, setShareResolutionState] = useState<ShareResolution>("1080p");
   const [shareFps, setShareFpsState] = useState<ShareFps>(30);
   const [shareBitrate, setShareBitrateState] = useState<ShareBitrate>("medium");
-  // On by default: automatically steps resolution/bitrate down as the room
-  // fills up (see throttledResolution/throttledBitrateKbps). Turning it off
-  // makes the three dials above absolute again, exactly as picked.
+  // On by default. It no longer means "step quality down as the headcount
+  // rises" — that guessed cost from a number of people while knowing nothing
+  // about how large anyone renders the video. It now means "let each viewer
+  // be served at the tier their own tile actually needs". Turning it off
+  // forces the picked tier on everyone, which is what someone streaming to a
+  // handful of fullscreen viewers may genuinely want.
   const [smartQualityEnabled, setSmartQualityEnabledState] = useState(true);
+  // What is being shared. This drives contentHint, degradationPreference and
+  // codec ordering all at once, and getting it wrong is the difference
+  // between crisp text and a 60fps game that stutters into a slideshow.
+  const [shareProfile, setShareProfileState] = useState<DegradationMode>("text");
   const shareResolutionRef = useRef(shareResolution);
   const shareFpsRef = useRef(shareFps);
   const shareBitrateRef = useRef(shareBitrate);
   const smartQualityEnabledRef = useRef(smartQualityEnabled);
+  const shareProfileRef = useRef(shareProfile);
 
   const setShareResolution = useCallback((value: ShareResolution) => {
     shareResolutionRef.current = value;
@@ -1036,44 +1142,60 @@ export function useRoomMedia(room: string) {
     setSmartQualityEnabledState(value);
     trackEvent(value ? "smart_quality_on" : "smart_quality_off");
   }, []);
+  const setShareProfile = useCallback((value: DegradationMode) => {
+    shareProfileRef.current = value;
+    setShareProfileState(value);
+    // 60fps only makes sense with the motion profile; picking "game" while
+    // the encoder is told to protect resolution is exactly the combination
+    // that produces a stuttering share, so nudge fps down with it.
+    if (value === "text" && shareFpsRef.current > 30) {
+      shareFpsRef.current = 30;
+      setShareFpsState(30);
+    }
+    trackEvent(`screen_share_profile_${value}`);
+  }, []);
 
-  // Other peers in the room (mesh upload targets) — drives the automatic
-  // resolution/bitrate throttle below, and needs to be reactive so it kicks
-  // in/out as people join or leave mid-share, not just when the dials
-  // change. Mirrored into a ref for the same reason as the dials above:
-  // capture() below only runs once per share start.
+  // Other peers in the room. Still surfaced (the UI shows it, and the
+  // topology hook needs it) but deliberately no longer an input to quality:
+  // headcount is a bad proxy for cost, and using it is what previously
+  // forced a 1080p share down to 360p at 14 peers regardless of whether
+  // anyone's link or CPU was actually under strain.
   const peerCount = useSyncExternalStore(signalingClient.subscribe, getPeerCount, getPeerCountServer);
   const peerCountRef = useRef(peerCount);
   useEffect(() => {
     peerCountRef.current = peerCount;
   }, [peerCount]);
 
-  // Recomputed when one of the dials, the smart-quality toggle, or the
-  // room's peer count changes, so this stays a stable reference for
-  // useBroadcastChannel's live-reapply effect in between.
+  // The capture constraints plus the ceiling nobody is served above. Note
+  // what is NOT here any more: peerCount. This object changing is what makes
+  // useBroadcastChannel re-cap every sender, so keeping headcount out of it
+  // means a person joining or leaving no longer perturbs anyone's quality at
+  // all — the per-viewer requests handle that, and they only move the one
+  // viewer whose tile actually changed.
   const screenQualityPreset = useMemo<QualityPreset>(() => {
-    const effectiveResolution = smartQualityEnabled
-      ? throttledResolution(shareResolution, peerCount)
-      : shareResolution;
-    const dims = RESOLUTION_DIMENSIONS[effectiveResolution];
+    const dims = RESOLUTION_DIMENSIONS[shareResolution];
+    const ceiling = BITRATE_CEILING_TIER[shareBitrate];
     return {
       width: dims.width,
       height: dims.height,
       frameRate: shareFps,
-      maxBitrateKbps: smartQualityEnabled
-        ? throttledBitrateKbps(shareBitrate, peerCount)
-        : BITRATE_KBPS[shareBitrate],
+      maxBitrateKbps: tierSpec(ceiling).baseKbps,
+      ceilingTier: ceiling,
+      degradation: shareProfile,
+      honorViewerRequests: smartQualityEnabled,
     };
-  }, [shareResolution, shareFps, shareBitrate, smartQualityEnabled, peerCount]);
+  }, [shareResolution, shareFps, shareBitrate, smartQualityEnabled, shareProfile]);
 
   const screen = useBroadcastChannel(
     "screen",
     room,
     (source) => {
-      const effectiveResolution = smartQualityEnabledRef.current
-        ? throttledResolution(shareResolutionRef.current, peerCountRef.current)
-        : shareResolutionRef.current;
-      const dims = RESOLUTION_DIMENSIONS[effectiveResolution];
+      // Capture at the full picked resolution regardless of room size. The
+      // per-viewer tiers downscale each *sender* independently (see
+      // peerQualityController), so capturing small would only put a hard
+      // ceiling on the one or two people actually watching fullscreen while
+      // saving nothing for the many watching in a grid.
+      const dims = RESOLUTION_DIMENSIONS[shareResolutionRef.current];
       const videoConstraints: MediaTrackConstraints = {
         width: { ideal: dims.width },
         height: { ideal: dims.height },
@@ -1099,10 +1221,12 @@ export function useRoomMedia(room: string) {
     "camera",
     room,
     () => {
-      const effectiveResolution = smartQualityEnabledRef.current
-        ? throttledResolution(shareResolutionRef.current, peerCountRef.current)
-        : shareResolutionRef.current;
-      const dims = RESOLUTION_DIMENSIONS[effectiveResolution];
+      // Capture at the full picked resolution regardless of room size. The
+      // per-viewer tiers downscale each *sender* independently (see
+      // peerQualityController), so capturing small would only put a hard
+      // ceiling on the one or two people actually watching fullscreen while
+      // saving nothing for the many watching in a grid.
+      const dims = RESOLUTION_DIMENSIONS[shareResolutionRef.current];
       return navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: dims.width },
@@ -1121,6 +1245,62 @@ export function useRoomMedia(room: string) {
   useEffect(() => {
     signalingClient.setSharing(screen.active || camera.active);
   }, [screen.active, camera.active]);
+
+  // Capacity measurement and the cascade decision. Both are driven by the
+  // screen channel only: it is the expensive one, and the mic's ~32 kbps is
+  // never what runs a room out of headroom. Keeping audio on a plain mesh is
+  // also deliberate — routing voice through a relay tree would add a hop of
+  // latency to conversation, which is far more noticeable than the same delay
+  // on video.
+  const sharingAnything = screen.active || camera.active;
+  const { capacity, self, reportLoad } = useMeshCapacity();
+  const selfRef = useRef(self);
+  useEffect(() => {
+    selfRef.current = self;
+  }, [self]);
+
+  const contentMultiplierRef = useRef(1);
+  useEffect(() => {
+    contentMultiplierRef.current = capacity.contentMultiplier || 1;
+  }, [capacity.contentMultiplier]);
+  const getContentMultiplier = useCallback(() => contentMultiplierRef.current, []);
+
+  // Keeps the encode-budget estimator honest: it needs to know how much work
+  // we are actually asking the encoder to do before it can tell whether a CPU
+  // limitation means "this device is weak" or "we simply asked for too much".
+  useEffect(() => {
+    if (!sharingAnything) return;
+    const timer = setInterval(() => {
+      reportLoad([...screen.getRequestedTiers().values()]);
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [sharingAnything, reportLoad, screen]);
+
+  const topology = useMeshTopology(
+    sharingAnything,
+    selfRef,
+    screen.getPeerCapacities,
+    screen.getRequestedTiers,
+    getContentMultiplier
+  );
+
+  // Turn the plan into instructions. In the expected case there is no plan at
+  // all (the room fits in a direct mesh) and this hands over an empty map,
+  // which tears down any relays that were running and returns everyone to
+  // being served directly.
+  const applyRelayPlan = screen.applyRelayPlan;
+  useEffect(() => {
+    if (!RELAY_ENABLED) return;
+    const assignments = new Map<string, RelayChild[]>();
+    const selfId = signalingClient.state.selfId;
+    for (const edge of topology.plan?.edges ?? []) {
+      if (edge.depth <= 1 || edge.from === selfId) continue;
+      const list = assignments.get(edge.from) ?? [];
+      list.push({ id: edge.to, tier: edge.tier });
+      assignments.set(edge.from, list);
+    }
+    applyRelayPlan(assignments);
+  }, [topology.plan, applyRelayPlan]);
 
   // Mirrors noiseSuppressionOn below without going stale inside the capture
   // closure, which useBroadcastChannel only ever calls once per mic start
@@ -1204,6 +1384,12 @@ export function useRoomMedia(room: string) {
     setShareBitrate,
     smartQualityEnabled,
     setSmartQualityEnabled,
+    shareProfile,
+    setShareProfile,
+    // Live telemetry, for the share panel: measured uplink, measured content
+    // cost, and whether the room currently needs anyone to relay.
+    meshCapacity: capacity,
+    meshTopology: topology,
 
     isMicOn: mic.active,
     toggleMic,

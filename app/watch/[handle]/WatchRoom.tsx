@@ -17,6 +17,7 @@ import { trackEvent } from "@/lib/analytics";
 import { toRoomHandle, isPrivateRoomHandle } from "@/lib/roomsApi";
 import { useRoomSoundEffects } from "@/lib/useRoomSoundEffects";
 import { getSoundEffectsEnabled, setSoundEffectsEnabled } from "@/lib/soundEffects";
+import { qualityNegotiator } from "@/lib/qualityNegotiation";
 import {
   getStoredMicsMuted,
   setStoredMicsMuted,
@@ -114,7 +115,6 @@ export function WatchRoom({ handle }: { handle: string }) {
     resumeWatchingPeer,
     shareError,
     shareSource,
-    isCameraSharing,
     startCameraShare,
     stopCameraShare,
     localCameraStream,
@@ -127,6 +127,10 @@ export function WatchRoom({ handle }: { handle: string }) {
     shareBitrate,
     setShareBitrate,
     smartQualityEnabled,
+    shareProfile,
+    setShareProfile,
+    meshCapacity,
+    meshTopology,
     setSmartQualityEnabled,
     isMicOn,
     toggleMic,
@@ -698,9 +702,45 @@ export function WatchRoom({ handle }: { handle: string }) {
                               Ativar controle inteligente de qualidade
                             </span>
                             <br />
-                            Reduz resolução e bitrate automaticamente quando a sala tem muita gente. As opções abaixo viram o teto — a qualidade real pode ficar menor.
+                            Envia para cada pessoa só a qualidade que a tela dela realmente usa — quem
+                            está num quadradinho não recebe 1080p à toa. Economiza sua internet e seu
+                            processador. As opções abaixo viram o teto.
                           </span>
                         </label>
+
+                        <div>
+                          <span className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                            O que você está compartilhando
+                          </span>
+                          <div className="grid grid-cols-2 gap-2">
+                            {(
+                              [
+                                { value: "text", label: "Texto / código", hint: "prioriza nitidez" },
+                                { value: "motion", label: "Vídeo / jogo", hint: "prioriza fluidez" },
+                              ] as const
+                            ).map((opt) => (
+                              <button
+                                key={opt.value}
+                                type="button"
+                                onClick={() => setShareProfile(opt.value)}
+                                className={`rounded-md border px-2 py-1.5 text-left text-xs transition ${
+                                  shareProfile === opt.value
+                                    ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
+                                    : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                                }`}
+                              >
+                                <span className="block font-medium">{opt.label}</span>
+                                <span className="block opacity-70">{opt.hint}</span>
+                              </button>
+                            ))}
+                          </div>
+                          {shareProfile === "text" && shareFps > 30 && (
+                            <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">
+                              Acima de 30fps, escolha &quot;Vídeo / jogo&quot; — no modo texto o
+                              navegador descarta quadros para manter a nitidez.
+                            </p>
+                          )}
+                        </div>
 
                         <div>
                           <label
@@ -779,6 +819,38 @@ export function WatchRoom({ handle }: { handle: string }) {
                             ))}
                           </select>
                         </div>
+
+                        {/* Live measurements, shown only while actually
+                            transmitting. This is what the quality decisions
+                            are made from — surfacing it turns "the room is
+                            laggy" into something diagnosable instead of a
+                            guess. */}
+                        {isSharing && meshCapacity.sampledAt > 0 && (
+                          <div className="rounded-md border border-zinc-200 bg-white p-2 text-xs text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400">
+                            <div className="flex justify-between gap-2">
+                              <span>Sua banda de subida</span>
+                              <span className="font-medium text-zinc-900 tabular-nums dark:text-zinc-100">
+                                {meshCapacity.availableOutgoingKbps > 0
+                                  ? `${(meshCapacity.availableOutgoingKbps / 1000).toFixed(1)} Mbps`
+                                  : "medindo…"}
+                              </span>
+                            </div>
+                            <div className="flex justify-between gap-2">
+                              <span>Em uso agora</span>
+                              <span className="font-medium text-zinc-900 tabular-nums dark:text-zinc-100">
+                                {(meshCapacity.usedOutgoingKbps / 1000).toFixed(1)} Mbps
+                              </span>
+                            </div>
+                            {meshCapacity.cpuPressure > 0.25 && (
+                              <p className="mt-1 text-amber-600 dark:text-amber-500">
+                                Seu processador está no limite — baixe a resolução ou os fps.
+                              </p>
+                            )}
+                            {meshTopology.reason && (
+                              <p className="mt-1 text-zinc-700 dark:text-zinc-300">{meshTopology.reason}</p>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1066,6 +1138,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                       volume={transmissionVolumes[volumeKey] ?? 1}
                       onVolumeChange={(volume) => setTransmissionVolume(volumeKey, volume)}
                       fill={isSingleTile}
+                      onRenderedSizeChange={(w, h) => qualityNegotiator.report("screen", peerId, w, h)}
                       onStopWatching={() => stopWatchingPeer(peerId)}
                       onDoubleClick={() => setFocusedPeerId(peerId)}
                     />
@@ -1085,6 +1158,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                       volume={transmissionVolumes[volumeKey] ?? 1}
                       onVolumeChange={(volume) => setTransmissionVolume(volumeKey, volume)}
                       fill={isSingleTile}
+                      onRenderedSizeChange={(w, h) => qualityNegotiator.report("camera", peerId, w, h)}
                       onDoubleClick={() => setFocusedPeerId(peerId)}
                     />
                   );
