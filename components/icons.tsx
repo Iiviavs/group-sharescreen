@@ -587,3 +587,17 @@ export function VerifiedBadgeIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+export function HeartIcon({ className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      stroke="none"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M12 21s-7.5-4.7-9.6-9A5.6 5.6 0 0 1 12 5.6 5.6 5.6 0 0 1 21.6 12c-2.1 4.3-9.6 9-9.6 9Z" />
+    </svg>
+  );
+}

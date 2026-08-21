@@ -59,6 +59,7 @@ import {
   SpeakerIcon,
   SpeakerMuteIcon,
   MoreIcon,
+  HeartIcon,
   ChevronUpIcon,
   ChevronDownIcon,
   EyeIcon,
@@ -1370,7 +1371,20 @@ export function WatchRoom({ handle }: { handle: string }) {
               in here — on a phone, the old one-row-per-button layout
               wrapped into a wall of buttons taller than the video area
               itself. */}
-          <div className="shrink-0">
+          <div className="flex shrink-0 items-center gap-2">
+            <Tooltip content="Apoiar o projeto no LivePix" placement="bottom">
+              <a
+                href="https://livepix.gg/nemtudo"
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => trackEvent("support_project_clicked")}
+                className="flex items-center gap-1.5 rounded-lg border border-pink-300 px-2 py-2 text-sm font-medium text-pink-600 transition hover:bg-pink-50 dark:border-pink-800 dark:text-pink-400 dark:hover:bg-pink-950/40 sm:px-3"
+              >
+                <HeartIcon className="h-5 w-5 shrink-0" />
+                <span className="hidden sm:inline">Apoiar projeto</span>
+              </a>
+            </Tooltip>
+
             <Popover
               open={isDesktopLayout && menuOpen}
               onClose={closeMenu}
