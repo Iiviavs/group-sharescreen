@@ -51,7 +51,6 @@ import {
   SpeakerMuteIcon,
   MoreIcon,
   ChevronUpIcon,
-  ExitHyperfocusIcon,
   EyeIcon,
   EyeOffIcon,
 } from "@/components/icons";
@@ -922,6 +921,13 @@ export function WatchRoom({ handle }: { handle: string }) {
     trackEvent("hyperfocus_exit");
   }
 
+  // The tile's own hyperfocus button is the only entry/exit point (see
+  // VideoTile's isHyperfocused green state) — no separate banner/button.
+  function toggleHyperfocus(id: string) {
+    if (hyperfocusId === id) exitHyperfocus();
+    else enterHyperfocus(id);
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-zinc-50 dark:bg-black">
       <header className="border-b border-black/10 px-3 py-2.5 dark:border-white/10 sm:px-4 sm:py-3">
@@ -1414,22 +1420,6 @@ export function WatchRoom({ handle }: { handle: string }) {
             </div>
           ) : (
             <>
-              {hyperfocusId && (
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm dark:border-emerald-800 dark:bg-emerald-950/40">
-                  <span className="text-emerald-800 dark:text-emerald-300">
-                    Hiperfoco ativo — as outras transmissões foram desconectadas pra economizar
-                    recursos.
-                  </span>
-                  <button
-                    type="button"
-                    onClick={exitHyperfocus}
-                    className="flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-emerald-700"
-                  >
-                    <ExitHyperfocusIcon className="h-4 w-4" />
-                    Sair do hiperfoco
-                  </button>
-                </div>
-              )}
               {!hyperfocusId && spotlightId && hasMultipleShares && (
                 <button
                   type="button"
@@ -1458,7 +1448,8 @@ export function WatchRoom({ handle }: { handle: string }) {
                     className={spotlightId === "self" && !isSingleTile ? "sm:col-span-2 sm:row-span-2" : ""}
                     onFocus={() => toggleSpotlight("self")}
                     isSpotlighted={spotlightId === "self"}
-                    onHyperfocus={() => enterHyperfocus("self")}
+                    onHyperfocus={() => toggleHyperfocus("self")}
+                    isHyperfocused={hyperfocusId === "self"}
                   />
                 )}
                 {hyperfocusVisible && localCameraStream && (
@@ -1473,7 +1464,8 @@ export function WatchRoom({ handle }: { handle: string }) {
                     className={spotlightId === "self" && !isSingleTile ? "sm:col-span-2 sm:row-span-2" : ""}
                     onFocus={() => toggleSpotlight("self")}
                     isSpotlighted={spotlightId === "self"}
-                    onHyperfocus={() => enterHyperfocus("self")}
+                    onHyperfocus={() => toggleHyperfocus("self")}
+                    isHyperfocused={hyperfocusId === "self"}
                   />
                 )}
                 {visibleScreenEntries.map(([peerId, stream]) => {
@@ -1501,7 +1493,8 @@ export function WatchRoom({ handle }: { handle: string }) {
                       onStopWatching={() => stopWatchingPeer(peerId)}
                       onFocus={() => toggleSpotlight(peerId)}
                       isSpotlighted={spotlightId === peerId}
-                      onHyperfocus={() => enterHyperfocus(peerId)}
+                      onHyperfocus={() => toggleHyperfocus(peerId)}
+                      isHyperfocused={hyperfocusId === peerId}
                     />
                   );
                 })}
@@ -1530,7 +1523,8 @@ export function WatchRoom({ handle }: { handle: string }) {
                       onStopWatching={() => stopWatchingCameraPeer(peerId)}
                       onFocus={() => toggleSpotlight(peerId)}
                       isSpotlighted={spotlightId === peerId}
-                      onHyperfocus={() => enterHyperfocus(peerId)}
+                      onHyperfocus={() => toggleHyperfocus(peerId)}
+                      isHyperfocused={hyperfocusId === peerId}
                     />
                   );
                 })}

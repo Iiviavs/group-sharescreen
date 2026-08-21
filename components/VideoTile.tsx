@@ -286,7 +286,7 @@ export function VideoTile({
           <button
             type="button"
             onClick={onHyperfocus}
-            title={`Hiperfoco em ${nameForLabel} — esconde e desconecta as outras transmissões`}
+            title={`Hiperfoco em ${nameForLabel} — esconde as outras transmissões`}
             aria-label={`Hiperfoco em ${nameForLabel}`}
             aria-pressed={isHyperfocused}
             className={`rounded-full p-2 text-white active:bg-black/80 ${
