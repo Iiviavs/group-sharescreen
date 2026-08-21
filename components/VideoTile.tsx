@@ -34,6 +34,7 @@ export function VideoTile({
   fill = false,
   onStopWatching,
   onDoubleClick,
+  onRenderedSizeChange,
 }: {
   stream: MediaStream;
   label: string;
@@ -42,6 +43,13 @@ export function VideoTile({
   allowUnmute?: boolean;
   volume?: number;
   onVolumeChange?: (volume: number) => void;
+  // Reports how large this tile is actually drawn, in CSS pixels. The viewer
+  // uses it to ask the broadcaster for a matching quality tier (see
+  // qualityNegotiation) — in a 30-person grid each tile is ~320px wide, so
+  // without this the sender is encoding 1080p and throwing ~95% of those
+  // pixels away, on their CPU and their uplink both. Omitted for the local
+  // preview, which nobody is sending to us.
+  onRenderedSizeChange?: (width: number, height: number) => void;
   // When true (the lone tile in the room), grow to fill the available
   // space instead of staying locked to a 16:9 card like the grid view.
   fill?: boolean;
@@ -64,8 +72,21 @@ export function VideoTile({
   const [isVideoLoading, setIsVideoLoading] = useState(true);
   const pipSupported = useSyncExternalStore(noopSubscribe, getPipSupported, getPipSupportedServer);
 
-  useEffect(() => {
+  // Resetting the spinner is derived state, not a side effect: it is a pure
+  // function of "the stream changed". React's documented pattern for that is
+  // to adjust during render, which is also cheaper than the effect version —
+  // the effect committed a render with the *old* loading flag and then
+  // immediately re-rendered, and in a 30-tile room with people joining and
+  // leaving that doubled render happened constantly.
+  const [renderedStream, setRenderedStream] = useState(stream);
+  if (renderedStream !== stream) {
+    setRenderedStream(stream);
     setIsVideoLoading(true);
+  }
+
+  // Attaching the stream to the element stays an effect: that genuinely is a
+  // side effect on a DOM node.
+  useEffect(() => {
     if (videoRef.current) videoRef.current.srcObject = stream;
   }, [stream]);
 
@@ -82,6 +103,31 @@ export function VideoTile({
     }
     document.addEventListener("fullscreenchange", onFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
+
+  // Watches the <video> itself rather than the container: the container may
+  // be letterboxed around a differently-shaped video, and it is the video's
+  // own drawn size that decides how many pixels are actually useful.
+  // ResizeObserver (not a resize listener) because most size changes here
+  // come from layout — the grid reflowing as people join, fullscreen, PiP —
+  // and never fire a window resize at all.
+  // Held in a ref so callers may pass an inline arrow without tearing down
+  // and rebuilding the observer on every single render.
+  const sizeCallbackRef = useRef(onRenderedSizeChange);
+  useEffect(() => {
+    sizeCallbackRef.current = onRenderedSizeChange;
+  }, [onRenderedSizeChange]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const observer = new ResizeObserver((entries) => {
+      const box = entries[0]?.contentRect;
+      if (!box) return;
+      sizeCallbackRef.current?.(Math.round(box.width), Math.round(box.height));
+    });
+    observer.observe(video);
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {

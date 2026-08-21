@@ -57,7 +57,14 @@ export default function Home() {
   // gate that one frame renders `restoring` as false for a logged-in
   // account, flashing the "choose name" popups before flipping back.
   const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  // Deferred by a tick rather than set synchronously in the effect: setting
+  // state during the effect body forces a second render pass before the
+  // browser paints, which is the cascading-render pattern React 19 warns
+  // about. Matches the same gate in WatchRoom.
+  useEffect(() => {
+    const id = setTimeout(() => setMounted(true), 0);
+    return () => clearTimeout(id);
+  }, []);
 
   const registered = Boolean(state.name);
   const isAccount = Boolean(state.account);
