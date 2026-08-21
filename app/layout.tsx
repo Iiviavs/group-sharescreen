@@ -7,6 +7,7 @@ import { AuthProvider } from "@/lib/AuthContext";
 import "./globals.css";
 
 const UMAMI_WEBSITE_ID = process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID;
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
 const SITE_URL = "https://golive.nemtudo.me";
 const SITE_NAME = "GoLive";
@@ -146,6 +147,15 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <Script
             src="/api/umami/script.js"
             data-website-id={UMAMI_WEBSITE_ID}
+            strategy="afterInteractive"
+          />
+        )}
+        {TURNSTILE_SITE_KEY && (
+          // render=explicit: lib/turnstile.ts renders its own widget
+          // programmatically (see getTurnstileToken) instead of the script
+          // auto-rendering anything with a "cf-turnstile" class.
+          <Script
+            src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
             strategy="afterInteractive"
           />
         )}

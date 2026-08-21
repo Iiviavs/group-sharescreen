@@ -4,6 +4,7 @@ import { trackEvent } from "./analytics";
 import type { Announcement } from "./announcement";
 import type { Partner } from "./partner";
 import { getAccountToken } from "./accountApi";
+import { getTurnstileToken } from "./turnstile";
 
 // `role: "moderator"` marks a moderator silently watching for moderation
 // (see server/signaling.ts's "admin-join") — present in the peer list so
@@ -59,14 +60,17 @@ export type SignalingState = {
   nameError: string | null;
   account: RegisteredAccount | null;
   room: string | null;
-  // Set when the server rejected our last "join" because someone else — a
-  // provably different guest/account, not just another connection of ours
-  // — already holds this display name in that specific room (see
-  // server/signaling.ts's "join" handler). Cleared as soon as a room is
-  // actually entered. Distinct from nameError: that one is about the name
-  // itself (format, or reserved by an account) and can block before a room
-  // is even chosen; this one only ever happens once a room was targeted.
-  joinError: string | null;
+  // Set when the last "join" attempt failed for a reason that isn't a fresh
+  // retry away: either the server rejected it outright because someone
+  // else — a provably different guest/account, not just another connection
+  // of ours — already holds this display name in that specific room (see
+  // server/signaling.ts's "join" handler and the "join-error" case below),
+  // or performJoin's turnstile verification kept getting rejected past
+  // MAX_JOIN_RETRIES. Cleared as soon as a room is actually entered or a
+  // fresh join attempt starts. Distinct from nameError: that one is about
+  // the name itself (format, or reserved by an account) and can block
+  // before a room is even chosen; this one only ever happens once a room
+  // was targeted.
   peers: PeerInfo[];
   chatMessages: ChatMessage[];
   // Site-wide banner, independent of room — null when none is active. Set
@@ -107,6 +111,7 @@ export type SignalingState = {
   // soon as another send is attempted, so it's a one-shot warning rather
   // than a persistent banner.
   chatBlockedMessage: string | null;
+  joinError: string | null;
 };
 
 type Listener = () => void;
@@ -151,6 +156,19 @@ const initialState: SignalingState = {
   partnerSeq: 0,
   chatBlockedMessage: null,
 };
+
+// How many times performJoin auto-retries after a "turnstile-required"
+// rejection (fetching a fresh token each time) before giving up and
+// surfacing joinError instead — covers a token expiring in flight or one bad
+// verification call without retrying forever if Turnstile is genuinely
+// broken (blocked by an extension, network issue, misconfigured site key).
+const MAX_JOIN_RETRIES = 3;
+// Mirrors server/signaling.ts's TURNSTILE_REVERIFY_INTERVAL_MS — purely an
+// optimization to skip a pointless getTurnstileToken() call once the server
+// would reject a stale connection-level verification anyway; the server is
+// the actual source of truth (a mismatch here just costs one extra
+// "turnstile-required" round trip, already handled by performJoin's retry).
+const TURNSTILE_REVERIFY_INTERVAL_MS = 10 * 60_000;
 
 // Cap on retained chat history per room, to keep memory bounded in a
 // long-running room instead of growing the array forever.
@@ -236,6 +254,17 @@ class SignalingClient {
   // the original register() call did.
   private desiredToken: string | null = null;
   private desiredRoom: string | null = null;
+  // Consecutive "turnstile-required" rejections for the current join
+  // attempt — see MAX_JOIN_RETRIES and performJoin.
+  private joinRetryCount = 0;
+  // Mirrors ClientInfo.turnstileVerifiedAt in server/signaling.ts: once a
+  // join on the current socket has been accepted with a valid token, later
+  // joins (room switches) within TURNSTILE_REVERIFY_INTERVAL_MS skip
+  // fetching a new token entirely — the server remembers this connection
+  // passed recently too. Reset to null every time a new WebSocket is opened
+  // (see ensureSocket), since a fresh connection is always unverified
+  // server-side too.
+  private turnstileVerifiedAt: number | null = null;
   // Set by connect() below — lets a connection stay open (and reconnect
   // after a drop, see scheduleReconnect) purely to receive site-wide pushes
   // like the announcement banner, for a visitor who hasn't registered a name
@@ -286,6 +315,7 @@ class SignalingClient {
       return;
     }
     this.setState({ status: "connecting" });
+    this.turnstileVerifiedAt = null;
     const ws = new WebSocket(WS_URL);
     this.ws = ws;
 
@@ -404,7 +434,13 @@ class SignalingClient {
         if (justMintedGuestToken) {
           this.rawSend({ type: "register", name: msg.name, clientId: getClientId(), token: guestToken });
         }
-        if (this.desiredRoom) this.rawSend({ type: "join", room: this.desiredRoom });
+        // A fresh registration (initial connect, or reconnect) counts as a
+        // new join attempt — reset the retry budget rather than carrying
+        // over count from whatever happened before the connection dropped.
+        if (this.desiredRoom) {
+          this.joinRetryCount = 0;
+          void this.performJoin(this.desiredRoom);
+        }
         break;
       }
       case "register-error":
@@ -438,6 +474,8 @@ class SignalingClient {
         // including a room switch, so a newcomer sees what was said before
         // they arrived.
         const history = Array.isArray(msg.messages) ? (msg.messages as ChatMessage[]) : [];
+        this.joinRetryCount = 0;
+        this.turnstileVerifiedAt = Date.now();
         this.setState({
           room: msg.room as string,
           selfId: msg.selfId as string,
@@ -448,6 +486,21 @@ class SignalingClient {
         });
         trackEvent("room_joined");
         this.roomJoinedListeners.forEach((l) => l());
+        break;
+      }
+      // The server's server/turnstile.ts rejected (or never received) a
+      // valid challenge token for our last "join" — see performJoin, which
+      // fetches a fresh token per attempt since each one is single-use.
+      case "turnstile-required": {
+        if (!this.desiredRoom) break;
+        this.joinRetryCount += 1;
+        if (this.joinRetryCount > MAX_JOIN_RETRIES) {
+          this.setState({
+            joinError: (msg.message as string) ?? "Não foi possível verificar a segurança da sala.",
+          });
+          break;
+        }
+        void this.performJoin(this.desiredRoom);
         break;
       }
       case "peer-joined": {
@@ -599,13 +652,36 @@ class SignalingClient {
 
   joinRoom(room: string) {
     this.desiredRoom = room;
-    if (this.state.name) this.rawSend({ type: "join", room });
+    this.joinRetryCount = 0;
+    this.setState({ joinError: null });
+    if (this.state.name) void this.performJoin(room);
+  }
+
+  // Fetches a fresh Turnstile token (single-use — see lib/turnstile.ts) and
+  // sends the actual "join". Split out from joinRoom() so both the public
+  // entry point and the "turnstile-required" retry path (see
+  // handleMessage) go through the exact same token-fetch-then-send flow.
+  private async performJoin(room: string) {
+    // Verified recently on this socket (see room-state above) — the server
+    // remembers too (ClientInfo.turnstileVerifiedAt) and won't ask again
+    // within the same window, so skip bothering the widget for a token it'll
+    // just ignore.
+    const stillFresh =
+      this.turnstileVerifiedAt !== null &&
+      Date.now() - this.turnstileVerifiedAt < TURNSTILE_REVERIFY_INTERVAL_MS;
+    const turnstileToken = stillFresh ? null : await getTurnstileToken();
+    // Bail if the desired room or our identity changed while the token
+    // fetch was in flight (room switch, logout, disconnect) — sending a
+    // stale join here would either land in the wrong room or get rejected
+    // anyway since the socket/name it was meant for is gone.
+    if (this.desiredRoom !== room || !this.state.name) return;
+    this.rawSend({ type: "join", room, turnstileToken });
   }
 
   leaveRoom() {
     this.desiredRoom = null;
     this.rawSend({ type: "leave" });
-    this.setState({ room: null, peers: [], chatMessages: [] });
+    this.setState({ room: null, peers: [], chatMessages: [], joinError: null });
   }
 
   setSharing(sharing: boolean) {
