@@ -12,6 +12,10 @@ import {
   EyeOffIcon,
   FocusIcon,
   HyperfocusIcon,
+  MicIcon,
+  MicOffIcon,
+  HeadphonesIcon,
+  HeadphonesOffIcon,
 } from "@/components/icons";
 import { VolumeSlider } from "@/components/VolumeSlider";
 import { Tooltip } from "@/components/Tooltip";
@@ -45,6 +49,10 @@ export function VideoTile({
   isSpotlighted = false,
   onHyperfocus,
   isHyperfocused = false,
+  isMicOn,
+  onToggleMic,
+  micsMuted,
+  onToggleMicsMuted,
   className = "",
 }: {
   stream: MediaStream;
@@ -87,12 +95,28 @@ export function VideoTile({
   // hyperfocusId/enterHyperfocus.
   onHyperfocus?: () => void;
   isHyperfocused?: boolean;
+  // The page's own mic controls (see WatchRoom's isMicOn/toggleMic and
+  // micsMuted/toggleMicsMuted) — normally reachable from the header, but the
+  // header is outside the element the Fullscreen API puts on screen when a
+  // tile goes fullscreen on mobile. Surfacing them here, alongside the
+  // fullscreen-tap-to-reveal controls below, is what keeps them reachable
+  // once the header disappears. Omitted where a tile has no business
+  // exposing them (e.g. the admin moderation viewer).
+  isMicOn?: boolean;
+  onToggleMic?: () => void;
+  micsMuted?: boolean;
+  onToggleMicsMuted?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isMuted, setIsMuted] = useState(muted);
   const [internalVolume, setInternalVolume] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // Hover has no equivalent on a touchscreen, so the tap-to-toggle below is
+  // the only way to reveal controls once native fullscreen swallows the
+  // header — defaults to hidden on entry so the video actually gets the
+  // whole screen instead of a permanent button bar across it.
+  const [fullscreenControlsVisible, setFullscreenControlsVisible] = useState(false);
   const [isPiP, setIsPiP] = useState(false);
   // Video keeps showing the last frame's black backdrop until the stream
   // actually has data flowing — surface that gap as a spinner instead of a
@@ -124,11 +148,14 @@ export function VideoTile({
     const video = videoRef.current;
 
     function onFullscreenChange() {
-      setIsFullscreen(document.fullscreenElement === containerRef.current);
+      const nowFullscreen = document.fullscreenElement === containerRef.current;
+      setIsFullscreen(nowFullscreen);
+      if (nowFullscreen) setFullscreenControlsVisible(false);
     }
 
     function onWebkitBeginFullscreen() {
       setIsFullscreen(true);
+      setFullscreenControlsVisible(false);
     }
 
     function onWebkitEndFullscreen() {
@@ -255,7 +282,25 @@ export function VideoTile({
     setIsMuted(nextVolume === 0);
   }
 
+  // Tapping the video itself — not one of the buttons layered over it,
+  // which are siblings rather than descendants of <video> so their clicks
+  // never reach this handler — toggles the controls while fullscreen. Outside
+  // fullscreen the existing hover/touch-always-on behavior is untouched.
+  function handleVideoTap() {
+    if (isFullscreen) setFullscreenControlsVisible((v) => !v);
+  }
+
   const nameForLabel = accessibleLabel ?? "essa transmissão";
+  // A mouse's hover already reveals/hides controls perfectly well, in or out
+  // of fullscreen, so that behavior (the `[@media(hover:hover)]` fragment
+  // below) is left untouched. It's touch devices — no hover to speak of —
+  // that need the tap-to-toggle: outside fullscreen they fall back to
+  // always-on (nothing else can reveal them there), but inside fullscreen
+  // that would just paper the video in permanent buttons, so they start
+  // hidden and only appear once handleVideoTap flips them on.
+  const touchHiddenInFullscreen = isFullscreen && !fullscreenControlsVisible;
+  const overlayVisibilityClass = `${touchHiddenInFullscreen ? "opacity-0 pointer-events-none" : "opacity-100"
+    } [@media(hover:hover)]:pointer-events-auto [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:focus-within:opacity-100 [@media(hover:hover)]:group-hover:opacity-100`;
 
   return (
     <div
@@ -275,6 +320,7 @@ export function VideoTile({
         autoPlay
         playsInline
         onLoadedData={() => setIsVideoLoading(false)}
+        onClick={handleVideoTap}
         className="h-full w-full object-contain bg-black"
       />
       {isVideoLoading && (
@@ -282,7 +328,9 @@ export function VideoTile({
           <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/20 border-t-white/80" />
         </div>
       )}
-      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-linear-to-t from-black/85 to-transparent px-3 py-2">
+      <div
+        className={`absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-linear-to-t from-black/85 to-transparent px-3 py-2 transition-opacity ${overlayVisibilityClass}`}
+      >
         <span className="truncate text-sm font-medium text-white">{label}</span>
         {badge && (
           <span className="rounded-full bg-red-500/90 px-2 py-0.5 text-xs font-semibold text-white">
@@ -290,10 +338,45 @@ export function VideoTile({
           </span>
         )}
       </div>
-      {/* Hidden until hovered, so a busy grid isn't wall-to-wall buttons —
-          but always shown on a touch device, which has no hover state to
-          reveal them with in the first place. */}
-      <div className="absolute right-2 top-2 flex flex-wrap items-center justify-end gap-2 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:focus-within:opacity-100 [@media(hover:hover)]:group-hover:opacity-100">
+      {/* Outside fullscreen: hidden until hovered, so a busy grid isn't
+          wall-to-wall buttons — but always shown on a touch device, which
+          has no hover state to reveal them with in the first place. In
+          fullscreen: hidden until the video itself is tapped (see
+          handleVideoTap), since a touch device has no hover to fall back
+          on and a permanent button bar defeats the point of fullscreen. */}
+      <div
+        className={`absolute right-2 top-2 flex flex-wrap items-center justify-end gap-2 transition-opacity ${overlayVisibilityClass}`}
+      >
+        {isFullscreen && onToggleMic && (
+          <Tooltip content={isMicOn ? "Desativar microfone" : "Ativar microfone"}>
+            <button
+              type="button"
+              onClick={onToggleMic}
+              aria-label={isMicOn ? "Desativar microfone" : "Ativar microfone"}
+              className={`rounded-full p-2 text-white active:bg-black/80 ${isMicOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
+                }`}
+            >
+              {isMicOn ? <MicIcon className="h-5 w-5" /> : <MicOffIcon className="h-5 w-5" />}
+            </button>
+          </Tooltip>
+        )}
+        {isFullscreen && onToggleMicsMuted && (
+          <Tooltip content={micsMuted ? "Reativar microfones" : "Silenciar microfones"}>
+            <button
+              type="button"
+              onClick={onToggleMicsMuted}
+              aria-label={micsMuted ? "Reativar microfones" : "Silenciar microfones"}
+              className={`rounded-full p-2 text-white active:bg-black/80 ${micsMuted ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
+                }`}
+            >
+              {micsMuted ? (
+                <HeadphonesOffIcon className="h-5 w-5" />
+              ) : (
+                <HeadphonesIcon className="h-5 w-5" />
+              )}
+            </button>
+          </Tooltip>
+        )}
         {allowUnmute && (
           <VolumeSlider
             value={volume ?? internalVolume}

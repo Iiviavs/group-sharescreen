@@ -1752,6 +1752,10 @@ export function WatchRoom({ handle }: { handle: string }) {
                     isSpotlighted={spotlightId === "self"}
                     onHyperfocus={() => toggleHyperfocus("self")}
                     isHyperfocused={hyperfocusId === "self"}
+                    isMicOn={isMicOn}
+                    onToggleMic={toggleMic}
+                    micsMuted={micsMuted}
+                    onToggleMicsMuted={toggleMicsMuted}
                   />
                 )}
                 {hyperfocusVisible && localCameraStream && (
@@ -1768,6 +1772,10 @@ export function WatchRoom({ handle }: { handle: string }) {
                     isSpotlighted={spotlightId === "self"}
                     onHyperfocus={() => toggleHyperfocus("self")}
                     isHyperfocused={hyperfocusId === "self"}
+                    isMicOn={isMicOn}
+                    onToggleMic={toggleMic}
+                    micsMuted={micsMuted}
+                    onToggleMicsMuted={toggleMicsMuted}
                   />
                 )}
                 {visibleScreenEntries.map(([peerId, stream]) => {
@@ -1797,6 +1805,10 @@ export function WatchRoom({ handle }: { handle: string }) {
                       isSpotlighted={spotlightId === peerId}
                       onHyperfocus={() => toggleHyperfocus(peerId)}
                       isHyperfocused={hyperfocusId === peerId}
+                      isMicOn={isMicOn}
+                      onToggleMic={toggleMic}
+                      micsMuted={micsMuted}
+                      onToggleMicsMuted={toggleMicsMuted}
                     />
                   );
                 })}
@@ -1827,6 +1839,10 @@ export function WatchRoom({ handle }: { handle: string }) {
                       isSpotlighted={spotlightId === peerId}
                       onHyperfocus={() => toggleHyperfocus(peerId)}
                       isHyperfocused={hyperfocusId === peerId}
+                      isMicOn={isMicOn}
+                      onToggleMic={toggleMic}
+                      micsMuted={micsMuted}
+                      onToggleMicsMuted={toggleMicsMuted}
                     />
                   );
                 })}
