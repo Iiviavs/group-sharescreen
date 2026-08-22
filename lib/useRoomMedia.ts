@@ -277,8 +277,12 @@ function useBroadcastChannel(
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<ShareSource | undefined>(undefined);
-  // Only ever set for the screen channel capturing "display" on Firefox —
-  // see isFirefoxBrowser's doc comment. Surfaced so the UI can tell the
+  // Only ever set for the screen channel capturing "display". True whenever
+  // the resulting stream has no audio track even though one was requested —
+  // covers both Firefox (silently ignores `audio: true`, see capture()
+  // below) and the getDisplayMedia retry-without-audio fallback in capture()
+  // for platforms whose audio backend fails to open (NotReadableError)
+  // while video capture works fine. Surfaced so the UI can tell the
   // broadcaster their system audio isn't actually going out, instead of
   // them assuming it's working because no error was thrown.
   const [systemAudioUnavailable, setSystemAudioUnavailable] = useState(false);
@@ -846,7 +850,9 @@ function useBroadcastChannel(
       setActive(true);
       setSource(requestedSource);
       setSystemAudioUnavailable(
-        channel === "screen" && requestedSource !== "camera" && isFirefoxBrowser()
+        channel === "screen" &&
+          requestedSource !== "camera" &&
+          stream.getAudioTracks().length === 0
       );
       if (channel === "mic") signalingClient.setMic(true);
       else signalingClient.setSharing(true);
@@ -1274,15 +1280,6 @@ function hasCameraCapture() {
   return typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
 }
 
-// Firefox's getDisplayMedia() silently ignores the `audio: true` constraint —
-// no error, no picker checkbox, it just never returns an audio track. Bug
-// open since 2019 (bugzilla.mozilla.org/show_bug.cgi?id=1541425), no fix in
-// sight. Used to warn the user instead of leaving them wondering why their
-// system audio never reaches anyone.
-function isFirefoxBrowser() {
-  return typeof navigator !== "undefined" && /firefox/i.test(navigator.userAgent);
-}
-
 // Most mobile browsers (all of iOS Safari, most of Android Chrome) don't
 // support getDisplayMedia at all, so screen capture from a website simply
 // isn't possible there. Falling back to the device camera lets mobile users
@@ -1455,10 +1452,38 @@ export function useRoomMedia(room: string) {
       // mangles music/game audio into something that sounds noise-gated.
       // Screen/tab audio isn't a voice call, so it should pass through
       // unprocessed — stereo, uncompressed dynamic range.
-      return navigator.mediaDevices.getDisplayMedia({
-        video: videoConstraints,
-        audio: true
-      });
+      const audioConstraints = {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      };
+      return navigator.mediaDevices
+        .getDisplayMedia({ video: videoConstraints, audio: audioConstraints })
+        .catch((err) => {
+          // Requesting system audio can fail for reasons that have nothing
+          // to do with the user's choice in the picker: no default loopback
+          // device, a driver/backend conflict, an OS that doesn't expose
+          // one at all. Chrome/Edge surface that as NotReadableError for
+          // the whole call — video capture would have worked fine on its
+          // own, but getDisplayMedia doesn't offer a partial result, so
+          // without this retry the entire share fails with a message that
+          // tells the user to "check browser permissions" when permissions
+          // were never the problem. Retrying video-only turns that into a
+          // share that still works, just without system audio — same
+          // outcome as Firefox, which silently drops the audio track
+          // instead of erroring (bugzilla.mozilla.org/show_bug.cgi?id=1541425).
+          // NotAllowedError/AbortError (the user cancelling the picker
+          // outright) are deliberately not retried here — start()'s catch
+          // treats those as a silent cancel, and retrying would just pop
+          // the picker again right after they dismissed it.
+          if (err instanceof DOMException && err.name === "NotReadableError") {
+            return navigator.mediaDevices.getDisplayMedia({
+              video: videoConstraints,
+              audio: false,
+            });
+          }
+          throw err;
+        });
     },
     () => hasDisplayCapture() || hasCameraCapture(),
     "Seu navegador não suporta compartilhamento de tela nem câmera.",

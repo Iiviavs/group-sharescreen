@@ -1641,8 +1641,8 @@ export function WatchRoom({ handle }: { handle: string }) {
       {shareSystemAudioUnavailable && !systemAudioNoticeDismissed && (
         <div className="flex items-center justify-between gap-3 bg-amber-50 px-4 py-2 text-sm text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
           <p>
-            O Firefox não suporta compartilhar o áudio do sistema — só a tela será transmitida.
-            Para incluir o som, use o Chrome/Edge ou ative seu microfone.
+            Não foi possível incluir o áudio do sistema — só a tela será transmitida.
+            Para incluir o som, tente novamente ou ative seu microfone.
           </p>
           <button
             type="button"
