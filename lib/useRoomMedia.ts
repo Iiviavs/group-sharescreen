@@ -1457,12 +1457,7 @@ export function useRoomMedia(room: string) {
       // unprocessed — stereo, uncompressed dynamic range.
       return navigator.mediaDevices.getDisplayMedia({
         video: videoConstraints,
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          channelCount: 2,
-        },
+        audio: true
       });
     },
     () => hasDisplayCapture() || hasCameraCapture(),
