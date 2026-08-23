@@ -47,3 +47,12 @@ export function useMediaQuery(query: string): boolean {
 // Tailwind's `sm` breakpoint — the width every "phone layout vs. desktop
 // layout" split in this app is already keyed to.
 export const SM_BREAKPOINT_QUERY = "(min-width: 40rem)";
+
+// Tailwind's `lg` breakpoint — the wider split WatchRoom's participants/chat
+// columns use (see the `lg:` classes there). Needed as a JS boolean, not
+// just `lg:` classes, wherever a breakpoint changes *which* JSX mounts
+// rather than just how it looks — e.g. the same interactive control row
+// living in the header on a phone vs. a bottom bar on desktop. Rendering
+// both and hiding one with CSS would still mount the hidden copy's hooks
+// (device pickers, ChatPanel's own state) twice for nothing.
+export const LG_BREAKPOINT_QUERY = "(min-width: 64rem)";

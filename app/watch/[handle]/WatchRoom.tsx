@@ -68,7 +68,7 @@ import {
   CameraIcon,
 } from "@/components/icons";
 import { Tooltip, Popover } from "@/components/Tooltip";
-import { useMediaQuery, SM_BREAKPOINT_QUERY } from "@/lib/useMediaQuery";
+import { useMediaQuery, SM_BREAKPOINT_QUERY, LG_BREAKPOINT_QUERY } from "@/lib/useMediaQuery";
 import { MdHome } from "react-icons/md";
 import { BsGearFill } from "react-icons/bs";
 
@@ -652,6 +652,13 @@ export function WatchRoom({ handle }: { handle: string }) {
   // false until the first client paint, so the sheet is what a phone gets
   // without waiting on JS to agree.
   const isDesktopLayout = useMediaQuery(SM_BREAKPOINT_QUERY);
+  // From lg up: participants get their own full-height column on the left,
+  // chat one on the right, and the mic/mute/share controls move out of the
+  // header into a bottom bar — see mainControls/participantsSection/
+  // chatSection below. Below lg, all of that stays exactly as it was: the
+  // controls in the header, and participants/chat sharing one pane via the
+  // tab switcher right below.
+  const isWideLayout = useMediaQuery(LG_BREAKPOINT_QUERY);
   // Below lg, the participants list and chat share one pane and take turns
   // via this tab switcher instead of being stacked in one long scroll — see
   // the aside below. Unused (both always shown) from lg up.
@@ -1342,6 +1349,202 @@ export function WatchRoom({ handle }: { handle: string }) {
     </>
   );
 
+  // The mic toggle, mute-mics toggle, and share/camera controls — kept
+  // prominent since they're used mid-call, not just once at setup, unlike
+  // everything else in "Mais opções" above. Same row as "Compartilhar
+  // sala"/"Trocar de sala" at every width.
+  const mainControls = (
+    <>
+      <div className="flex items-stretch">
+        <Popover
+          open={micDeviceMenuOpen}
+          onClose={() => setMicDeviceMenuOpen(false)}
+          placement="bottom-start"
+          tooltip="Escolher microfone"
+          content={
+            <div className="w-64 max-w-[calc(100vw-1rem)] rounded-lg border border-zinc-300 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+              <DeviceMenuOption
+                label="Padrão do sistema"
+                selected={micDeviceId === null}
+                onClick={() => {
+                  setMicDevice(null);
+                  setMicDeviceMenuOpen(false);
+                }}
+              />
+              {micDevices.map((d) => (
+                <DeviceMenuOption
+                  key={d.deviceId}
+                  label={d.label}
+                  selected={micDeviceId === d.deviceId}
+                  onClick={() => {
+                    setMicDevice(d.deviceId);
+                    setMicDeviceMenuOpen(false);
+                  }}
+                />
+              ))}
+            </div>
+          }
+        >
+          <button
+            type="button"
+            onClick={() => setMicDeviceMenuOpen((o) => !o)}
+            aria-label="Escolher microfone"
+            className={`rounded-l-lg border-r border-black/15 px-1 text-white transition ${isMicOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
+              }`}
+          >
+            <ChevronDownIcon className="h-3.5 w-3.5" />
+          </button>
+        </Popover>
+        <Tooltip content={isMicOn ? "Desativar microfone" : "Ativar microfone"}>
+          <button
+            type="button"
+            onClick={toggleMic}
+            aria-label={isMicOn ? "Desativar microfone" : "Ativar microfone"}
+            className={`rounded-r-lg p-2 text-white transition ${isMicOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
+              }`}
+          >
+            {isMicOn ? <MicIcon className="h-5 w-5" /> : <MicOffIcon className="h-5 w-5" />}
+          </button>
+        </Tooltip>
+      </div>
+
+      <div className="flex items-stretch">
+        {canSelectSpeaker && (
+          <Popover
+            open={speakerDeviceMenuOpen}
+            onClose={() => setSpeakerDeviceMenuOpen(false)}
+            placement="bottom-start"
+            tooltip="Escolher saída de áudio"
+            content={
+              <div className="w-64 max-w-[calc(100vw-1rem)] rounded-lg border border-zinc-300 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+                <DeviceMenuOption
+                  label="Padrão do sistema"
+                  selected={speakerDeviceId === null}
+                  onClick={() => {
+                    setSpeakerDevice(null);
+                    setSpeakerDeviceMenuOpen(false);
+                  }}
+                />
+                {speakerDevices.map((d) => (
+                  <DeviceMenuOption
+                    key={d.deviceId}
+                    label={d.label}
+                    selected={speakerDeviceId === d.deviceId}
+                    onClick={() => {
+                      setSpeakerDevice(d.deviceId);
+                      setSpeakerDeviceMenuOpen(false);
+                    }}
+                  />
+                ))}
+              </div>
+            }
+          >
+            <button
+              type="button"
+              onClick={() => setSpeakerDeviceMenuOpen((o) => !o)}
+              aria-label="Escolher saída de áudio"
+              className={`rounded-l-lg border-r border-black/15 px-1 text-white transition ${micsMuted ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
+                }`}
+            >
+              <ChevronDownIcon className="h-3.5 w-3.5" />
+            </button>
+          </Popover>
+        )}
+        <Tooltip content={micsMuted ? "Reativar microfones" : "Silenciar microfones"}>
+          <button
+            type="button"
+            onClick={toggleMicsMuted}
+            aria-label={micsMuted ? "Reativar microfones" : "Silenciar microfones"}
+            className={`p-2 text-white transition ${canSelectSpeaker ? "rounded-r-lg" : "rounded-lg"} ${micsMuted ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
+              }`}
+          >
+            {micsMuted ? (
+              <HeadphonesOffIcon className="h-5 w-5" />
+            ) : (
+              <HeadphonesIcon className="h-5 w-5" />
+            )}
+          </button>
+        </Tooltip>
+      </div>
+
+      <div className="flex items-center border-l border-zinc-300 pl-2 dark:border-zinc-700">
+        <ShareControls
+          screenSharing={Boolean(localStream)}
+          cameraSharing={Boolean(localCameraStream)}
+          screenSupported={screenShareMode === "display"}
+          cameraSupported={screenShareMode !== "unsupported"}
+          onToggleScreen={() => (localStream ? stopShare() : startShare("display"))}
+          onToggleCamera={() => (localCameraStream ? stopCameraShare() : startCameraShare())}
+          open={shareQualityOpen}
+          setOpen={setShareQualityOpen}
+          quality={qualityControlsProps}
+        />
+      </div>
+    </>
+  );
+
+  // Same reasoning as mainControls above — defined once, rendered either in
+  // the shared mobile pane (tab-switched with chatSection) or in its own
+  // full-height column from lg up (see isWideLayout), never both at once.
+  const participantsSection = (
+    <>
+      {connectingAudioPeers && (
+        <p className="mb-1 flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-500">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+          Conectando...
+        </p>
+      )}
+      <h2 className="mb-2 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+        Participantes ({peerCount})
+      </h2>
+      <ul className="flex flex-col gap-1.5">
+        <ParticipantRow
+          name={state.name}
+          isSelf
+          isGuest={!state.account}
+          verified={state.account?.flags?.includes("VERIFIED")}
+          micOn={isMicOn}
+          sharing={isSharing}
+          micStream={localMicStream}
+        />
+        {visiblePeers.map((p) => {
+          const volumeKey = p.userId ?? p.id;
+          return (
+            <ParticipantRow
+              key={p.id}
+              name={p.name}
+              isGuest={p.isGuest}
+              verified={p.flags?.includes("VERIFIED")}
+              micOn={p.mic}
+              sharing={p.sharing}
+              micStream={remoteMicStreams[p.id]}
+              muted={micsMuted || mutedPeerIds.has(p.id)}
+              onToggleMute={() => togglePeerMute(p.id)}
+              volume={peerVolumes[volumeKey] ?? 1}
+              onVolumeChange={(volume) => setPeerVolume(volumeKey, volume)}
+              connectionLost={micConnectionStates[p.id] === "disconnected"}
+            />
+          );
+        })}
+      </ul>
+    </>
+  );
+
+  // Same reasoning again. Capped height in the shared mobile pane (matches
+  // however it always looked there); fills its own column's full height
+  // from lg up instead, where it has the whole right side to itself.
+  const chatSection = (
+    <ChatPanel
+      messages={state.chatMessages}
+      selfId={state.selfId}
+      selfName={state.name}
+      onSend={(text) => signalingClient.sendChatMessage(text)}
+      onSendGif={state.account ? (url) => signalingClient.sendGif(url) : undefined}
+      blockedMessage={state.chatBlockedMessage}
+      heightClassName={isWideLayout ? "flex-1 min-h-0" : "h-[55vh]"}
+    />
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-zinc-50 dark:bg-black">
       <header className="border-b border-black/10 px-3 py-2.5 dark:border-white/10 sm:px-4 sm:py-3">
@@ -1423,16 +1626,21 @@ export function WatchRoom({ handle }: { handle: string }) {
           </div>
         </div>
 
-        {/* The only controls left outside the menu — kept prominent since
-            they're the ones actually used mid-call, not just once at setup.
-            Mute-mics sits immediately right of the mic toggle on purpose. */}
-        <div className="mt-2.5 flex flex-wrap items-center justify-end gap-2 sm:mt-3">
-          {/* Desktop only (hidden below sm) — on a phone these three still
+        {/* Room-level actions (link/switch room) and mainControls
+            (mic/mute-mics/share) share this one row at every width — a
+            3-column grid rather than a plain flex row so mainControls sits
+            in a true center column, independent of how wide the link/switch
+            group next to it is (an empty first column balances it out; a
+            flex row alone couldn't center one group without also being
+            thrown off by the other's width). */}
+        <div className="mt-2.5 grid grid-cols-[1fr_auto_1fr] items-center gap-2 sm:mt-3">
+          <div />
+          <div className="flex flex-wrap items-center justify-center gap-2">{mainControls}</div>
+          {/* Desktop only (hidden below sm) — on a phone these two still
               live inside "Mais opções" (see above), the only place with
               room for them. Above that width there's space to skip the
-              extra tap, so they get their own quick-access spot right next
-              to mic/transmit instead. */}
-          <div className="hidden items-center gap-2 border-r border-zinc-300 pr-2 dark:border-zinc-700 sm:flex">
+              extra tap, so they get their own quick-access spot instead. */}
+          <div className="hidden items-center justify-end gap-2 sm:flex">
             <Tooltip content={linkCopied ? "Link copiado!" : "Copiar o link desta sala"}>
               <button
                 type="button"
@@ -1474,132 +1682,6 @@ export function WatchRoom({ handle }: { handle: string }) {
                 Trocar de sala
               </button>
             </Popover>
-          </div>
-
-          <div className="flex items-stretch">
-            <Popover
-              open={micDeviceMenuOpen}
-              onClose={() => setMicDeviceMenuOpen(false)}
-              placement="bottom-start"
-              tooltip="Escolher microfone"
-              content={
-                <div className="w-64 max-w-[calc(100vw-1rem)] rounded-lg border border-zinc-300 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
-                  <DeviceMenuOption
-                    label="Padrão do sistema"
-                    selected={micDeviceId === null}
-                    onClick={() => {
-                      setMicDevice(null);
-                      setMicDeviceMenuOpen(false);
-                    }}
-                  />
-                  {micDevices.map((d) => (
-                    <DeviceMenuOption
-                      key={d.deviceId}
-                      label={d.label}
-                      selected={micDeviceId === d.deviceId}
-                      onClick={() => {
-                        setMicDevice(d.deviceId);
-                        setMicDeviceMenuOpen(false);
-                      }}
-                    />
-                  ))}
-                </div>
-              }
-            >
-              <button
-                type="button"
-                onClick={() => setMicDeviceMenuOpen((o) => !o)}
-                aria-label="Escolher microfone"
-                className={`rounded-l-lg border-r border-black/15 px-1 text-white transition ${isMicOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
-                  }`}
-              >
-                <ChevronDownIcon className="h-3.5 w-3.5" />
-              </button>
-            </Popover>
-            <Tooltip content={isMicOn ? "Desativar microfone" : "Ativar microfone"}>
-              <button
-                type="button"
-                onClick={toggleMic}
-                aria-label={isMicOn ? "Desativar microfone" : "Ativar microfone"}
-                className={`rounded-r-lg p-2 text-white transition ${isMicOn ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"
-                  }`}
-              >
-                {isMicOn ? <MicIcon className="h-5 w-5" /> : <MicOffIcon className="h-5 w-5" />}
-              </button>
-            </Tooltip>
-          </div>
-
-          <div className="flex items-stretch">
-            {canSelectSpeaker && (
-              <Popover
-                open={speakerDeviceMenuOpen}
-                onClose={() => setSpeakerDeviceMenuOpen(false)}
-                placement="bottom-start"
-                tooltip="Escolher saída de áudio"
-                content={
-                  <div className="w-64 max-w-[calc(100vw-1rem)] rounded-lg border border-zinc-300 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
-                    <DeviceMenuOption
-                      label="Padrão do sistema"
-                      selected={speakerDeviceId === null}
-                      onClick={() => {
-                        setSpeakerDevice(null);
-                        setSpeakerDeviceMenuOpen(false);
-                      }}
-                    />
-                    {speakerDevices.map((d) => (
-                      <DeviceMenuOption
-                        key={d.deviceId}
-                        label={d.label}
-                        selected={speakerDeviceId === d.deviceId}
-                        onClick={() => {
-                          setSpeakerDevice(d.deviceId);
-                          setSpeakerDeviceMenuOpen(false);
-                        }}
-                      />
-                    ))}
-                  </div>
-                }
-              >
-                <button
-                  type="button"
-                  onClick={() => setSpeakerDeviceMenuOpen((o) => !o)}
-                  aria-label="Escolher saída de áudio"
-                  className={`rounded-l-lg border-r border-black/15 px-1 text-white transition ${micsMuted ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
-                    }`}
-                >
-                  <ChevronDownIcon className="h-3.5 w-3.5" />
-                </button>
-              </Popover>
-            )}
-            <Tooltip content={micsMuted ? "Reativar microfones" : "Silenciar microfones"}>
-              <button
-                type="button"
-                onClick={toggleMicsMuted}
-                aria-label={micsMuted ? "Reativar microfones" : "Silenciar microfones"}
-                className={`p-2 text-white transition ${canSelectSpeaker ? "rounded-r-lg" : "rounded-lg"} ${micsMuted ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"
-                  }`}
-              >
-                {micsMuted ? (
-                  <HeadphonesOffIcon className="h-5 w-5" />
-                ) : (
-                  <HeadphonesIcon className="h-5 w-5" />
-                )}
-              </button>
-            </Tooltip>
-          </div>
-
-          <div className="flex items-center border-l border-zinc-300 pl-2 dark:border-zinc-700">
-            <ShareControls
-              screenSharing={Boolean(localStream)}
-              cameraSharing={Boolean(localCameraStream)}
-              screenSupported={screenShareMode === "display"}
-              cameraSupported={screenShareMode !== "unsupported"}
-              onToggleScreen={() => (localStream ? stopShare() : startShare("display"))}
-              onToggleCamera={() => (localCameraStream ? stopCameraShare() : startCameraShare())}
-              open={shareQualityOpen}
-              setOpen={setShareQualityOpen}
-              quality={qualityControlsProps}
-            />
           </div>
         </div>
       </header>
@@ -1679,6 +1761,17 @@ export function WatchRoom({ handle }: { handle: string }) {
       })}
 
       <div className="flex min-h-0 flex-1 flex-col gap-6 p-4 lg:flex-row">
+        {/* From lg up, participants get this dedicated full-height column
+            instead of sharing a pane with chat — see isWideLayout. The ad
+            card lives here (below the list) rather than in the chat column,
+            so chat gets the full column to itself. */}
+        {isWideLayout && (
+          <aside className="flex h-full w-64 shrink-0 flex-col overflow-y-auto">
+            {participantsSection}
+            <PartnerCard />
+          </aside>
+        )}
+
         <main className="min-h-0 flex-1 overflow-y-auto">
           {nothingToShow ? (
             <div className="flex h-full min-h-75 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-300 text-center dark:border-zinc-800">
@@ -1873,124 +1966,79 @@ export function WatchRoom({ handle }: { handle: string }) {
           )}
         </main>
 
-        {/* Below lg, this starts collapsed to just its tab bar (+ the ad
+        {/* From lg up, chat gets this dedicated full-height column instead
+            of sharing a pane with participants — see isWideLayout. Nothing
+            else in here, so chatSection's flex-1 (see its heightClassName)
+            has the whole column to fill. */}
+        {isWideLayout && (
+          <aside className="flex h-full w-72 shrink-0 flex-col overflow-hidden">
+            {chatSection}
+          </aside>
+        )}
+
+        {/* Below lg only (see isWideLayout) — participants and chat share
+            this one pane and take turns via tabs instead of each getting
+            their own column. Starts collapsed to just its tab bar (+ the ad
             card) — no max-height needed, it just sizes to that little
             content, so <main> (flex-1) claims almost the entire screen for
             video. Tapping a tab expands it (see drawerExpanded/
             selectMobileTab) and only *then* does it grow to max-h-[60vh],
             rising up over the video from the bottom rather than sitting
-            permanently on top of it. From lg: on it's uncapped and fixed to
-            <main>'s height via lg:h-full, exactly like before — the tab
-            bar/expand state doesn't exist at that width. */}
-        <aside
-          className={`flex w-full shrink-0 flex-col overflow-y-auto lg:h-full lg:max-h-none lg:w-64 ${drawerExpanded ? "max-h-[60vh]" : ""
-            }`}
-        >
-          {(state.status === "connecting" || state.status === "closed") && (
-            <p className="mb-1 flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-500">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
-              Conectando...
-            </p>
-          )}
+            permanently on top of it. */}
+        {!isWideLayout && (
+          <aside
+            className={`flex w-full shrink-0 flex-col overflow-y-auto ${drawerExpanded ? "max-h-[60vh]" : ""}`}
+          >
+            {(state.status === "connecting" || state.status === "closed") && (
+              <p className="mb-1 flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-500">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+                Conectando...
+              </p>
+            )}
 
-          {/* Below lg, participants and chat take turns in this one pane
-              via these tabs instead of always being stacked — the old
-              layout crammed a variable-length participant list, a
-              fixed-height chat, and the ad card into one shared scroll box,
-              which is what made this whole section feel broken on a phone.
-              From lg: on this bar is hidden and both stay stacked, exactly
-              like before. */}
-          <div className="mb-2 flex gap-1 lg:hidden">
-            <button
-              type="button"
-              onClick={() => selectMobileTab("participants")}
-              className={`flex flex-1 items-center justify-center gap-1 rounded-lg px-3 py-1.5 text-sm font-medium transition ${mobileTab === "participants" && drawerExpanded
-                ? "bg-zinc-950 text-white dark:bg-zinc-50 dark:text-zinc-950"
-                : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                }`}
-            >
-              Participantes ({peerCount})
-              {mobileTab === "participants" && (
-                <ChevronUpIcon
-                  className={`h-3.5 w-3.5 shrink-0 transition-transform ${drawerExpanded ? "" : "rotate-180"}`}
-                />
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => selectMobileTab("chat")}
-              className={`flex flex-1 items-center justify-center gap-1 rounded-lg px-3 py-1.5 text-sm font-medium transition ${mobileTab === "chat" && drawerExpanded
-                ? "bg-zinc-950 text-white dark:bg-zinc-50 dark:text-zinc-950"
-                : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                }`}
-            >
-              Chat
-              {mobileTab === "chat" && (
-                <ChevronUpIcon
-                  className={`h-3.5 w-3.5 shrink-0 transition-transform ${drawerExpanded ? "" : "rotate-180"}`}
-                />
-              )}
-            </button>
-          </div>
-
-          <div className={`${drawerExpanded ? "block" : "hidden"} lg:block`}>
-            <div className={`${mobileTab === "participants" ? "block" : "hidden"} lg:block`}>
-              {connectingAudioPeers && (
-                <p className="mb-1 flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-500">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-                  Conectando...
-                </p>
-              )}
-              <h2 className="mb-2 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+            <div className="mb-2 flex gap-1">
+              <button
+                type="button"
+                onClick={() => selectMobileTab("participants")}
+                className={`flex flex-1 items-center justify-center gap-1 rounded-lg px-3 py-1.5 text-sm font-medium transition ${mobileTab === "participants" && drawerExpanded
+                  ? "bg-zinc-950 text-white dark:bg-zinc-50 dark:text-zinc-950"
+                  : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                  }`}
+              >
                 Participantes ({peerCount})
-              </h2>
-              <ul className="flex flex-col gap-1.5">
-                <ParticipantRow
-                  name={state.name}
-                  isSelf
-                  isGuest={!state.account}
-                  verified={state.account?.flags?.includes("VERIFIED")}
-                  micOn={isMicOn}
-                  sharing={isSharing}
-                  micStream={localMicStream}
-                />
-                {visiblePeers.map((p) => {
-                  const volumeKey = p.userId ?? p.id;
-                  return (
-                    <ParticipantRow
-                      key={p.id}
-                      name={p.name}
-                      isGuest={p.isGuest}
-                      verified={p.flags?.includes("VERIFIED")}
-                      micOn={p.mic}
-                      sharing={p.sharing}
-                      micStream={remoteMicStreams[p.id]}
-                      muted={micsMuted || mutedPeerIds.has(p.id)}
-                      onToggleMute={() => togglePeerMute(p.id)}
-                      volume={peerVolumes[volumeKey] ?? 1}
-                      onVolumeChange={(volume) => setPeerVolume(volumeKey, volume)}
-                      connectionLost={micConnectionStates[p.id] === "disconnected"}
-                    />
-                  );
-                })}
-              </ul>
+                {mobileTab === "participants" && (
+                  <ChevronUpIcon
+                    className={`h-3.5 w-3.5 shrink-0 transition-transform ${drawerExpanded ? "" : "rotate-180"}`}
+                  />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => selectMobileTab("chat")}
+                className={`flex flex-1 items-center justify-center gap-1 rounded-lg px-3 py-1.5 text-sm font-medium transition ${mobileTab === "chat" && drawerExpanded
+                  ? "bg-zinc-950 text-white dark:bg-zinc-50 dark:text-zinc-950"
+                  : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                  }`}
+              >
+                Chat
+                {mobileTab === "chat" && (
+                  <ChevronUpIcon
+                    className={`h-3.5 w-3.5 shrink-0 transition-transform ${drawerExpanded ? "" : "rotate-180"}`}
+                  />
+                )}
+              </button>
             </div>
 
-            <div className={`${mobileTab === "chat" ? "block" : "hidden"} lg:block`}>
-              <ChatPanel
-                messages={state.chatMessages}
-                selfId={state.selfId}
-                selfName={state.name}
-                onSend={(text) => signalingClient.sendChatMessage(text)}
-                onSendGif={state.account ? (url) => signalingClient.sendGif(url) : undefined}
-                blockedMessage={state.chatBlockedMessage}
-                heightClassName="h-[55vh] lg:h-72"
-              />
+            <div className={drawerExpanded ? "block" : "hidden"}>
+              <div className={mobileTab === "participants" ? "block" : "hidden"}>
+                {participantsSection}
+              </div>
+              <div className={mobileTab === "chat" ? "block" : "hidden"}>{chatSection}</div>
             </div>
-          </div>
 
-          <PartnerCard />
-        </aside>
+            <PartnerCard />
+          </aside>
+        )}
       </div>
 
       {showCreateAccountModal && (
