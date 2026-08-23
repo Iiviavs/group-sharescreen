@@ -13,6 +13,16 @@ export type Account = {
   // Absent on a response from an older API that predates this field; every
   // reader treats that the same as 0.
   points?: number;
+  // Public profile page content (see app/user/[id]/page.tsx and lib/
+  // userProfile.ts) — same "DB-edited only for now" story as points.
+  bio?: string | null;
+  bannerUrl?: string | null;
+  // Cumulative seconds, tracked automatically by the signaling server —
+  // never hand-edited. Absent on an older API response, same "reads as 0"
+  // fallback as points.
+  callSeconds?: number;
+  micSeconds?: number;
+  shareSeconds?: number;
   createdAt: number;
   updatedAt: number;
 };

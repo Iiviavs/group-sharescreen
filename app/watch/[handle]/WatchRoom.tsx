@@ -1505,6 +1505,7 @@ export function WatchRoom({ handle }: { handle: string }) {
           name={state.name}
           isSelf
           isGuest={!state.account}
+          userId={account?.id}
           verified={state.account?.flags?.includes("VERIFIED")}
           micOn={isMicOn}
           sharing={isSharing}
@@ -1517,6 +1518,7 @@ export function WatchRoom({ handle }: { handle: string }) {
               key={p.id}
               name={p.name}
               isGuest={p.isGuest}
+              userId={p.userId}
               verified={p.flags?.includes("VERIFIED")}
               micOn={p.mic}
               sharing={p.sharing}
@@ -1585,20 +1587,25 @@ export function WatchRoom({ handle }: { handle: string }) {
             {/* Name + cosmetic score, DB-edited only for now (see
                 accountApi.ts's Account.points) — hidden for a guest, who has
                 no account to hold either. Kept deliberately muted (no fill
-                color) so it reads as a status readout, not another button. */}
+                color) so it reads as a status readout, not another button.
+                Links to this account's own public profile — see
+                app/user/[id]. */}
             {account && (
-              <div className="flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
-                <span className="hidden max-w-[8rem] truncate text-zinc-700 dark:text-zinc-300 sm:inline">
-                  {state.name}
-                </span>
-                <span className="hidden h-3 w-px bg-zinc-300 dark:bg-zinc-700 sm:inline-block" />
-                <Tooltip content="Seus pontos no GoLive" placement="bottom">
+              <Tooltip content="Ver seu perfil" placement="bottom">
+                <Link
+                  href={`/user/${account.id}`}
+                  className="flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-500 transition hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-900"
+                >
+                  <span className="hidden max-w-[8rem] truncate text-zinc-700 dark:text-zinc-300 sm:inline">
+                    {state.name}
+                  </span>
+                  <span className="hidden h-3 w-px bg-zinc-300 dark:bg-zinc-700 sm:inline-block" />
                   <span className="flex items-center gap-1 tabular-nums">
                     <BsCoin className="h-3.5 w-3.5 shrink-0" />
                     {account.points ?? 0}
                   </span>
-                </Tooltip>
-              </div>
+                </Link>
+              </Tooltip>
             )}
             <Tooltip content={<SupportersTooltipContent />} placement="bottom" interactive>
               <a

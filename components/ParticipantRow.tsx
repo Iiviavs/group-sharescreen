@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useSpeaking } from "@/lib/useSpeaking";
 import { MicIcon, MicOffIcon, ScreenIcon } from "./icons";
 import { VolumeSlider } from "./VolumeSlider";
@@ -10,6 +11,7 @@ export function ParticipantRow({
   name,
   isSelf = false,
   isGuest = false,
+  userId,
   micOn,
   sharing,
   micStream,
@@ -23,6 +25,10 @@ export function ParticipantRow({
   name: string;
   isSelf?: boolean;
   isGuest?: boolean;
+  // Account id (see server/signaling.ts's peerSummary) — only ever a real,
+  // viewable profile when the peer isn't a guest. Undefined for a peer sent
+  // by an older server version that doesn't include it yet, same as isGuest.
+  userId?: string;
   micOn: boolean;
   sharing: boolean;
   micStream?: MediaStream | null;
@@ -36,6 +42,25 @@ export function ParticipantRow({
   verified?: boolean;
 }) {
   const speaking = useSpeaking(micOn ? micStream : null);
+  // A guest has no account behind it — nowhere for /user/[id] to point — and
+  // an older server that doesn't send userId yet leaves this peer
+  // unclickable rather than linking to a broken profile.
+  const canOpenProfile = !isGuest && Boolean(userId);
+  const nameElement = (
+    <DisplayUserName
+      name={name}
+      isGuest={isGuest}
+      verified={verified}
+      connectionLost={connectionLost}
+      className={`truncate font-medium transition-colors ${
+        speaking
+          ? "text-emerald-600 dark:text-emerald-400"
+          : isSelf
+            ? "text-zinc-900 dark:text-zinc-100"
+            : ""
+      }`}
+    />
+  );
 
   return (
     <li
@@ -44,19 +69,13 @@ export function ParticipantRow({
       }`}
     >
       <span className="flex min-w-0 items-baseline gap-1">
-        <DisplayUserName
-          name={name}
-          isGuest={isGuest}
-          verified={verified}
-          connectionLost={connectionLost}
-          className={`truncate font-medium transition-colors ${
-            speaking
-              ? "text-emerald-600 dark:text-emerald-400"
-              : isSelf
-                ? "text-zinc-900 dark:text-zinc-100"
-                : ""
-          }`}
-        />
+        {canOpenProfile ? (
+          <Link href={`/user/${userId}`} className="min-w-0 hover:underline">
+            {nameElement}
+          </Link>
+        ) : (
+          nameElement
+        )}
         {isSelf && <span className="shrink-0 text-xs font-normal text-zinc-500">(você)</span>}
       </span>
       <span className="flex shrink-0 items-center gap-2 text-zinc-400 dark:text-zinc-500">
