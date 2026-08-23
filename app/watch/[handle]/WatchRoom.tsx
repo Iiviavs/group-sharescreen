@@ -24,6 +24,7 @@ import {
 import { trackEvent } from "@/lib/analytics";
 import { toRoomHandle, isPrivateRoomHandle } from "@/lib/roomsApi";
 import { useRoomSoundEffects } from "@/lib/useRoomSoundEffects";
+import { useBackgroundKeepAlive } from "@/lib/useBackgroundKeepAlive";
 import { getSoundEffectsEnabled, setSoundEffectsEnabled } from "@/lib/soundEffects";
 import { qualityNegotiator } from "@/lib/qualityNegotiation";
 import { TURN_CONFIGURED } from "@/lib/iceConfig";
@@ -527,6 +528,10 @@ export function WatchRoom({ handle }: { handle: string }) {
   const router = useRouter();
   const state = useSignaling();
   useRoomSoundEffects(state);
+  // Keeps the tab's connection alive longer in the background on Android
+  // while actually in a room — see the hook's own doc comment for why (and
+  // its limits, especially on iOS).
+  useBackgroundKeepAlive(Boolean(state.room));
   const hasStoredName = useHasStoredName();
   const { loading: resolvingAccount } = useAuth();
   const validHandle = HANDLE_RE.test(handle);
