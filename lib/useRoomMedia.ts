@@ -234,6 +234,21 @@ function applyVideoCodecPreferences(transceiver: RTCRtpTransceiver, mode: Degrad
 // moment.
 const STAGGER_MS = 150;
 
+// How long onRoomJoined below waits before treating a peer missing from a
+// fresh room-state as genuinely gone. When the signaling server itself
+// restarts, every connection in every room drops at once and each client
+// reconnects on its own independent backoff — so the very first room-state
+// a client gets back can legitimately be missing peers who simply haven't
+// finished reconnecting yet, not peers who actually left. Without this grace
+// period, that snapshot pruned their (still perfectly healthy, TURN-relayed)
+// connection immediately — tearing down and rebuilding it a second later,
+// which visibly froze every tile in the room and, for whoever had one
+// fullscreened, silently kicked the browser out of fullscreen (removing the
+// fullscreened element from the DOM auto-exits it). Long enough to outlast a
+// same-restart reconnect elsewhere; short enough that a peer who genuinely
+// left while this client was disconnected still disappears promptly.
+const PEER_PRUNE_GRACE_MS = 5000;
+
 // If a sendPC hasn't reached "connected" within this long, treat it as dead
 // and retry — see openSendPC's doc comment on why this exists *in addition
 // to* the connectionState === "failed" handler below it: a silently-dropped
@@ -325,6 +340,11 @@ function useBroadcastChannel(
   // peer-list-driven reconnect loop below so it doesn't just re-open a sendPC
   // that was deliberately paused the moment anyone else joins/leaves the room.
   const viewerPausedPeers = useRef<Set<string>>(new Set());
+  // Peers missing from a fresh room-state, waiting out PEER_PRUNE_GRACE_MS
+  // before onRoomJoined below actually tears down their connection — see its
+  // own comment for why an immediate prune is wrong right after a signaling
+  // server restart.
+  const pendingPruneTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   // Mirrors the forceRelayIce prop for callbacks below that must read the
   // live value without becoming a dependency of every connection-opening
   // useCallback — same pattern as videoQualityRef.
@@ -1162,6 +1182,18 @@ function useBroadcastChannel(
       }
     });
 
+    // Actually tears a peer down — the five cleanups onRoomJoined below used
+    // to run immediately off a single snapshot. Pulled out so both the
+    // grace-period timeout and (if the peer never even reappears) the
+    // eventual real prune share one implementation.
+    function pruneMissingPeer(peerId: string) {
+      if (sendPCs.current.has(peerId)) closeSendPC(peerId);
+      if (recvPCs.current.has(peerId)) closeRecvPCFully(peerId);
+      if (stoppedPeersRef.current.has(peerId)) clearStopped(peerId);
+      if (resumingPeersRef.current.has(peerId)) clearResuming(peerId);
+      viewerPausedPeers.current.delete(peerId);
+    }
+
     const unsubscribeRoomJoined = signalingClient.onRoomJoined(() => {
       // Our own signaling socket reconnecting replaces the whole peer list
       // at once instead of emitting individual peer-left events — so if
@@ -1169,22 +1201,36 @@ function useBroadcastChannel(
       // nothing else would ever tell us. Without this, their connection and
       // video/audio tile would linger as a permanent ghost. Stable
       // client ids (see signalingClient) mean everyone who's still around
-      // keeps the same id, so this only prunes genuinely departed peers.
+      // keeps the same id, so this only prunes genuinely departed peers —
+      // eventually: see PEER_PRUNE_GRACE_MS for why this doesn't prune the
+      // instant a peer is missing from one snapshot. A peer reappearing
+      // cancels its pending prune below; one that's still missing once the
+      // grace period elapses gets pruned for real, re-checked against
+      // whatever the room looks like *then*, not this stale snapshot.
       const currentIds = new Set(signalingClient.state.peers.map((p) => p.id));
-      for (const peerId of [...sendPCs.current.keys()]) {
-        if (!currentIds.has(peerId)) closeSendPC(peerId);
-      }
-      for (const peerId of [...recvPCs.current.keys()]) {
-        if (!currentIds.has(peerId)) closeRecvPCFully(peerId);
-      }
-      for (const peerId of [...stoppedPeersRef.current]) {
-        if (!currentIds.has(peerId)) clearStopped(peerId);
-      }
-      for (const peerId of [...resumingPeersRef.current]) {
-        if (!currentIds.has(peerId)) clearResuming(peerId);
-      }
-      for (const peerId of [...viewerPausedPeers.current]) {
-        if (!currentIds.has(peerId)) viewerPausedPeers.current.delete(peerId);
+      const tracked = new Set([
+        ...sendPCs.current.keys(),
+        ...recvPCs.current.keys(),
+        ...stoppedPeersRef.current,
+        ...resumingPeersRef.current,
+        ...viewerPausedPeers.current,
+      ]);
+      for (const peerId of tracked) {
+        if (currentIds.has(peerId)) {
+          const timer = pendingPruneTimers.current.get(peerId);
+          if (timer) {
+            clearTimeout(timer);
+            pendingPruneTimers.current.delete(peerId);
+          }
+          continue;
+        }
+        if (pendingPruneTimers.current.has(peerId)) continue;
+        const timer = setTimeout(() => {
+          pendingPruneTimers.current.delete(peerId);
+          const stillMissing = !signalingClient.state.peers.some((p) => p.id === peerId);
+          if (stillMissing) pruneMissingPeer(peerId);
+        }, PEER_PRUNE_GRACE_MS);
+        pendingPruneTimers.current.set(peerId, timer);
       }
 
       // The server has a fresh entry with sharing/mic reset to false —
@@ -1195,10 +1241,16 @@ function useBroadcastChannel(
       else signalingClient.setSharing(true);
     });
 
+    // Captured now (not read as pendingPruneTimers.current inside the
+    // cleanup below) so the cleanup always clears the exact Map this effect
+    // instance scheduled into, regardless of ref-timing nuances.
+    const pendingPruneTimersAtSetup = pendingPruneTimers.current;
     return () => {
       unsubscribeSignal();
       unsubscribeState();
       unsubscribeRoomJoined();
+      for (const timer of pendingPruneTimersAtSetup.values()) clearTimeout(timer);
+      pendingPruneTimersAtSetup.clear();
     };
   }, [
     channel,
