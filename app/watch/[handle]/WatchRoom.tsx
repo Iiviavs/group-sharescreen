@@ -653,11 +653,8 @@ export function WatchRoom({ handle }: { handle: string }) {
   // without waiting on JS to agree.
   const isDesktopLayout = useMediaQuery(SM_BREAKPOINT_QUERY);
   // From lg up: participants get their own full-height column on the left,
-  // chat one on the right, and the mic/mute/share controls move out of the
-  // header into a bottom bar — see mainControls/participantsSection/
-  // chatSection below. Below lg, all of that stays exactly as it was: the
-  // controls in the header, and participants/chat sharing one pane via the
-  // tab switcher right below.
+  // chat one on the right — see participantsSection/chatSection below.
+  // Below lg, they share one pane via the tab switcher right below instead.
   const isWideLayout = useMediaQuery(LG_BREAKPOINT_QUERY);
   // Below lg, the participants list and chat share one pane and take turns
   // via this tab switcher instead of being stacked in one long scroll — see
@@ -1626,15 +1623,16 @@ export function WatchRoom({ handle }: { handle: string }) {
           </div>
         </div>
 
-        {/* Room-level actions (link/switch room) and mainControls
-            (mic/mute-mics/share) share this one row at every width — a
-            3-column grid rather than a plain flex row so mainControls sits
-            in a true center column, independent of how wide the link/switch
-            group next to it is (an empty first column balances it out; a
+        {/* Below sm, this is just mainControls (link/switch stays inside
+            "Mais opções" until there's room for it — see below), right-
+            aligned same as it's always been. From sm up, the link/switch
+            group joins it in the same row, and this switches to a 3-column
+            grid so mainControls sits in a true center column independent of
+            how wide that group is (an empty first column balances it out; a
             flex row alone couldn't center one group without also being
             thrown off by the other's width). */}
-        <div className="mt-2.5 grid grid-cols-[1fr_auto_1fr] items-center gap-2 sm:mt-3">
-          <div />
+        <div className="mt-2.5 flex flex-wrap items-center justify-end gap-2 sm:mt-3 sm:grid sm:grid-cols-[1fr_auto_1fr] sm:justify-normal">
+          <div className="hidden sm:block" />
           <div className="flex flex-wrap items-center justify-center gap-2">{mainControls}</div>
           {/* Desktop only (hidden below sm) — on a phone these two still
               live inside "Mais opções" (see above), the only place with
@@ -1766,8 +1764,8 @@ export function WatchRoom({ handle }: { handle: string }) {
             card lives here (below the list) rather than in the chat column,
             so chat gets the full column to itself. */}
         {isWideLayout && (
-          <aside className="flex h-full w-64 shrink-0 flex-col overflow-y-auto">
-            {participantsSection}
+          <aside className="flex h-full w-64 shrink-0 flex-col">
+            <div className="min-h-0 flex-1 overflow-y-auto">{participantsSection}</div>
             <PartnerCard />
           </aside>
         )}
