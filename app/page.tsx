@@ -464,7 +464,13 @@ export default function Home() {
           >
             discord.gg/nemtudo
           </a>
-          )
+          ) ·{" "}
+          <Link
+            href="/termos"
+            className="underline underline-offset-2 hover:text-zinc-600 dark:hover:text-zinc-300"
+          >
+            Termos de uso
+          </Link>
         </p>
       </main>
     </div>
