@@ -10,3 +10,4 @@ export function trackEvent(name: string, data?: Record<string, unknown>) {
   if (typeof window === "undefined") return;
   (window as UmamiWindow).umami?.track(name, data);
 }
+
