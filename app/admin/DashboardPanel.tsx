@@ -3,6 +3,7 @@
 import { StatsOverview } from "./StatsOverview";
 import { AnnouncementPanel } from "./AnnouncementPanel";
 import { PartnerAdsPanel } from "./PartnerAdsPanel";
+import { AntiSpamPanel } from "./AntiSpamPanel";
 import { BannedWordsPanel } from "./BannedWordsPanel";
 import { IpBansPanel } from "./IpBansPanel";
 
@@ -12,6 +13,7 @@ export function DashboardPanel() {
       <StatsOverview />
       <AnnouncementPanel />
       <PartnerAdsPanel />
+      <AntiSpamPanel />
       <BannedWordsPanel />
       <IpBansPanel />
     </div>

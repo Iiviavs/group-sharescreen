@@ -313,6 +313,22 @@ export async function setBannedWords(words: string[]): Promise<string[]> {
   return data.words;
 }
 
+// Kill switch for the server's auto-ban system (see server/signaling.ts's
+// recordRateLimitViolation) — lets an admin turn it off without a redeploy.
+export async function fetchAntiSpamEnabled(): Promise<boolean> {
+  const data = await adminFetch<{ enabled: boolean }>("/admin/antispam");
+  return data.enabled;
+}
+
+export async function setAntiSpamEnabled(enabled: boolean): Promise<boolean> {
+  const data = await adminFetch<{ enabled: boolean }>("/admin/antispam", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  return data.enabled;
+}
+
 // Sidebar partner-ad slot (see components/PartnerCard.tsx). Unlike the
 // announcement banner there can be more than one active at once — this is
 // admin-only bookkeeping (weight/createdAt) on top of the public `Partner`
