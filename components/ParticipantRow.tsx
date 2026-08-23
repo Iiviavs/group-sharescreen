@@ -70,7 +70,7 @@ export function ParticipantRow({
     >
       <span className="flex min-w-0 items-baseline gap-1">
         {canOpenProfile ? (
-          <Link href={`/user/${userId}`} className="min-w-0 hover:underline">
+          <Link href={`/user/${userId}`} target="_blank" className="min-w-0 hover:underline">
             {nameElement}
           </Link>
         ) : (

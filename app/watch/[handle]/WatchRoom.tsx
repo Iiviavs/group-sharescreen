@@ -1594,6 +1594,7 @@ export function WatchRoom({ handle }: { handle: string }) {
               <Tooltip content="Ver seu perfil" placement="bottom">
                 <Link
                   href={`/user/${account.id}`}
+                  target="_blank"
                   className="flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-500 transition hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-900"
                 >
                   <span className="hidden max-w-[8rem] truncate text-zinc-700 dark:text-zinc-300 sm:inline">
