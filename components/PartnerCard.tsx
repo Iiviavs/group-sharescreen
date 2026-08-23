@@ -7,6 +7,8 @@ import { useSignaling } from "@/lib/useSignaling";
 import { signalingClient } from "@/lib/signalingClient";
 import { ArrowLeftIcon, ChartIcon, ChevronUpIcon } from "@/components/icons";
 import { PartnerAdCustomizer, type AdForm } from "@/components/PartnerAdCustomizer";
+import { PartnerRewardModal } from "@/components/PartnerRewardModal";
+import { hasClaimedPartnerRewardLocally } from "@/lib/partner";
 import { Popover } from "@/components/Tooltip";
 
 const STATS_DASHBOARD_URL = process.env.NEXT_PUBLIC_STATS_DASHBOARD_URL;
@@ -41,6 +43,11 @@ type PartnerCardData = {
   // below, which removes the card the instant this passes without waiting
   // for a reload or a live update.
   expiresAt?: number | null;
+  // Watch-to-earn reward (see PartnerRewardModal.tsx) — absent/null on
+  // FALLBACK_PARTNER/EXAMPLE_PARTNER, same as `id`, since neither is a real
+  // ad with points to give out.
+  rewardVideoUrl?: string | null;
+  rewardPoints?: number | null;
 };
 
 // `currentId` tells the server which ad this slot is showing right now, so a
@@ -121,6 +128,11 @@ export function PartnerCard() {
   // by default when no real partner is active (FALLBACK_PARTNER).
   const [showingHouseAd, setShowingHouseAd] = useState(false);
   const [customizerOpen, setCustomizerOpen] = useState(false);
+  // The watch-to-earn popup (see PartnerRewardModal.tsx) for the real ad
+  // currently on screen — null when closed. Holds the ad's own data (not
+  // just a boolean) so it keeps playing the same ad's video even if a
+  // rotation swaps `partner` underneath it while the popup is open.
+  const [rewardModal, setRewardModal] = useState<PartnerCardData | null>(null);
   // Below lg, this starts collapsed to just a slim title bar — full-size,
   // it was eating a big enough chunk of a phone's height (image, multi-line
   // description, two buttons) to fight the room's own video/chat for space.
@@ -302,6 +314,11 @@ export function PartnerCard() {
 
   const data = partner ?? FALLBACK_PARTNER;
   const isFallback = partner === null;
+  // Per-browser hint (see hasClaimedPartnerRewardLocally's doc comment) —
+  // recomputed on every render, so it stays current across a rotation
+  // landing back on an ad this browser already collected the reward for, and
+  // right after the reward popup closes having just claimed one.
+  const rewardClaimedLocally = Boolean(data.id && hasClaimedPartnerRewardLocally(data.id));
   // True only when the real ad is what's actually on screen — false for the
   // plain house ad, the "ver exemplo" preview, and a real ad temporarily
   // swapped out for the house ad via showingHouseAd below. Drives both the
@@ -538,6 +555,22 @@ export function PartnerCard() {
           {displayData.buttonLabel}
         </a>
 
+        {showingRealAd && data.id && data.rewardVideoUrl && data.rewardPoints && (
+          <button
+            type="button"
+            onClick={() => {
+              trackEvent("partner_reward_video_opened", { partnerId: data.id });
+              setRewardModal(data);
+            }}
+            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-current px-3 py-1.5 text-center text-xs font-semibold opacity-90 transition hover:opacity-100"
+          >
+            {/* Rewatching is always allowed — only the reward itself is
+                one-time (see PartnerRewardModal, which knows not to let a
+                rewatch pay out again). */}
+            {rewardClaimedLocally ? "Assistir de novo" : `Ganhar ${data.rewardPoints} Pontos`}
+          </button>
+        )}
+
         {showingHouseAdContent && (
           <button
             type="button"
@@ -558,6 +591,17 @@ export function PartnerCard() {
         <PartnerAdCustomizer
           initial={CUSTOMIZER_STARTING_POINT}
           onClose={() => setCustomizerOpen(false)}
+        />
+      )}
+
+      {rewardModal?.id && rewardModal.rewardVideoUrl && rewardModal.rewardPoints && (
+        <PartnerRewardModal
+          partnerId={rewardModal.id}
+          videoUrl={rewardModal.rewardVideoUrl}
+          points={rewardModal.rewardPoints}
+          buttonLabel={rewardModal.buttonLabel}
+          buttonUrl={rewardModal.buttonUrl}
+          onClose={() => setRewardModal(null)}
         />
       )}
     </div>

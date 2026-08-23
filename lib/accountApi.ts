@@ -8,6 +8,11 @@ export type Account = {
   username: string;
   displayName: string;
   flags: string[];
+  // Shown in the Watch room header (see WatchRoom's top bar). No in-app way
+  // to earn it yet — only ever changed by hand directly in the database.
+  // Absent on a response from an older API that predates this field; every
+  // reader treats that the same as 0.
+  points?: number;
   createdAt: number;
   updatedAt: number;
 };

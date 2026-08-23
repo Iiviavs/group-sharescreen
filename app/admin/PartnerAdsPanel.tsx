@@ -60,6 +60,11 @@ export function PartnerAdsPanel() {
   const [weight, setWeight] = useState(1);
   const [neverExpires, setNeverExpires] = useState(true);
   const [expiresInput, setExpiresInput] = useState("");
+  // Watch-to-earn reward — kept out of `form` (which is all plain strings
+  // fed straight into controlled text inputs) since rewardPoints needs to
+  // travel as a number on submit, same reasoning as `weight` above.
+  const [rewardVideoUrl, setRewardVideoUrl] = useState("");
+  const [rewardPointsInput, setRewardPointsInput] = useState("");
   const [sending, setSending] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -116,6 +121,8 @@ export function PartnerAdsPanel() {
     setWeight(1);
     setNeverExpires(true);
     setExpiresInput("");
+    setRewardVideoUrl("");
+    setRewardPointsInput("");
     setPreviewing(false);
     setError(null);
   }
@@ -137,6 +144,8 @@ export function PartnerAdsPanel() {
     setWeight(p.weight);
     setNeverExpires(p.expiresAt === null);
     setExpiresInput(p.expiresAt ? toDatetimeLocalValue(p.expiresAt) : "");
+    setRewardVideoUrl(p.rewardVideoUrl ?? "");
+    setRewardPointsInput(p.rewardPoints != null ? String(p.rewardPoints) : "");
     setPreviewing(false);
     setError(null);
   }
@@ -144,6 +153,11 @@ export function PartnerAdsPanel() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    const trimmedRewardVideoUrl = rewardVideoUrl.trim();
+    if (trimmedRewardVideoUrl && !rewardPointsInput.trim()) {
+      setError("Defina quantos pontos a recompensa em vídeo dá.");
+      return;
+    }
     setSending(true);
     try {
       const input: PartnerInput = {
@@ -158,6 +172,8 @@ export function PartnerAdsPanel() {
         buttonTextColor: form.buttonTextColor.trim() || undefined,
         weight,
         expiresAt: neverExpires || !expiresInput ? null : new Date(expiresInput).getTime(),
+        rewardVideoUrl: trimmedRewardVideoUrl || undefined,
+        rewardPoints: trimmedRewardVideoUrl && rewardPointsInput.trim() ? Number(rewardPointsInput) : undefined,
       };
       if (mode === "edit" && editingId) {
         await editPartner(editingId, input);
@@ -282,6 +298,11 @@ export function PartnerAdsPanel() {
                       Expirado
                     </span>
                   )}
+                  {p.rewardVideoUrl && p.rewardPoints && (
+                    <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+                      +{p.rewardPoints} pts por vídeo
+                    </span>
+                  )}
                   <span className="shrink-0 text-zinc-500 dark:text-zinc-400">peso {p.weight}</span>
                   <button
                     type="button"
@@ -314,6 +335,19 @@ export function PartnerAdsPanel() {
                     Cliques: <strong>{s.clicks}</strong>
                     {ctr ? ` (${ctr})` : ""}
                   </span>
+                  {p.rewardVideoUrl && p.rewardPoints && (
+                    <>
+                      <span>
+                        Apertos pra ver o vídeo: <strong>{s.rewardVideoOpens ?? 0}</strong>
+                      </span>
+                      <span>
+                        Assistiram inteiro: <strong>{s.rewardVideoCompletions ?? 0}</strong>
+                      </span>
+                      <span>
+                        Resgataram os pontos: <strong>{s.rewardClaims ?? 0}</strong>
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
             );
@@ -399,6 +433,44 @@ export function PartnerAdsPanel() {
                 placeholder="https://..."
                 className={inputClass}
               />
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+            <p className={labelClass}>Recompensa em vídeo (opcional)</p>
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              Se preenchido, o card mostra um botão &quot;Ganhar X Pontos&quot; que abre esse vídeo em um
+              popup. Sem como avançar — só libera a recompensa quando o vídeo termina, e cada conta só
+              recebe uma vez.
+            </p>
+            <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]">
+              <div>
+                <label htmlFor="partner-reward-video" className={labelClass}>
+                  Link do vídeo (mp4)
+                </label>
+                <input
+                  id="partner-reward-video"
+                  value={rewardVideoUrl}
+                  onChange={(e) => setRewardVideoUrl(e.target.value)}
+                  placeholder="https://cdn.../video.mp4"
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label htmlFor="partner-reward-points" className={labelClass}>
+                  Pontos ao assistir
+                </label>
+                <input
+                  id="partner-reward-points"
+                  type="number"
+                  min={1}
+                  max={100000}
+                  value={rewardPointsInput}
+                  onChange={(e) => setRewardPointsInput(e.target.value)}
+                  disabled={!rewardVideoUrl.trim()}
+                  className={`${inputClass} sm:w-32 disabled:cursor-not-allowed disabled:opacity-50`}
+                />
+              </div>
             </div>
           </div>
 

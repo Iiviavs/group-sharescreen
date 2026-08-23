@@ -843,6 +843,20 @@ class SignalingClient {
   reportPartnerClick(id: string) {
     this.rawSend({ type: "partner-click", id });
   }
+
+  // Watch-to-earn funnel (see PartnerRewardModal.tsx) — sent once when the
+  // popup opens, and once more only if the video is watched through to a
+  // genuine `ended` (not on every "Receber Recompensa" click — the modal
+  // sends this the moment the button unlocks, whether or not it's ever
+  // pressed, since watching it fully and claiming it are different things
+  // the admin panel wants to see separately).
+  reportPartnerRewardVideoOpen(id: string) {
+    this.rawSend({ type: "partner-reward-video-open", id });
+  }
+
+  reportPartnerRewardVideoCompleted(id: string) {
+    this.rawSend({ type: "partner-reward-video-completed", id });
+  }
 }
 
 export const signalingClient = new SignalingClient();

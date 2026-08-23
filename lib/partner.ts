@@ -18,4 +18,112 @@ export type Partner = {
   // off this so an active ad disappears the instant it expires, without
   // waiting for a reload or a live socket update.
   expiresAt: number | null;
+  // Optional watch-to-earn reward (see PartnerRewardModal.tsx) — null means
+  // this ad has none. rewardPoints is only ever non-null alongside a
+  // rewardVideoUrl (see server's parsePartnerBody, which enforces that
+  // pairing on every write).
+  rewardVideoUrl: string | null;
+  rewardPoints: number | null;
 };
+
+// ---------------------------------------------------------------------------
+// Watch-to-earn reward
+// ---------------------------------------------------------------------------
+
+import { getAccountToken } from "./accountApi";
+import { getSignalingHttpBase } from "./roomsApi";
+
+// Claims a partner ad's reward for the signed-in account — the server is the
+// only real gate (one claim per account per ad, see
+// claimPersistedPartnerReward), but a signed-out visitor is rejected here
+// before ever hitting it, since there is no account for the server to credit.
+export async function claimPartnerVideoReward(partnerId: string): Promise<{ points: number | null }> {
+  const token = getAccountToken();
+  if (!token) throw new Error("Crie uma conta ou entre em uma para receber pontos assistindo.");
+  const res = await fetch(
+    `${getSignalingHttpBase()}/partner/${encodeURIComponent(partnerId)}/claim-reward`,
+    { method: "POST", headers: { Authorization: `Bearer ${token}` } }
+  );
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const message = (data && typeof data === "object" && "error" in data && String(data.error)) || "Falha ao resgatar a recompensa.";
+    throw new Error(message);
+  }
+  return data as { points: number | null };
+}
+
+// Per-browser hint only (see the server-side claim check above for the real
+// gate) — lets PartnerCard hide the "Ganhar X Pontos" button for an ad this
+// same browser already collected, without a request round trip on every
+// render. Clearing site data just makes the button reappear; the claim
+// itself still refuses to pay out twice.
+const CLAIMED_KEY_PREFIX = "sharescreen:partnerRewardClaimed:";
+
+export function hasClaimedPartnerRewardLocally(partnerId: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(CLAIMED_KEY_PREFIX + partnerId) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function markPartnerRewardClaimedLocally(partnerId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(CLAIMED_KEY_PREFIX + partnerId, "1");
+  } catch {
+    // ignored - localStorage may be unavailable (private mode, quota, etc.)
+  }
+}
+
+// Separate from the claimed flag above: someone can watch a reward video all
+// the way through, close the popup without clicking "Receber Recompensa",
+// and reopen it later — this is what lets that reopen land already unlocked
+// (see PartnerRewardModal's `previouslyCompleted`) instead of making them
+// sit through the whole thing again just to claim what they already earned.
+const COMPLETED_KEY_PREFIX = "sharescreen:partnerRewardCompleted:";
+
+export function hasCompletedPartnerVideoLocally(partnerId: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(COMPLETED_KEY_PREFIX + partnerId) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function markPartnerVideoCompletedLocally(partnerId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(COMPLETED_KEY_PREFIX + partnerId, "1");
+  } catch {
+    // ignored - localStorage may be unavailable (private mode, quota, etc.)
+  }
+}
+
+// How far into a reward video this browser has genuinely watched (see
+// PartnerRewardModal's anti-skip tracking) — saved on close so reopening the
+// popup resumes from there instead of the very start, without granting a
+// skip ahead of what was actually watched.
+const PROGRESS_KEY_PREFIX = "sharescreen:partnerRewardProgress:";
+
+export function getStoredPartnerVideoProgress(partnerId: string): number {
+  if (typeof window === "undefined") return 0;
+  try {
+    const raw = window.localStorage.getItem(PROGRESS_KEY_PREFIX + partnerId);
+    const parsed = raw ? Number(raw) : 0;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function setStoredPartnerVideoProgress(partnerId: string, seconds: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(PROGRESS_KEY_PREFIX + partnerId, String(Math.floor(seconds)));
+  } catch {
+    // ignored - localStorage may be unavailable (private mode, quota, etc.)
+  }
+}

@@ -59,7 +59,7 @@ export default function TermosPage() {
           <h2 className={h2Class}>2. Salas</h2>
           <p className={pClass}>
             Qualquer pessoa pode criar ou entrar em uma sala informando um identificador (de 1 a
-            32 letras, números, "-" ou "_"). Se a sala já existir, você entra nela.
+            32 letras, números, &quot;-&quot; ou &quot;_&quot;). Se a sala já existir, você entra nela.
           </p>
           <ul className={ulClass}>
             <li>
@@ -209,7 +209,7 @@ export default function TermosPage() {
         </section>
 
         <section className={sectionClass}>
-          <h2 className={h2Class}>11. Serviço "como está"</h2>
+          <h2 className={h2Class}>11. Serviço &quot;como está&quot;</h2>
           <p className={pClass}>
             O GoLive é oferecido gratuitamente, sem garantias de disponibilidade, desempenho ou
             ausência de erros. O serviço pode sair do ar, mudar ou ser descontinuado a qualquer

@@ -375,6 +375,15 @@ export type PartnerStats = {
   // measurement.
   uniqueViews?: number;
   clicks: number;
+  // Watch-to-earn funnel (see components/PartnerRewardModal.tsx) — all
+  // optional/absent for an ad with no reward configured, or from a server
+  // that predates this feature. rewardVideoOpens/rewardVideoCompletions are
+  // raw counts (same caveat as views/clicks: a repeat visit counts again);
+  // rewardClaims is a distinct-account count, same as uniqueViews, since the
+  // server refuses a second claim from the same account outright.
+  rewardVideoOpens?: number;
+  rewardVideoCompletions?: number;
+  rewardClaims?: number;
 };
 
 export type PartnerAdminList = {
@@ -395,6 +404,8 @@ export type PartnerInput = {
   buttonTextColor?: string;
   weight: number;
   expiresAt: number | null;
+  rewardVideoUrl?: string;
+  rewardPoints?: number;
 };
 
 export async function fetchAdminPartners(): Promise<PartnerAdminList> {

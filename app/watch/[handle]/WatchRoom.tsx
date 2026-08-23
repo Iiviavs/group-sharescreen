@@ -72,7 +72,7 @@ import {
 import { Tooltip, Popover } from "@/components/Tooltip";
 import { useMediaQuery, SM_BREAKPOINT_QUERY, LG_BREAKPOINT_QUERY } from "@/lib/useMediaQuery";
 import { MdHome } from "react-icons/md";
-import { BsGearFill } from "react-icons/bs";
+import { BsGearFill, BsCoin } from "react-icons/bs";
 
 // Mirrors server/signaling.ts's HANDLE_RE — must match exactly, or a name
 // this lets through but the server rejects lands the user in a dead room
@@ -534,7 +534,7 @@ export function WatchRoom({ handle }: { handle: string }) {
   // its limits, especially on iOS).
   useBackgroundKeepAlive(Boolean(state.room));
   const hasStoredName = useHasStoredName();
-  const { loading: resolvingAccount } = useAuth();
+  const { loading: resolvingAccount, account } = useAuth();
   const validHandle = HANDLE_RE.test(handle);
   const screenShareMode = useScreenShareMode();
 
@@ -1582,6 +1582,24 @@ export function WatchRoom({ handle }: { handle: string }) {
               wrapped into a wall of buttons taller than the video area
               itself. */}
           <div className="flex shrink-0 items-center gap-2">
+            {/* Name + cosmetic score, DB-edited only for now (see
+                accountApi.ts's Account.points) — hidden for a guest, who has
+                no account to hold either. Kept deliberately muted (no fill
+                color) so it reads as a status readout, not another button. */}
+            {account && (
+              <div className="flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+                <span className="hidden max-w-[8rem] truncate text-zinc-700 dark:text-zinc-300 sm:inline">
+                  {state.name}
+                </span>
+                <span className="hidden h-3 w-px bg-zinc-300 dark:bg-zinc-700 sm:inline-block" />
+                <Tooltip content="Seus pontos no GoLive" placement="bottom">
+                  <span className="flex items-center gap-1 tabular-nums">
+                    <BsCoin className="h-3.5 w-3.5 shrink-0" />
+                    {account.points ?? 0}
+                  </span>
+                </Tooltip>
+              </div>
+            )}
             <Tooltip content={<SupportersTooltipContent />} placement="bottom" interactive>
               <a
                 href="https://livepix.gg/nemtudo"
