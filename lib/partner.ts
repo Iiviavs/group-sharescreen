@@ -39,7 +39,7 @@ import { getSignalingHttpBase } from "./roomsApi";
 // before ever hitting it, since there is no account for the server to credit.
 export async function claimPartnerVideoReward(partnerId: string): Promise<{ points: number | null }> {
   const token = getAccountToken();
-  if (!token) throw new Error("Crie uma conta ou entre em uma para receber pontos assistindo.");
+  if (!token) throw new Error("Crie uma conta ou entre em uma para resgatar pontos assistindo.");
   const res = await fetch(
     `${getSignalingHttpBase()}/partner/${encodeURIComponent(partnerId)}/claim-reward`,
     { method: "POST", headers: { Authorization: `Bearer ${token}` } }

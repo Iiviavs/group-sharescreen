@@ -4,6 +4,7 @@ import Script from "next/script";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { InstallAppButton } from "@/components/InstallAppButton";
 import { AuthProvider } from "@/lib/AuthContext";
+import { NtPopups } from "@/components/NtPopups";
 import "./globals.css";
 import SupressErrors from "./middlewares/SupressErrors";
 
@@ -162,9 +163,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         />
         <SupressErrors>
           <AuthProvider>
-            <AnnouncementBanner />
-            {children}
-            <InstallAppButton />
+            <NtPopups>
+              <AnnouncementBanner />
+              {children}
+              <InstallAppButton />
+            </NtPopups>
           </AuthProvider>
         </SupressErrors>
         {UMAMI_WEBSITE_ID && (

@@ -6,8 +6,9 @@ import { trackEvent } from "@/lib/analytics";
 import { useSignaling } from "@/lib/useSignaling";
 import { signalingClient } from "@/lib/signalingClient";
 import { ArrowLeftIcon, ChartIcon, ChevronUpIcon } from "@/components/icons";
+import { BsCoin } from "react-icons/bs";
 import { PartnerAdCustomizer, type AdForm } from "@/components/PartnerAdCustomizer";
-import { PartnerRewardModal } from "@/components/PartnerRewardModal";
+import useNtPopups from "ntpopups";
 import { hasClaimedPartnerRewardLocally } from "@/lib/partner";
 import { Popover } from "@/components/Tooltip";
 
@@ -50,6 +51,15 @@ type PartnerCardData = {
   rewardPoints?: number | null;
 };
 
+// Duration badge on the reward button ("30s", "1:30"). Seconds-only below a
+// minute because that's the shape of every ad video in practice, and "30s"
+// reads as "this is quick" in a way "0:30" doesn't.
+function formatRewardDuration(seconds: number): string {
+  const total = Math.round(seconds);
+  if (total < 60) return `${total}s`;
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
 // `currentId` tells the server which ad this slot is showing right now, so a
 // rotation can deliberately land on a *different* one. Sent as a hint, not as
 // an instruction: the server still owns the choice (weights, the "show
@@ -72,7 +82,7 @@ async function fetchPartner(
 // a house ad for this site's own Discord instead of an empty slot.
 const FALLBACK_PARTNER: PartnerCardData = {
   title: "Anuncie aqui pra todo mundo!",
-  description: "Esse site é visitado por mais de 10 mil pessoas por dia!\n\nAbra um ticket no meu Discord e vamos combinar um anúncio",
+  description: "Esse site é visitado por mais de 30 mil pessoas por dia!\n\nAbra um ticket no meu Discord e vamos combinar um anúncio",
   buttonLabel: "Abrir ticket no Discord",
   buttonUrl: "https://go.nemtudo.me/golive-partner-nemtudodiscord",
   backgroundColor: "#111827",
@@ -128,11 +138,36 @@ export function PartnerCard() {
   // by default when no real partner is active (FALLBACK_PARTNER).
   const [showingHouseAd, setShowingHouseAd] = useState(false);
   const [customizerOpen, setCustomizerOpen] = useState(false);
-  // The watch-to-earn popup (see PartnerRewardModal.tsx) for the real ad
-  // currently on screen — null when closed. Holds the ad's own data (not
-  // just a boolean) so it keeps playing the same ad's video even if a
-  // rotation swaps `partner` underneath it while the popup is open.
-  const [rewardModal, setRewardModal] = useState<PartnerCardData | null>(null);
+  // The watch-to-earn popup (see PartnerRewardModal.tsx) is opened through
+  // ntpopups rather than rendered here, so there's no open/closed state for
+  // it on this side. The ad's data is handed over at open time, which is
+  // also what keeps it playing the same ad's video if a rotation swaps
+  // `partner` underneath it while the popup is up.
+  const { openPopup } = useNtPopups();
+  // Bumped when the popup reports a claim or closes, purely to force the
+  // rewardClaimedLocally read below to happen again — it reads localStorage,
+  // which React has no way to observe on its own.
+  const [, bumpRewardState] = useState(0);
+  // Always deferred, never called straight from the popup callbacks: ntpopups
+  // fires its `onClose` from inside a setPopups updater (see
+  // removePopupFromState in the library), which React runs during
+  // NtPopupProvider's render — a setState on this component from in there is
+  // the "Cannot update a component while rendering a different component"
+  // warning. Nothing about this bump is urgent: it re-reads a localStorage
+  // flag, so it can wait for that render to finish.
+  const bumpRewardStateSoon = useCallback(() => {
+    queueMicrotask(() => bumpRewardState((n) => n + 1));
+  }, []);
+  // Length of the current ad's reward video (see the probe effect below),
+  // carrying the url it was measured from: a rotation swaps the ad long
+  // before the next probe resolves, and the tag is what stops the outgoing
+  // ad's duration from being shown for a moment under the incoming one's
+  // button. Null until the first probe resolves, which keeps the badge off
+  // rather than showing a placeholder that later jumps.
+  const [rewardDuration, setRewardDuration] = useState<{
+    url: string;
+    seconds: number;
+  } | null>(null);
   // Below lg, this starts collapsed to just a slim title bar — full-size,
   // it was eating a big enough chunk of a phone's height (image, multi-line
   // description, two buttons) to fight the room's own video/chat for space.
@@ -284,6 +319,34 @@ export function PartnerCard() {
     return () => document.removeEventListener("visibilitychange", maybeReport);
   }, [partner]);
 
+  // Reads the reward video's length off the file itself: an ad carries a
+  // video URL and a points value, never a duration, and asking the admin to
+  // type one in is a number that can silently disagree with the video. A
+  // metadata-only load, so it costs the headers and the moov atom rather
+  // than the video. Anything that fails or never resolves just leaves the
+  // badge off.
+  const rewardVideoUrl = partner?.rewardVideoUrl ?? null;
+  useEffect(() => {
+    if (!rewardVideoUrl) return;
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.muted = true;
+    const onLoadedMetadata = () => {
+      if (Number.isFinite(video.duration) && video.duration > 0) {
+        setRewardDuration({ url: rewardVideoUrl, seconds: video.duration });
+      }
+    };
+    video.addEventListener("loadedmetadata", onLoadedMetadata);
+    video.src = rewardVideoUrl;
+    return () => {
+      video.removeEventListener("loadedmetadata", onLoadedMetadata);
+      // Aborts a metadata request still in flight when a rotation swaps the
+      // ad out from under it.
+      video.removeAttribute("src");
+      video.load();
+    };
+  }, [rewardVideoUrl]);
+
   // Runs regardless of whether a real partner is configured: the count now
   // shows next to "Anuncie aqui você também!" over a real ad too, not just
   // inside the house ad itself, so there's no state where it's unneeded.
@@ -339,6 +402,13 @@ export function PartnerCard() {
   // counter riding inside it.
   const showOnlineWidget = !showingExample && peopleOnline !== null;
   const displayData = showingRealAd ? data : showingExample ? EXAMPLE_PARTNER : FALLBACK_PARTNER;
+  // Absent until the probe above resolves for the ad currently on screen —
+  // the button renders without the badge in the meantime rather than
+  // reserving space for it.
+  const rewardDurationLabel =
+    rewardDuration && rewardDuration.url === rewardVideoUrl
+      ? formatRewardDuration(rewardDuration.seconds)
+      : null;
 
   // One panel, two possible triggers (the counter inside the house ad, and
   // the one next to "Anuncie aqui também!" over a real ad) — only ever one of
@@ -560,14 +630,57 @@ export function PartnerCard() {
             type="button"
             onClick={() => {
               trackEvent("partner_reward_video_opened", { partnerId: data.id });
-              setRewardModal(data);
+              openPopup("partner_reward", {
+                // Sized to give the video roughly the room it had back when
+                // this was a full-screen takeover, without becoming one: the
+                // backdrop stays translucent and the call keeps running
+                // behind it.
+                width: "min(1100px, calc(100vw - 30px))",
+                maxWidth: "1100px",
+                maxHeight: "94dvh",
+                // The popup's own × is deliberately the only way out —
+                // losing an almost-finished video to a stray backdrop click
+                // or Escape means watching the whole thing again.
+                closeOnEscape: false,
+                closeOnClickOutside: false,
+                requireAction: true,
+                onClose: bumpRewardStateSoon,
+                data: {
+                  partnerId: data.id,
+                  videoUrl: data.rewardVideoUrl,
+                  points: data.rewardPoints,
+                  title: data.title,
+                  description: data.description,
+                  imageUrl: data.imageUrl,
+                  buttonLabel: data.buttonLabel,
+                  buttonUrl: data.buttonUrl,
+                  onClaimed: bumpRewardStateSoon,
+                },
+              });
             }}
-            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-current px-3 py-1.5 text-center text-xs font-semibold opacity-90 transition hover:opacity-100"
+            className={`mt-2 flex w-full items-center cursor-pointer ${
+              rewardDurationLabel ? "justify-between" : "justify-center"
+            } gap-2 rounded-lg border border-current px-3 py-1.5 text-xs font-semibold opacity-90 transition hover:opacity-100`}
           >
             {/* Rewatching is always allowed — only the reward itself is
                 one-time (see PartnerRewardModal, which knows not to let a
                 rewatch pay out again). */}
-            {rewardClaimedLocally ? "Assistir de novo" : `Ganhar ${data.rewardPoints} Pontos`}
+            <span className="flex min-w-0 items-center gap-1.5">
+              {rewardClaimedLocally ? (
+                "Assistir de novo"
+              ) : (
+                <>
+                  Resgatar
+                  <BsCoin className="h-3.5 w-3.5 shrink-0" />
+                  {data.rewardPoints}
+                </>
+              )}
+            </span>
+            {rewardDurationLabel && (
+              <span className="shrink-0 rounded-full bg-black/10 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums dark:bg-white/10">
+                {rewardDurationLabel}
+              </span>
+            )}
           </button>
         )}
 
@@ -591,17 +704,6 @@ export function PartnerCard() {
         <PartnerAdCustomizer
           initial={CUSTOMIZER_STARTING_POINT}
           onClose={() => setCustomizerOpen(false)}
-        />
-      )}
-
-      {rewardModal?.id && rewardModal.rewardVideoUrl && rewardModal.rewardPoints && (
-        <PartnerRewardModal
-          partnerId={rewardModal.id}
-          videoUrl={rewardModal.rewardVideoUrl}
-          points={rewardModal.rewardPoints}
-          buttonLabel={rewardModal.buttonLabel}
-          buttonUrl={rewardModal.buttonUrl}
-          onClose={() => setRewardModal(null)}
         />
       )}
     </div>

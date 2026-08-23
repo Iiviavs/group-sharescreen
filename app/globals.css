@@ -116,3 +116,12 @@ body {
 .tippy-box[data-theme~="golive-panel"] > .tippy-content {
   padding: 0;
 }
+
+/* ntPopups (see components/NtPopups.tsx). The library's dark theme paints an
+   85%-black backdrop, which blanks out the call behind the partner reward
+   video popup — the whole point of that popup being a popup is that the room
+   stays visible. `html` prefix only to outrank the library's own
+   single-class rule regardless of which stylesheet loads first. */
+html .ntpopups-main {
+  --ntpopups-bg-overlay: rgba(0, 0, 0, 0.6);
+}
