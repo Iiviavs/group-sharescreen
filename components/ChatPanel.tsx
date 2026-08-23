@@ -1,6 +1,14 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 import type { ChatMessage } from "@/lib/signalingClient";
 import type { GifResult } from "@/app/api/giphy/search/route";
 import { GifPicker } from "@/components/GifPicker";
@@ -56,12 +64,27 @@ function linkifyText(text: string) {
   });
 }
 
+// How long the box waits after the last keystroke before sending an
+// explicit "stopped typing" — well under the receiving end's own
+// TYPING_EXPIRE_MS safety net (see lib/signalingClient.ts), so under normal
+// conditions the indicator always clears via this explicit signal rather
+// than that timeout.
+const TYPING_IDLE_MS = 3000;
+
+function formatTypingLabel(names: string[]): string {
+  if (names.length === 1) return `${names[0]} está digitando...`;
+  if (names.length === 2) return `${names[0]} e ${names[1]} estão digitando...`;
+  return `${names.length} pessoas estão digitando...`;
+}
+
 export function ChatPanel({
   messages,
   selfId,
   selfName,
   onSend,
   onSendGif,
+  onTypingChange,
+  typingNames,
   blockedMessage,
   heightClassName = "h-72",
 }: {
@@ -75,6 +98,15 @@ export function ChatPanel({
   // input form instead of sending into a room the viewer isn't a member of.
   onSend?: (text: string) => void;
   onSendGif?: (url: string) => void;
+  // Fired at most twice per typing burst — true on the first keystroke,
+  // false after TYPING_IDLE_MS of inactivity or on send — not on every
+  // change. Omitted (like onSend) for a read-only viewer.
+  onTypingChange?: (typing: boolean) => void;
+  // Display names of peers the caller already knows are currently typing
+  // (see lib/signalingClient.ts's typingPeerIds) — resolved by the caller
+  // rather than here, since doing that lookup needs the full peer list this
+  // component otherwise has no reason to receive.
+  typingNames?: string[];
   // Set when the server rejected the last message for containing a banned
   // word (see signalingClient's chatBlockedMessage) — shown once, right
   // above the input, and cleared by the client on the next send attempt.
@@ -86,7 +118,27 @@ export function ChatPanel({
 }) {
   const [input, setInput] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
+  const isTypingRef = useRef(false);
+  const typingIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Held in a ref so the unmount cleanup below always calls the latest
+  // handler rather than whichever one was in scope when the effect first ran.
+  const onTypingChangeRef = useRef(onTypingChange);
+  useEffect(() => {
+    onTypingChangeRef.current = onTypingChange;
+  }, [onTypingChange]);
+
+  // Sends the "stopped typing" a room is still waiting on if this panel
+  // unmounts mid-burst (switching mobile tabs, leaving the room) — without
+  // this, everyone else only recovers via signalingClient's own
+  // TYPING_EXPIRE_MS fallback instead of right away.
+  useEffect(() => {
+    return () => {
+      if (typingIdleTimerRef.current) clearTimeout(typingIdleTimerRef.current);
+      if (isTypingRef.current) onTypingChangeRef.current?.(false);
+    };
+  }, []);
   const listRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Tracks whether we've already jumped to bottom for the current batch of
   // messages, so a room's preloaded history opens scrolled to the bottom
   // (like a real chat) instead of at the top where it first renders.
@@ -110,11 +162,66 @@ export function ChatPanel({
     if (nearBottom) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  function handleSubmit(e: FormEvent) {
-    e.preventDefault();
+  function stopTypingIfNeeded() {
+    if (typingIdleTimerRef.current) {
+      clearTimeout(typingIdleTimerRef.current);
+      typingIdleTimerRef.current = null;
+    }
+    if (isTypingRef.current) {
+      isTypingRef.current = false;
+      onTypingChange?.(false);
+    }
+  }
+
+  function sendInput() {
     if (!input.trim() || !onSend) return;
     onSend(input);
     setInput("");
+    stopTypingIfNeeded();
+    // Collapses the box back to one line — without this it'd stay grown to
+    // whatever height the sent message had reached.
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
+  }
+
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    sendInput();
+  }
+
+  // Enter sends (matching the old single-line input's behavior); Shift+Enter
+  // inserts a newline, same convention as every other chat app.
+  function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendInput();
+    }
+  }
+
+  // Grows the box with the message (up to a cap, then it scrolls internally)
+  // instead of staying a fixed single line like the input it replaced.
+  function handleInput(e: FormEvent<HTMLTextAreaElement>) {
+    const el = e.currentTarget;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+  }
+
+  // Announces true on the first keystroke of a burst, then leaves the idle
+  // timer above to announce false — not resent on every keystroke, so a
+  // continuously-typing peer's indicator just stays on rather than flickering.
+  function handleChange(e: ChangeEvent<HTMLTextAreaElement>) {
+    const value = e.target.value;
+    setInput(value);
+    if (!onTypingChange) return;
+    if (typingIdleTimerRef.current) clearTimeout(typingIdleTimerRef.current);
+    if (!value.trim()) {
+      stopTypingIfNeeded();
+      return;
+    }
+    if (!isTypingRef.current) {
+      isTypingRef.current = true;
+      onTypingChange(true);
+    }
+    typingIdleTimerRef.current = setTimeout(stopTypingIfNeeded, TYPING_IDLE_MS);
   }
 
   function handleGifSelect(gif: GifResult) {
@@ -178,6 +285,12 @@ export function ChatPanel({
         </p>
       )}
 
+      {typingNames && typingNames.length > 0 && (
+        <p className="truncate px-3 pt-1.5 text-xs text-zinc-500 italic dark:text-zinc-500">
+          {formatTypingLabel(typingNames)}
+        </p>
+      )}
+
       {onSend && (
         <form
           onSubmit={handleSubmit}
@@ -201,12 +314,16 @@ export function ChatPanel({
               </button>
             </Popover>
           )}
-          <input
+          <textarea
+            ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            onInput={handleInput}
             maxLength={500}
+            rows={1}
             placeholder="Digite uma mensagem..."
-            className="min-w-0 flex-1 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+            className="min-w-0 flex-1 resize-none rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
           />
           <button
             type="submit"

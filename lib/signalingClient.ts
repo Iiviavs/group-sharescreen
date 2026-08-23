@@ -3,6 +3,7 @@
 import { trackEvent } from "./analytics";
 import type { Announcement } from "./announcement";
 import type { Partner } from "./partner";
+import type { Supporter } from "./supporter";
 import { getAccountToken } from "./accountApi";
 import { getTurnstileToken } from "./turnstile";
 
@@ -113,12 +114,28 @@ export type SignalingState = {
   // said null" — both look identical as a bare `partner: null` otherwise.
   partner: Partner | null;
   partnerSeq: number;
+  // "Apoiar projeto" hover list (see SupportersTooltip.tsx) — same
+  // fetch-over-HTTP-then-live-update shape as partner above, minus the
+  // "null means nothing to show" ambiguity: an empty array already means
+  // that on its own, so this doesn't need a null variant, just the same
+  // supportersSeq trick to tell "no live update yet" apart from "a live
+  // update arrived" (relevant the day someone clears the list down to
+  // empty via a live edit rather than just never having set it).
+  supporters: Supporter[];
+  supportersSeq: number;
   // Set when the server rejected our last chat message for containing a
   // banned word (see server/signaling.ts's "chat-blocked") — cleared as
   // soon as another send is attempted, so it's a one-shot warning rather
   // than a persistent banner.
   chatBlockedMessage: string | null;
   joinError: string | null;
+  // Ids (PeerInfo.id) of peers currently shown as "typing..." in the chat
+  // (see ChatPanel.tsx) — purely a live relay (server/signaling.ts's
+  // "peer-typing"), nothing persisted or replayed on join. Each entry is
+  // also backed by a client-side expiry timer (see handleMessage's
+  // "peer-typing" case) as a safety net for a lost/never-sent explicit
+  // "false" — e.g. the typer's tab closing outright.
+  typingPeerIds: string[];
 };
 
 type Listener = () => void;
@@ -161,8 +178,17 @@ const initialState: SignalingState = {
   announcementSeq: 0,
   partner: null,
   partnerSeq: 0,
+  supporters: [],
+  supportersSeq: 0,
   chatBlockedMessage: null,
+  typingPeerIds: [],
 };
+
+// Safety-net expiry for a peer's "typing" state — see typingPeerIds' doc
+// comment. Comfortably longer than ChatPanel's own idle-driven "stop typing"
+// send, so a healthy connection never hits this at all; it only matters when
+// the explicit "false" is lost.
+const TYPING_EXPIRE_MS = 6000;
 
 // How many times performJoin auto-retries after a "turnstile-required"
 // rejection (fetching a fresh token each time) before giving up and
@@ -272,6 +298,9 @@ class SignalingClient {
   // (see ensureSocket), since a fresh connection is always unverified
   // server-side too.
   private turnstileVerifiedAt: number | null = null;
+  // Per-peer safety-net expiry timers backing typingPeerIds — see that
+  // field's doc comment and TYPING_EXPIRE_MS.
+  private typingTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // Set by connect() below — lets a connection stay open (and reconnect
   // after a drop, see scheduleReconnect) purely to receive site-wide pushes
   // like the announcement banner, for a visitor who hasn't registered a name
@@ -314,6 +343,24 @@ class SignalingClient {
   private setState(patch: Partial<SignalingState>) {
     this.state = { ...this.state, ...patch };
     this.listeners.forEach((l) => l());
+  }
+
+  private clearTyping(id: string) {
+    const timer = this.typingTimers.get(id);
+    if (timer) clearTimeout(timer);
+    this.typingTimers.delete(id);
+    if (this.state.typingPeerIds.includes(id)) {
+      this.setState({ typingPeerIds: this.state.typingPeerIds.filter((pid) => pid !== id) });
+    }
+  }
+
+  // Room switches and leaves both start from a clean slate — a peer from the
+  // room being left has no bearing on whether someone's typing in the new
+  // one (or in no room at all).
+  private clearAllTyping() {
+    this.typingTimers.forEach((timer) => clearTimeout(timer));
+    this.typingTimers.clear();
+    if (this.state.typingPeerIds.length > 0) this.setState({ typingPeerIds: [] });
   }
 
   private ensureSocket() {
@@ -483,6 +530,7 @@ class SignalingClient {
         const history = Array.isArray(msg.messages) ? (msg.messages as ChatMessage[]) : [];
         this.joinRetryCount = 0;
         this.turnstileVerifiedAt = Date.now();
+        this.clearAllTyping();
         this.setState({
           room: msg.room as string,
           selfId: msg.selfId as string,
@@ -535,6 +583,7 @@ class SignalingClient {
         break;
       }
       case "peer-left":
+        this.clearTyping(msg.id as string);
         this.setState({ peers: this.state.peers.filter((p) => p.id !== msg.id) });
         this.signalListeners.forEach((l) => l(msg.id as string, { kind: "peer-left" }));
         break;
@@ -559,6 +608,28 @@ class SignalingClient {
           ),
         });
         break;
+      case "peer-typing": {
+        const id = msg.id as string;
+        const typing = Boolean(msg.typing);
+        const existingTimer = this.typingTimers.get(id);
+        if (existingTimer) clearTimeout(existingTimer);
+        this.typingTimers.delete(id);
+        if (typing) {
+          this.typingTimers.set(
+            id,
+            setTimeout(() => {
+              this.typingTimers.delete(id);
+              this.setState({ typingPeerIds: this.state.typingPeerIds.filter((pid) => pid !== id) });
+            }, TYPING_EXPIRE_MS)
+          );
+          if (!this.state.typingPeerIds.includes(id)) {
+            this.setState({ typingPeerIds: [...this.state.typingPeerIds, id] });
+          }
+        } else {
+          this.setState({ typingPeerIds: this.state.typingPeerIds.filter((pid) => pid !== id) });
+        }
+        break;
+      }
       case "signal":
         this.signalListeners.forEach((l) =>
           l(msg.from as string, msg.data as Record<string, unknown>)
@@ -575,6 +646,12 @@ class SignalingClient {
         this.setState({
           partner: (msg.partner as Partner | null) ?? null,
           partnerSeq: this.state.partnerSeq + 1,
+        });
+        break;
+      case "supporters":
+        this.setState({
+          supporters: Array.isArray(msg.supporters) ? (msg.supporters as Supporter[]) : [],
+          supportersSeq: this.state.supportersSeq + 1,
         });
         break;
       case "chat-blocked":
@@ -690,6 +767,7 @@ class SignalingClient {
   leaveRoom() {
     this.desiredRoom = null;
     this.rawSend({ type: "leave" });
+    this.clearAllTyping();
     this.setState({ room: null, peers: [], chatMessages: [], joinError: null });
   }
 
@@ -699,6 +777,12 @@ class SignalingClient {
 
   setMic(mic: boolean) {
     this.rawSend({ type: "mic", mic });
+  }
+
+  // Called by ChatPanel.tsx's own idle timer, not on every keystroke — see
+  // its doc comment for when true/false actually get sent.
+  setTyping(typing: boolean) {
+    this.rawSend({ type: "typing", typing });
   }
 
   sendSignal(to: string, data: unknown) {

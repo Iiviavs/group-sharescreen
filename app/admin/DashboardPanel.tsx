@@ -6,6 +6,7 @@ import { PartnerAdsPanel } from "./PartnerAdsPanel";
 import { AntiSpamPanel } from "./AntiSpamPanel";
 import { BannedWordsPanel } from "./BannedWordsPanel";
 import { IpBansPanel } from "./IpBansPanel";
+import { SupportersPanel } from "./SupportersPanel";
 
 export function DashboardPanel() {
   return (
@@ -13,6 +14,7 @@ export function DashboardPanel() {
       <StatsOverview />
       <AnnouncementPanel />
       <PartnerAdsPanel />
+      <SupportersPanel />
       <AntiSpamPanel />
       <BannedWordsPanel />
       <IpBansPanel />

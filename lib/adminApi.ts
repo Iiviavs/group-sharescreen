@@ -10,9 +10,11 @@ import type {
   AnnouncementVisibility,
 } from "./announcement";
 import type { Partner } from "./partner";
+import type { Supporter } from "./supporter";
 
 export type { Announcement, AnnouncementButtonAction, AnnouncementColor, AnnouncementSound, AnnouncementVisibility };
 export type { Partner };
+export type { Supporter };
 
 const TOKEN_STORAGE_KEY = "sharescreen:adminToken";
 
@@ -327,6 +329,23 @@ export async function setAntiSpamEnabled(enabled: boolean): Promise<boolean> {
     body: JSON.stringify({ enabled }),
   });
   return data.enabled;
+}
+
+// Supporters list shown in the "Apoiar projeto" hover card (see
+// components/SupportersTooltip.tsx) — same whole-list-replace shape as
+// banned words, no per-item id.
+export async function fetchAdminSupporters(): Promise<Supporter[]> {
+  const data = await adminFetch<{ supporters: Supporter[] }>("/admin/supporters");
+  return data.supporters;
+}
+
+export async function setSupporters(supporters: Supporter[]): Promise<Supporter[]> {
+  const data = await adminFetch<{ supporters: Supporter[] }>("/admin/supporters", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ supporters }),
+  });
+  return data.supporters;
 }
 
 // Sidebar partner-ad slot (see components/PartnerCard.tsx). Unlike the

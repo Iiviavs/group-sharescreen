@@ -44,6 +44,7 @@ import { RemoteAudio } from "@/components/RemoteAudio";
 import { ParticipantRow } from "@/components/ParticipantRow";
 import { ChatPanel } from "@/components/ChatPanel";
 import { PartnerCard } from "@/components/PartnerCard";
+import { SupportersTooltipContent } from "@/components/SupportersTooltip";
 import { DisplayUserName } from "@/components/DisplayUserName";
 import { CreateAccountForm } from "@/components/CreateAccountForm";
 import {
@@ -1542,6 +1543,10 @@ export function WatchRoom({ handle }: { handle: string }) {
       selfName={state.name}
       onSend={(text) => signalingClient.sendChatMessage(text)}
       onSendGif={state.account ? (url) => signalingClient.sendGif(url) : undefined}
+      onTypingChange={(typing) => signalingClient.setTyping(typing)}
+      typingNames={visiblePeers
+        .filter((p) => state.typingPeerIds.includes(p.id))
+        .map((p) => p.name)}
       blockedMessage={state.chatBlockedMessage}
       heightClassName={isWideLayout ? "flex-1 min-h-0" : "h-[55vh]"}
     />
@@ -1577,7 +1582,7 @@ export function WatchRoom({ handle }: { handle: string }) {
               wrapped into a wall of buttons taller than the video area
               itself. */}
           <div className="flex shrink-0 items-center gap-2">
-            <Tooltip content="Apoiar o projeto no LivePix" placement="bottom">
+            <Tooltip content={<SupportersTooltipContent />} placement="bottom" interactive>
               <a
                 href="https://livepix.gg/nemtudo"
                 target="_blank"
