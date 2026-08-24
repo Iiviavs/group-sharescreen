@@ -228,7 +228,7 @@ const MAX_JOIN_RETRIES = 3;
 // would reject a stale connection-level verification anyway; the server is
 // the actual source of truth (a mismatch here just costs one extra
 // "turnstile-required" round trip, already handled by performJoin's retry).
-const TURNSTILE_REVERIFY_INTERVAL_MS = 10 * 60_000;
+const TURNSTILE_REVERIFY_INTERVAL_MS = 30 * 60_000;
 
 // Cap on retained chat history per room, to keep memory bounded in a
 // long-running room instead of growing the array forever.
@@ -331,13 +331,19 @@ class SignalingClient {
   // Consecutive "turnstile-required" rejections for the current join
   // attempt — see MAX_JOIN_RETRIES and performJoin.
   private joinRetryCount = 0;
-  // Mirrors ClientInfo.turnstileVerifiedAt in server/signaling.ts: once a
-  // join on the current socket has been accepted with a valid token, later
-  // joins (room switches) within TURNSTILE_REVERIFY_INTERVAL_MS skip
-  // fetching a new token entirely — the server remembers this connection
-  // passed recently too. Reset to null every time a new WebSocket is opened
-  // (see ensureSocket), since a fresh connection is always unverified
-  // server-side too.
+  // When this browser last passed a challenge: later joins within
+  // TURNSTILE_REVERIFY_INTERVAL_MS skip fetching a token entirely, because
+  // the server would wave them through anyway (see its
+  // turnstileVerifiedIps).
+  //
+  // Deliberately *not* reset when a new WebSocket opens, which it used to
+  // be. That reset assumed the server forgot on every reconnect — true back
+  // when its only memory was per-socket, and the reason a phone changing
+  // networks or a laptop waking up meant another challenge. Both sides now
+  // remember for the same window, so a reconnect costs nothing. If the two
+  // ever disagree, the server says so with "turnstile-required" and
+  // performJoin retries with a real token, which is the same safety net
+  // that has always backed this optimization.
   private turnstileVerifiedAt: number | null = null;
   // Per-peer safety-net expiry timers backing typingPeerIds — see that
   // field's doc comment and TYPING_EXPIRE_MS.
@@ -410,7 +416,6 @@ class SignalingClient {
       return;
     }
     this.setState({ status: "connecting" });
-    this.turnstileVerifiedAt = null;
     const ws = new WebSocket(WS_URL);
     this.ws = ws;
 
@@ -606,6 +611,14 @@ class SignalingClient {
       // fetches a fresh token per attempt since each one is single-use.
       case "turnstile-required": {
         if (!this.desiredRoom) break;
+        // The server just contradicted whatever this client believed about
+        // being verified, so drop that belief before retrying — otherwise
+        // performJoin's freshness check short-circuits, sends a null token
+        // again, and the retry loop burns MAX_JOIN_RETRIES arguing with the
+        // one side that actually decides. Matters now that this survives
+        // reconnects (see the field's comment): the two sides can genuinely
+        // disagree, and this is how the client is told which one is right.
+        this.turnstileVerifiedAt = null;
         this.joinRetryCount += 1;
         if (this.joinRetryCount > MAX_JOIN_RETRIES) {
           this.setState({
@@ -868,10 +881,11 @@ class SignalingClient {
   // entry point and the "turnstile-required" retry path (see
   // handleMessage) go through the exact same token-fetch-then-send flow.
   private async performJoin(room: string) {
-    // Verified recently on this socket (see room-state above) — the server
-    // remembers too (ClientInfo.turnstileVerifiedAt) and won't ask again
+    // Verified recently (see room-state above) — the server remembers this
+    // address passed too (see its turnstileVerifiedIps) and won't ask again
     // within the same window, so skip bothering the widget for a token it'll
-    // just ignore.
+    // just ignore. Worth skipping rather than fetching-and-discarding:
+    // asking for a token is what can surface an interactive challenge.
     const stillFresh =
       this.turnstileVerifiedAt !== null &&
       Date.now() - this.turnstileVerifiedAt < TURNSTILE_REVERIFY_INTERVAL_MS;
