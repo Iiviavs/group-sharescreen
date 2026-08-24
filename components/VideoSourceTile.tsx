@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { FocusIcon, HyperfocusIcon, FullscreenIcon, FullscreenExitIcon, EyeOffIcon } from "@/components/icons";
 import { Tooltip } from "@/components/Tooltip";
+import { VolumeSlider } from "@/components/VolumeSlider";
 import { MdClose, MdSettings } from "react-icons/md";
 import { videoSourcePosition, type VideoSource } from "@/lib/videoSource";
 import { signalingClient } from "@/lib/signalingClient";
@@ -61,6 +62,13 @@ type YTPlayer = {
   getPlayerState: () => number;
   getPlaybackRate: () => number;
   setPlaybackRate: (rate: number) => void;
+  // 0-100, unlike everything else here — YouTube's scale, not ours.
+  // Optional/called with ?. like getPlaybackRate above: the API object is
+  // whatever YouTube's script hands back, not something we can typecheck.
+  setVolume?: (volume: number) => void;
+  mute?: () => void;
+  unMute?: () => void;
+  isMuted?: () => boolean;
   destroy: () => void;
 };
 type YTNamespace = {
@@ -72,6 +80,20 @@ declare global {
     YT?: YTNamespace;
     onYouTubeIframeAPIReady?: () => void;
   }
+}
+
+// Muting is separate from volume in YouTube's API (a muted player keeps
+// whatever volume it had), so both have to be pushed — and mute/unMute is
+// only touched when it actually disagrees with the player, since unMute() on
+// a player the browser auto-muted to allow autoplay can cost the playback
+// itself.
+function applyPlayerVolume(player: YTPlayer | null, volume: number, muted: boolean) {
+  if (!player) return;
+  player.setVolume?.(Math.round(Math.min(1, Math.max(0, volume)) * 100));
+  const wantMuted = muted || volume === 0;
+  if (player.isMuted?.() === wantMuted) return;
+  if (wantMuted) player.mute?.();
+  else player.unMute?.();
 }
 
 let youtubeApiPromise: Promise<YTNamespace> | null = null;
@@ -123,6 +145,8 @@ export function VideoSourceTile({
   onRemove,
   onLeave,
   label,
+  volume,
+  onVolumeChange,
   fill = false,
   className = "",
   onFocus,
@@ -146,6 +170,17 @@ export function VideoSourceTile({
   // back through. What everyone who isn't the adder gets instead of onRemove.
   onLeave: () => void;
   label: ReactNode;
+  // This viewer's own volume for this video, 0-1 — the same per-tile dial a
+  // transmission gets (see VideoTile), and just as local: nothing about it
+  // travels, so turning a video down never touches anyone else's playback.
+  //
+  // Capped at 1, unlike a transmission's 300%: that ceiling comes from
+  // routing a MediaStream through a gain node (see lib/audioGain.ts), and
+  // there is no equivalent for audio that lives inside YouTube's iframe —
+  // all we can do is set the player's own volume. Left undefined to let the
+  // tile keep the dial in its own state instead.
+  volume?: number;
+  onVolumeChange?: (volume: number) => void;
   fill?: boolean;
   className?: string;
   onFocus?: () => void;
@@ -176,12 +211,35 @@ export function VideoSourceTile({
   const [showNativeControls, setShowNativeControls] = useState(false);
   const canControlRef = useRef(canControl);
   const nativeControlsRef = useRef(false);
+  // This viewer's dial, when the caller isn't holding it (see the `volume`
+  // prop), plus the mute toggle — which is always local state, since muting
+  // is a click on this tile and nothing above it needs to know.
+  const [internalVolume, setInternalVolume] = useState(1);
+  const [isMuted, setIsMuted] = useState(false);
+  const effectiveVolume = volume ?? internalVolume;
+  // Read by the player's onReady callback, which is created once. Asking for
+  // YouTube's controls (or the video changing) rebuilds the player, and a
+  // fresh player starts at YouTube's default volume — so the desired one has
+  // to be re-applied from inside onReady, not only from the effect below.
+  const volumeRef = useRef(effectiveVolume);
+  const mutedRef = useRef(isMuted);
   useEffect(() => {
     sourceRef.current = source;
     onStateChangeRef.current = onStateChange;
     canControlRef.current = canControl;
     nativeControlsRef.current = showNativeControls;
+    volumeRef.current = effectiveVolume;
+    mutedRef.current = isMuted;
   });
+
+  function handleVolumeChange(nextVolume: number) {
+    if (volume === undefined) setInternalVolume(nextVolume);
+    onVolumeChange?.(nextVolume);
+    // Dragging to zero *is* muting, and dragging away from it is unmuting —
+    // same coupling the transmission tile has, so the speaker icon never
+    // contradicts the slider.
+    setIsMuted(nextVolume === 0);
+  }
 
 
   // Everything the owner reports goes through here, so a play, a speed
@@ -286,7 +344,9 @@ export function VideoSourceTile({
           },
           events: {
             onReady: () => {
-              if (!cancelled) setReady(true);
+              if (cancelled) return;
+              applyPlayerVolume(playerRef.current, volumeRef.current, mutedRef.current);
+              setReady(true);
             },
             onError: () => {
               if (!cancelled) setLoadError(true);
@@ -338,6 +398,15 @@ export function VideoSourceTile({
     // position (see `start` above), which is the same thing that happens
     // when someone joins mid-video.
   }, [source.videoId, canControl, showNativeControls, schedulePush]);
+
+  // Later changes to the dial. The initial value is applied from onReady
+  // instead (see applyPlayerVolume there) — this effect can't do that job on
+  // its own, because a player rebuild leaves `ready` already true and none of
+  // these deps changed.
+  useEffect(() => {
+    if (!ready) return;
+    applyPlayerVolume(playerRef.current, effectiveVolume, isMuted);
+  }, [ready, effectiveVolume, isMuted]);
 
   // Follows the room. Runs on every broadcast state change (`updatedAt` is
   // what makes even a re-pause at the same position a distinct update).
@@ -487,6 +556,18 @@ export function VideoSourceTile({
         </span>
 
         <span className="flex shrink-0 items-center gap-1">
+          {/* Lives in the bar, not over the video, for the same reason
+              everything else here does: YouTube's own controls own that
+              rectangle. Unlike a transmission's dial this one stops at 100% —
+              see the `volume` prop. */}
+          <VolumeSlider
+            value={isMuted ? 0 : effectiveVolume}
+            label="Volume desse vídeo"
+            onChange={handleVolumeChange}
+            muted={isMuted}
+            onToggleMute={() => setIsMuted((m) => !m)}
+            className="rounded-full bg-white/10 px-1.5 py-0.5 text-white"
+          />
           {/* Legendas, qualidade, velocidade de exibição: tudo isso vive no
               menu do próprio YouTube, e a única forma honesta de oferecer
               isso é entregar o menu dele. Só aparece pra quem não controla o

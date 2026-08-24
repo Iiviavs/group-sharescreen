@@ -2083,10 +2083,18 @@ export function WatchRoom({ handle }: { handle: string }) {
                 )}
                 {visibleVideoSources.map((videoSource) => {
                   const tileId = videoSourceTileId(videoSource.id);
+                  // Keyed on the YouTube id, not the source id: a source id
+                  // is minted fresh every time someone adds the video, so
+                  // keying on it would mean the dial never actually persists.
+                  // The prefix keeps it out of the way of the peer ids
+                  // sharing this same store.
+                  const volumeKey = `video:${videoSource.videoId}`;
                   return (
                     <VideoSourceTile
                       key={tileId}
                       source={videoSource}
+                      volume={transmissionVolumes[volumeKey] ?? 1}
+                      onVolumeChange={(volume) => setTransmissionVolume(volumeKey, volume)}
                       // Only whoever added it drives — for themselves and,
                       // through the server, for everyone else.
                       canControl={
