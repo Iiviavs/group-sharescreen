@@ -1354,8 +1354,9 @@ export function WatchRoom({ handle }: { handle: string }) {
 
   // The mic toggle, mute-mics toggle, and share/camera controls — kept
   // prominent since they're used mid-call, not just once at setup, unlike
-  // everything else in "Mais opções" above. Same row as "Compartilhar
-  // sala"/"Trocar de sala" at every width.
+  // everything else in "Mais opções" above. Rendered in the header's single
+  // control row, alongside "Compartilhar sala"/"Trocar de sala" and
+  // "Apoiar projeto".
   const mainControls = (
     <>
       <div className="flex items-stretch">
@@ -1557,7 +1558,15 @@ export function WatchRoom({ handle }: { handle: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-zinc-50 dark:bg-black">
       <header className="border-b border-black/10 px-3 py-2.5 dark:border-white/10 sm:px-4 sm:py-3">
-        <div className="flex items-center justify-between gap-2">
+        {/* One row for everything, wrapping instead of splitting: the room's
+            identity on the left, and every control on the right — the
+            mid-call ones (mic/mute/share/camera), the room link and the room
+            switcher, the points readout, "Apoiar projeto" and "Mais opções".
+            These used to be two fixed rows, which cost a full row of vertical
+            space on a wide screen that had room to spare. `ml-auto` keeps the
+            control group against the right edge whether it shares the line
+            with the title or has been pushed onto its own. */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-2.5">
           <div className="flex min-w-0 items-center gap-2">
             <Link href={"/"} className="shrink-0 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
               <MdHome />
@@ -1578,12 +1587,58 @@ export function WatchRoom({ handle }: { handle: string }) {
             </span>
           </div>
 
-          {/* Every header control except the mic toggle, the mute-mics
-              toggle, and the share/camera transmission buttons below lives
-              in here — on a phone, the old one-row-per-button layout
-              wrapped into a wall of buttons taller than the video area
-              itself. */}
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            {/* The mid-call controls (mic, mute-mics, screen, camera) — kept
+                out here rather than in "Mais opções" because they're used
+                while talking, not once at setup. */}
+            <div className="flex flex-wrap items-center justify-end gap-2">{mainControls}</div>
+
+            {/* Still desktop-only: on a phone these two live inside "Mais
+                opções" (see above), the only place with room for them. */}
+            <div className="hidden items-center justify-end gap-2 sm:flex">
+              <Tooltip content={linkCopied ? "Link copiado!" : "Copiar o link desta sala"}>
+                <button
+                  type="button"
+                  onClick={handleCopyLink}
+                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${linkCopied
+                    ? "border-emerald-600 text-emerald-600 dark:border-emerald-500 dark:text-emerald-500"
+                    : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                    }`}
+                >
+                  {linkCopied ? <CheckIcon className="h-4 w-4" /> : <LinkIcon className="h-4 w-4" />}
+                  {linkCopied ? "Copiado!" : "Compartilhar sala"}
+                </button>
+              </Tooltip>
+              <Popover
+                open={switching}
+                onClose={() => setSwitching(false)}
+                placement="bottom-end"
+                content={
+                  <div className="w-72 max-w-[calc(100vw-1rem)]">
+                    <SwitchRoomFields
+                      switchInput={switchInput}
+                      setSwitchInput={setSwitchInput}
+                      switchIsPrivate={switchIsPrivate}
+                      setSwitchIsPrivate={setSwitchIsPrivate}
+                      switchError={switchError}
+                      onSubmit={handleSwitchSubmit}
+                    />
+                  </div>
+                }
+              >
+                <button
+                  type="button"
+                  onClick={() => setSwitching((s) => !s)}
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${switching
+                    ? "border-zinc-400 bg-zinc-100 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                    : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                    }`}
+                >
+                  Trocar de sala
+                </button>
+              </Popover>
+            </div>
+
             {/* Name + cosmetic score, DB-edited only for now (see
                 accountApi.ts's Account.points) — hidden for a guest, who has
                 no account to hold either. Kept deliberately muted (no fill
@@ -1656,66 +1711,6 @@ export function WatchRoom({ handle }: { handle: string }) {
                 </div>
               </>
             )}
-          </div>
-        </div>
-
-        {/* Below sm, this is just mainControls (link/switch stays inside
-            "Mais opções" until there's room for it — see below), right-
-            aligned same as it's always been. From sm up, the link/switch
-            group joins it in the same row, and this switches to a 3-column
-            grid so mainControls sits in a true center column independent of
-            how wide that group is (an empty first column balances it out; a
-            flex row alone couldn't center one group without also being
-            thrown off by the other's width). */}
-        <div className="mt-2.5 flex flex-wrap items-center justify-end gap-2 sm:mt-3 sm:grid sm:grid-cols-[1fr_auto_1fr] sm:justify-normal">
-          <div className="hidden sm:block" />
-          <div className="flex flex-wrap items-center justify-center gap-2">{mainControls}</div>
-          {/* Desktop only (hidden below sm) — on a phone these two still
-              live inside "Mais opções" (see above), the only place with
-              room for them. Above that width there's space to skip the
-              extra tap, so they get their own quick-access spot instead. */}
-          <div className="hidden items-center justify-end gap-2 sm:flex">
-            <Tooltip content={linkCopied ? "Link copiado!" : "Copiar o link desta sala"}>
-              <button
-                type="button"
-                onClick={handleCopyLink}
-                className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${linkCopied
-                  ? "border-emerald-600 text-emerald-600 dark:border-emerald-500 dark:text-emerald-500"
-                  : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                  }`}
-              >
-                {linkCopied ? <CheckIcon className="h-4 w-4" /> : <LinkIcon className="h-4 w-4" />}
-                {linkCopied ? "Copiado!" : "Compartilhar sala"}
-              </button>
-            </Tooltip>
-            <Popover
-              open={switching}
-              onClose={() => setSwitching(false)}
-              placement="bottom-end"
-              content={
-                <div className="w-72 max-w-[calc(100vw-1rem)]">
-                  <SwitchRoomFields
-                    switchInput={switchInput}
-                    setSwitchInput={setSwitchInput}
-                    switchIsPrivate={switchIsPrivate}
-                    setSwitchIsPrivate={setSwitchIsPrivate}
-                    switchError={switchError}
-                    onSubmit={handleSwitchSubmit}
-                  />
-                </div>
-              }
-            >
-              <button
-                type="button"
-                onClick={() => setSwitching((s) => !s)}
-                className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${switching
-                  ? "border-zinc-400 bg-zinc-100 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-                  : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-                  }`}
-              >
-                Trocar de sala
-              </button>
-            </Popover>
           </div>
         </div>
       </header>
