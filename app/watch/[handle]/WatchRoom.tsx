@@ -787,6 +787,23 @@ export function WatchRoom({ handle }: { handle: string }) {
     };
   }, [validHandle, state.name, handle]);
 
+  // Clears the hyperfocus state once its target is gone (see
+  // activeHyperfocusId further down, which already makes the *render* behave
+  // as un-focused). Without this the stale id would silently re-engage
+  // hyperfocus the moment that same peer started transmitting again. Up here
+  // among the other effects because everything below is past an early
+  // return; deferred out of the effect body because a setState there is a
+  // cascading render.
+  useEffect(() => {
+    if (hyperfocusId === null) return;
+    const gone =
+      hyperfocusId === "self"
+        ? !((isSharing && localStream) || localCameraStream)
+        : !(hyperfocusId in remoteStreams) && !(hyperfocusId in remoteCameraStreams);
+    if (!gone) return;
+    queueMicrotask(() => setHyperfocusId(null));
+  }, [hyperfocusId, isSharing, localStream, localCameraStream, remoteStreams, remoteCameraStreams]);
+
   function handleNameSubmit(e: FormEvent) {
     e.preventDefault();
     const trimmed = nameInput.trim();
@@ -1042,19 +1059,35 @@ export function WatchRoom({ handle }: { handle: string }) {
   // for each, never one tile with the other crammed into a corner.
   const remoteScreenEntries = Object.entries(remoteStreams);
   const remoteCameraEntries = Object.entries(remoteCameraStreams);
+  // Hyperfocus survives only as long as what it's focused on does. When that
+  // transmission ends — the peer stops sharing, or leaves — its tile goes
+  // with it, and that tile is the only way out of hyperfocus (see
+  // toggleHyperfocus): the room was left showing nothing at all, every other
+  // transmission still hidden, and no button anywhere to bring them back.
+  // Dropping the focus the moment its target is gone is what un-sticks it.
+  const hasLocalTile = Boolean((isSharing && localStream) || localCameraStream);
+  const hyperfocusTargetGone =
+    hyperfocusId !== null &&
+    (hyperfocusId === "self"
+      ? !hasLocalTile
+      : !(hyperfocusId in remoteStreams) && !(hyperfocusId in remoteCameraStreams));
+  // Used everywhere below instead of the raw state, so this render already
+  // behaves as un-focused rather than waiting for the effect that clears it.
+  const activeHyperfocusId = hyperfocusTargetGone ? null : hyperfocusId;
+
   // Hyperfocus hides every tile except the chosen one (its connections are
   // also actively closed — see enterHyperfocus below — so this isn't just a
   // display filter, the streams genuinely stop arriving).
-  const hyperfocusVisible = !hyperfocusId || hyperfocusId === "self";
-  const visibleScreenEntries = hyperfocusId
-    ? hyperfocusId === "self"
+  const hyperfocusVisible = !activeHyperfocusId || activeHyperfocusId === "self";
+  const visibleScreenEntries = activeHyperfocusId
+    ? activeHyperfocusId === "self"
       ? []
-      : remoteScreenEntries.filter(([peerId]) => peerId === hyperfocusId)
+      : remoteScreenEntries.filter(([peerId]) => peerId === activeHyperfocusId)
     : remoteScreenEntries;
-  const visibleCameraEntries = hyperfocusId
-    ? hyperfocusId === "self"
+  const visibleCameraEntries = activeHyperfocusId
+    ? activeHyperfocusId === "self"
       ? []
-      : remoteCameraEntries.filter(([peerId]) => peerId === hyperfocusId)
+      : remoteCameraEntries.filter(([peerId]) => peerId === activeHyperfocusId)
     : remoteCameraEntries;
   const localTileCount = (isSharing && localStream ? 1 : 0) + (localCameraStream ? 1 : 0);
   const hasMultipleShares =
@@ -1077,10 +1110,10 @@ export function WatchRoom({ handle }: { handle: string }) {
   // Hidden along with everything else while hyperfocused — a placeholder for
   // someone hyperfocus itself just stopped watching would be confusing right
   // next to the "sair do hiperfoco" banner.
-  const visibleStoppedEntries = hyperfocusId ? [] : stoppedEntries;
-  const visibleResumingEntries = hyperfocusId ? [] : resumingEntries;
-  const visibleStoppedCameraEntries = hyperfocusId ? [] : stoppedCameraEntries;
-  const visibleResumingCameraEntries = hyperfocusId ? [] : resumingCameraEntries;
+  const visibleStoppedEntries = activeHyperfocusId ? [] : stoppedEntries;
+  const visibleResumingEntries = activeHyperfocusId ? [] : resumingEntries;
+  const visibleStoppedCameraEntries = activeHyperfocusId ? [] : stoppedCameraEntries;
+  const visibleResumingCameraEntries = activeHyperfocusId ? [] : resumingCameraEntries;
   const nothingToShow =
     remoteScreenEntries.length === 0 &&
     remoteCameraEntries.length === 0 &&
@@ -1135,7 +1168,7 @@ export function WatchRoom({ handle }: { handle: string }) {
   // The tile's own hyperfocus button is the only entry/exit point (see
   // VideoTile's isHyperfocused green state) — no separate banner/button.
   function toggleHyperfocus(id: string) {
-    if (hyperfocusId === id) exitHyperfocus();
+    if (activeHyperfocusId === id) exitHyperfocus();
     else enterHyperfocus(id);
   }
 
@@ -1844,7 +1877,7 @@ export function WatchRoom({ handle }: { handle: string }) {
             </div>
           ) : (
             <>
-              {!hyperfocusId && spotlightId && hasMultipleShares && (
+              {!activeHyperfocusId && spotlightId && hasMultipleShares && (
                 <button
                   type="button"
                   onClick={() => setSpotlightId(null)}
@@ -1873,7 +1906,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                     onFocus={() => toggleSpotlight("self")}
                     isSpotlighted={spotlightId === "self"}
                     onHyperfocus={() => toggleHyperfocus("self")}
-                    isHyperfocused={hyperfocusId === "self"}
+                    isHyperfocused={activeHyperfocusId === "self"}
                     isMicOn={isMicOn}
                     onToggleMic={toggleMic}
                     micsMuted={micsMuted}
@@ -1893,7 +1926,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                     onFocus={() => toggleSpotlight("self")}
                     isSpotlighted={spotlightId === "self"}
                     onHyperfocus={() => toggleHyperfocus("self")}
-                    isHyperfocused={hyperfocusId === "self"}
+                    isHyperfocused={activeHyperfocusId === "self"}
                     isMicOn={isMicOn}
                     onToggleMic={toggleMic}
                     micsMuted={micsMuted}
@@ -1926,7 +1959,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                       onFocus={() => toggleSpotlight(peerId)}
                       isSpotlighted={spotlightId === peerId}
                       onHyperfocus={() => toggleHyperfocus(peerId)}
-                      isHyperfocused={hyperfocusId === peerId}
+                      isHyperfocused={activeHyperfocusId === peerId}
                       isMicOn={isMicOn}
                       onToggleMic={toggleMic}
                       micsMuted={micsMuted}
@@ -1960,7 +1993,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                       onFocus={() => toggleSpotlight(peerId)}
                       isSpotlighted={spotlightId === peerId}
                       onHyperfocus={() => toggleHyperfocus(peerId)}
-                      isHyperfocused={hyperfocusId === peerId}
+                      isHyperfocused={activeHyperfocusId === peerId}
                       isMicOn={isMicOn}
                       onToggleMic={toggleMic}
                       micsMuted={micsMuted}
