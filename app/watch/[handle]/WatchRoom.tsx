@@ -75,6 +75,7 @@ import { Tooltip, Popover } from "@/components/Tooltip";
 import { useMediaQuery, SM_BREAKPOINT_QUERY, LG_BREAKPOINT_QUERY } from "@/lib/useMediaQuery";
 import { MdHome, MdOutlineOndemandVideo } from "react-icons/md";
 import { BsGearFill, BsCoin } from "react-icons/bs";
+import { BetaMark } from "@/components/BetaMark";
 
 // Mirrors server/signaling.ts's HANDLE_RE — must match exactly, or a name
 // this lets through but the server rejects lands the user in a dead room
@@ -225,11 +226,10 @@ function QualityControls({
                 key={opt.value}
                 type="button"
                 onClick={() => setShareProfile(opt.value)}
-                className={`rounded-md border px-2 py-1.5 text-left text-xs transition ${
-                  shareProfile === opt.value
+                className={`rounded-md border px-2 py-1.5 text-left text-xs transition ${shareProfile === opt.value
                     ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
                     : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                }`}
+                  }`}
               >
                 <span className="block font-medium">{opt.label}</span>
                 <span className="block opacity-70">{opt.hint}</span>
@@ -1101,10 +1101,10 @@ export function WatchRoom({ handle }: { handle: string }) {
     (hyperfocusId === "self"
       ? !hasLocalTile
       : // A room video source is a tile like any other here, and this check
-        // not knowing that was why hyperfocusing one did nothing at all:
-        // every source id looked like a peer that had stopped transmitting,
-        // so the focus was dropped in the same render that set it.
-        hyperfocusId.startsWith(VIDEO_SOURCE_TILE_PREFIX)
+      // not knowing that was why hyperfocusing one did nothing at all:
+      // every source id looked like a peer that had stopped transmitting,
+      // so the focus was dropped in the same render that set it.
+      hyperfocusId.startsWith(VIDEO_SOURCE_TILE_PREFIX)
         ? !state.videoSources.some((v) => videoSourceTileId(v.id) === hyperfocusId)
         : !(hyperfocusId in remoteStreams) && !(hyperfocusId in remoteCameraStreams));
   // Used everywhere below instead of the raw state, so this render already
@@ -1142,9 +1142,9 @@ export function WatchRoom({ handle }: { handle: string }) {
     : state.videoSources.filter((v) => leftVideoSourceIds.has(v.id));
   const hasMultipleShares =
     remoteScreenEntries.length +
-      remoteCameraEntries.length +
-      state.videoSources.length +
-      localTileCount >
+    remoteCameraEntries.length +
+    state.videoSources.length +
+    localTileCount >
     1;
   // A peer we deliberately stopped watching (manually, or via the autoJoin
   // gate, or hyperfocus freeing them up) has no entry in remoteStreams, but
@@ -1726,11 +1726,10 @@ export function WatchRoom({ handle }: { handle: string }) {
                   className="w-72 max-w-[calc(100vw-1rem)] rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-950"
                 >
                   <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    Adicionar fonte de vídeo
+                    <BetaMark /> Adicionar fonte de vídeo
                   </p>
                   <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                    Cole o link de um vídeo ou live do YouTube. Ele aparece pra todo mundo na sala, e
-                    play, pause e avanço ficam sincronizados.
+                    Cole o link de um vídeo ou live do YouTube. Ele aparece pra todo mundo na sala e fica sincronizado. Só você terá o controle.
                   </p>
                   <input
                     value={videoSourceInput}
@@ -1759,13 +1758,13 @@ export function WatchRoom({ handle }: { handle: string }) {
                 type="button"
                 onClick={() => setVideoSourceOpen((o) => !o)}
                 aria-label="Adicionar fonte de vídeo"
-                className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${videoSourceOpen
-                  ? "border-zinc-400 bg-zinc-100 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-                  : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-white transition ${videoSourceOpen
+                    ? "bg-emerald-700"
+                    : "bg-emerald-600 hover:bg-emerald-700"
                   }`}
               >
                 <MdOutlineOndemandVideo className="h-5 w-5 shrink-0" />
-                <span className="hidden lg:inline">Adicionar fonte de vídeo</span>
+                <span className="hidden lg:inline"><BetaMark /></span>
               </button>
             </Popover>
 

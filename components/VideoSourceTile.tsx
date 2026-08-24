@@ -6,6 +6,7 @@ import { Tooltip } from "@/components/Tooltip";
 import { MdClose, MdSettings } from "react-icons/md";
 import { videoSourcePosition, type VideoSource } from "@/lib/videoSource";
 import { signalingClient } from "@/lib/signalingClient";
+import { BetaMark } from "./BetaMark";
 
 // How far out of step with the room this player may drift before it is
 // pulled back, and how often that is checked. Tight: a third of a second is
@@ -478,6 +479,7 @@ export function VideoSourceTile({
           and nothing of ours ever covers a pixel of theirs. */}
       <div className="flex shrink-0 items-center justify-between gap-2 bg-zinc-900 px-2.5 py-1.5">
         <span className="flex min-w-0 items-center gap-1.5">
+          <BetaMark/>
           <span className="truncate text-sm font-medium text-white">{label}</span>
           <span className="shrink-0 rounded-full bg-red-500/90 px-2 py-0.5 text-[10px] font-semibold uppercase text-white">
             youtube
