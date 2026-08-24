@@ -834,8 +834,14 @@ function useBroadcastChannel(
     // signal makes closeRecvPCFully run for them (see the onSignal handler
     // below), since there's no longer a stream to have stopped watching.
     viewerPausedPeers.current.clear();
-    if (channel === "screen") signalingClient.setSharing(false);
-    else signalingClient.setMic(false);
+    // Each channel only ever reports its *own* half: `setSharing` merges the
+    // pair (see signalingClient.setSharing). Before that merge existed this
+    // branch read `channel === "screen" ? setSharing(false) : setMic(false)`,
+    // which meant stopping a *camera* share announced the mic as off — the
+    // mic channel never re-announced itself, so the indicator stayed wrong
+    // for everyone else while the audio kept flowing.
+    if (channel === "mic") signalingClient.setMic(false);
+    else signalingClient.setSharing({ [channel]: false });
     trackEvent(`${eventPrefix}_stop`);
   }, [channel, eventPrefix]);
 
@@ -875,7 +881,7 @@ function useBroadcastChannel(
           stream.getAudioTracks().length === 0
       );
       if (channel === "mic") signalingClient.setMic(true);
-      else signalingClient.setSharing(true);
+      else signalingClient.setSharing({ [channel]: true });
       trackEvent(`${eventPrefix}_start`);
       stream.getTracks().forEach((track) => track.addEventListener("ended", () => stop()));
       // Staggered (see STAGGER_MS's doc comment) — starting a share into an
@@ -1238,7 +1244,7 @@ function useBroadcastChannel(
       // stale.
       if (!activeRef.current) return;
       if (channel === "mic") signalingClient.setMic(true);
-      else signalingClient.setSharing(true);
+      else signalingClient.setSharing({ [channel]: true });
     });
 
     // Captured now (not read as pendingPruneTimers.current inside the
@@ -1573,7 +1579,7 @@ export function useRoomMedia(room: string) {
   );
 
   useEffect(() => {
-    signalingClient.setSharing(screen.active || camera.active);
+    signalingClient.setSharing({ screen: screen.active, camera: camera.active });
   }, [screen.active, camera.active]);
 
   // Capacity measurement and the cascade decision. Both are driven by the

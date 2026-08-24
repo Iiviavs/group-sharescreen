@@ -16,6 +16,16 @@ import {
 // clicking their own buttons, so echoing that back as a sound would be
 // redundant (and, for sharing, would double up with the mic/share toggle
 // sounds a browser or OS might already play).
+// Moderator "ghost" peers (see server/signaling.ts's admin-join) ride the
+// same peer list as everyone else so their WebRTC connections get set up
+// transparently — but a participant must never get *any* signal that one
+// came or went, and a join/leave chime is exactly that. Dropped from both
+// the baseline and the diff below, so neither a moderator arriving nor one
+// leaving can ever be heard.
+function realPeerMap(peers: PeerInfo[]): Map<string, PeerInfo> {
+  return new Map(peers.filter((p) => p.role !== "moderator").map((p) => [p.id, p]));
+}
+
 export function useRoomSoundEffects(state: SignalingState) {
   const prevPeersRef = useRef<Map<string, PeerInfo>>(new Map());
   const chatBaselineRef = useRef(0);
@@ -29,7 +39,7 @@ export function useRoomSoundEffects(state: SignalingState) {
     // reconnect rejoining the same room — so each of those re-baselines
     // instead of being misread as every peer joining/leaving at once.
     const unsubscribe = signalingClient.onRoomJoined(() => {
-      prevPeersRef.current = new Map(signalingClient.state.peers.map((p) => [p.id, p]));
+      prevPeersRef.current = realPeerMap(signalingClient.state.peers);
       chatBaselineRef.current = signalingClient.state.chatMessages.length;
       readyRef.current = true;
     });
@@ -41,7 +51,7 @@ export function useRoomSoundEffects(state: SignalingState) {
   useEffect(() => {
     if (!readyRef.current || !state.room) return;
     const prevPeers = prevPeersRef.current;
-    const nextPeers = new Map(state.peers.map((p) => [p.id, p]));
+    const nextPeers = realPeerMap(state.peers);
 
     for (const [id, peer] of nextPeers) {
       const prev = prevPeers.get(id);

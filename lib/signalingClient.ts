@@ -7,6 +7,7 @@ import type { Partner } from "./partner";
 import type { Supporter } from "./supporter";
 import { getAccountToken } from "./accountApi";
 import { getTurnstileToken } from "./turnstile";
+import { getBrowserFingerprint } from "./fingerprint";
 
 // `role: "moderator"` marks a moderator silently watching for moderation
 // (see server/signaling.ts's "admin-join") — present in the peer list so
@@ -16,6 +17,13 @@ export type PeerInfo = {
   id: string;
   name: string;
   sharing: boolean;
+  // Which of the two video channels the peer is broadcasting — `sharing` is
+  // just the two OR-ed together. null when the peer's client never reported
+  // the breakdown (older client), which is not the same as false: the admin
+  // UI shows a generic "transmitindo" for null instead of guessing a
+  // channel. Undefined only from a server that predates the fields.
+  screen?: boolean | null;
+  camera?: boolean | null;
   mic: boolean;
   role?: "moderator";
   // Stable per-account/per-guest identity (see server/signaling.ts's
@@ -138,6 +146,12 @@ export type SignalingState = {
   // soon as another send is attempted, so it's a one-shot warning rather
   // than a persistent banner.
   chatBlockedMessage: string | null;
+  // Why this connection was banned, when the server said (see its "banned"
+  // message). Null both when there's no ban and when there is one it can't
+  // explain: an IP ban is rejected at the WebSocket upgrade itself, before
+  // there's a connection to send anything over, so `status === "banned"` with
+  // a null reason here is the norm, not an anomaly.
+  bannedReason: string | null;
   joinError: string | null;
   // Ids (PeerInfo.id) of peers currently shown as "typing..." in the chat
   // (see ChatPanel.tsx) — purely a live relay (server/signaling.ts's
@@ -181,6 +195,7 @@ const initialState: SignalingState = {
   nameError: null,
   account: null,
   room: null,
+  bannedReason: null,
   joinError: null,
   peers: [],
   chatMessages: [],
@@ -309,6 +324,10 @@ class SignalingClient {
   // the original register() call did.
   private desiredToken: string | null = null;
   private desiredRoom: string | null = null;
+  // Last reported state of each video channel — see setSharing, which merges
+  // into this rather than overwriting, so one channel's update never claims
+  // anything about the other.
+  private sharingSources = { screen: false, camera: false };
   // Consecutive "turnstile-required" rejections for the current join
   // attempt — see MAX_JOIN_RETRIES and performJoin.
   private joinRetryCount = 0;
@@ -405,6 +424,7 @@ class SignalingClient {
           name: this.desiredName,
           clientId: getClientId(),
           token: this.desiredToken,
+          fingerprint: getBrowserFingerprint(),
         });
       }
     };
@@ -509,7 +529,13 @@ class SignalingClient {
         // natural reconnect, closes that window down to one round trip
         // instead of leaving it open for as long as this tab stays open.
         if (justMintedGuestToken) {
-          this.rawSend({ type: "register", name: msg.name, clientId: getClientId(), token: guestToken });
+          this.rawSend({
+            type: "register",
+            name: msg.name,
+            clientId: getClientId(),
+            token: guestToken,
+            fingerprint: getBrowserFingerprint(),
+          });
         }
         // A fresh registration (initial connect, or reconnect) counts as a
         // new join attempt — reset the retry budget rather than carrying
@@ -520,6 +546,13 @@ class SignalingClient {
         }
         break;
       }
+      // Banned on something only knowable once registered — the account or
+      // the browser fingerprint. The socket close that follows is what puts
+      // this client into the "banned" status; this message only carries the
+      // reason to show there.
+      case "banned":
+        this.setState({ bannedReason: typeof msg.reason === "string" ? msg.reason : null });
+        break;
       case "register-error":
         this.setState({ nameError: msg.message as string });
         // If we already had a confirmed name, this was a rename attempt —
@@ -622,7 +655,14 @@ class SignalingClient {
       case "peer-sharing":
         this.setState({
           peers: this.state.peers.map((p) =>
-            p.id === msg.id ? { ...p, sharing: Boolean(msg.sharing) } : p
+            p.id === msg.id
+              ? {
+                  ...p,
+                  sharing: Boolean(msg.sharing),
+                  screen: typeof msg.screen === "boolean" ? msg.screen : null,
+                  camera: typeof msg.camera === "boolean" ? msg.camera : null,
+                }
+              : p
           ),
         });
         break;
@@ -790,7 +830,15 @@ class SignalingClient {
     const wasOpen = this.ws && this.ws.readyState === WebSocket.OPEN;
     this.ensureSocket();
     if (wasOpen) {
-      this.rawSend({ type: "register", name, clientId: getClientId(), token: this.desiredToken });
+      this.rawSend({
+        type: "register",
+        name,
+        clientId: getClientId(),
+        token: this.desiredToken,
+        // See lib/fingerprint.ts — a moderation handle that outlives a new
+        // guest identity or a fresh account, sent on every register.
+        fingerprint: getBrowserFingerprint(),
+      });
     }
   }
 
@@ -891,8 +939,15 @@ class SignalingClient {
     this.rawSend({ type: "video-source-state", id, playing, positionSeconds, playbackRate });
   }
 
-  setSharing(sharing: boolean) {
-    this.rawSend({ type: "sharing", sharing });
+  // Per-channel, and merged with whatever the other channel last reported:
+  // screen and camera are two independent useBroadcastChannel instances in
+  // useRoomMedia, each of which only knows its own state, but the server
+  // wants both at once (plus the rolled-up boolean everything else reads).
+  // Merging here is what lets each caller pass just its own half.
+  setSharing(sources: { screen?: boolean; camera?: boolean }) {
+    this.sharingSources = { ...this.sharingSources, ...sources };
+    const { screen, camera } = this.sharingSources;
+    this.rawSend({ type: "sharing", sharing: screen || camera, screen, camera });
   }
 
   setMic(mic: boolean) {

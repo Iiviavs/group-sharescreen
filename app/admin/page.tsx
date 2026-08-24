@@ -5,6 +5,7 @@ import Link from "next/link";
 import { adminLogin, adminLogout, useAdminToken } from "@/lib/adminApi";
 import { DashboardPanel } from "./DashboardPanel";
 import { ModerationPanel } from "./ModerationPanel";
+import { readAdminViewState, patchAdminViewState } from "./adminViewState";
 
 type Tab = "dashboard" | "moderation";
 
@@ -13,13 +14,30 @@ const TABS: { value: Tab; label: string }[] = [
   { value: "moderation", label: "Moderação" },
 ];
 
+function isTab(value: string | undefined): value is Tab {
+  return TABS.some((t) => t.value === value);
+}
+
 export default function AdminPage() {
   const token = useAdminToken();
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loggingIn, setLoggingIn] = useState(false);
-  const [tab, setTab] = useState<Tab>("dashboard");
+  // Restored from the stored view state (see adminViewState.ts) so coming
+  // back from a room in moderation mode lands on the tab it was opened from,
+  // not back on the dashboard. Safe as a lazy initializer despite running on
+  // the client only: while there's no token — which is the whole of the
+  // server render and the hydration pass — the tab bar isn't rendered at all.
+  const [tab, setTab] = useState<Tab>(() => {
+    const stored = readAdminViewState().tab;
+    return isTab(stored) ? stored : "dashboard";
+  });
+
+  function selectTab(next: Tab) {
+    setTab(next);
+    patchAdminViewState({ tab: next });
+  }
 
   async function handleLogin(e: FormEvent) {
     e.preventDefault();
@@ -117,7 +135,7 @@ export default function AdminPage() {
             <button
               key={t.value}
               type="button"
-              onClick={() => setTab(t.value)}
+              onClick={() => selectTab(t.value)}
               className={`-mb-px rounded-t-lg border-b-2 px-4 py-2 text-sm font-medium transition ${
                 tab === t.value
                   ? "border-zinc-950 text-zinc-950 dark:border-zinc-50 dark:text-zinc-50"

@@ -63,6 +63,10 @@ export function StatsOverview() {
       <StatCard label="Salas públicas" value={stats.publicRooms} />
       <StatCard label="Salas privadas" value={stats.privateRooms} />
       <StatCard label="IPs banidos" value={stats.bannedIps} />
+      {/* "—" rather than 0 on a server that predates per-subject bans: an
+          unimplemented count shown as zero reads as a real measurement. */}
+      <StatCard label="Contas banidas" value={stats.bannedAccounts ?? "—"} />
+      <StatCard label="Navegadores banidos" value={stats.bannedFingerprints ?? "—"} />
       <StatCard label="Palavras filtradas" value={stats.bannedWords} />
       <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
         <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">MongoDB</p>

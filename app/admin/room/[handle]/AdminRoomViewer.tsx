@@ -37,6 +37,7 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
     error,
     peers,
     chatMessages,
+    videoSources,
     selfId,
     screenStreams,
     cameraStreams,
@@ -90,6 +91,14 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
         </Link>
       </div>
     );
+  }
+
+  // Mirrors WatchRoom's helper of the same name: a room video source belongs
+  // to whoever added it (by stable userId), and that person is also the only
+  // one who can play/pause it.
+  function peerSharesVideo(userId: string | null | undefined): boolean {
+    if (!userId) return false;
+    return videoSources.some((v) => v.addedById === userId);
   }
 
   const screenEntries = Object.entries(screenStreams);
@@ -292,6 +301,9 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
                   isGuest={p.isGuest}
                   micOn={p.mic}
                   sharing={p.sharing}
+                  screen={p.screen}
+                  camera={p.camera}
+                  sharingVideo={peerSharesVideo(p.userId)}
                   micStream={micStreams[p.id]}
                   muted={mutedPeerIds.has(p.id)}
                   onToggleMute={() => togglePeerMute(p.id)}

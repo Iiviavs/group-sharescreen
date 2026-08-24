@@ -928,7 +928,9 @@ export function WatchRoom({ handle }: { handle: string }) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-4 px-4 text-center">
         <p className="text-lg font-medium text-zinc-900 dark:text-zinc-100">
-          Você foi temporariamente banido do site pelo AntiSpam. Faz o L
+          {state.bannedReason
+            ? `Você foi banido do site: ${state.bannedReason}`
+            : "Você foi temporariamente banido do site pelo AntiSpam. Faz o L"}
         </p>
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
           Se você acredita que isso é um engano, abra um ticket em <a
@@ -1625,6 +1627,8 @@ export function WatchRoom({ handle }: { handle: string }) {
           verified={state.account?.flags?.includes("VERIFIED")}
           micOn={isMicOn}
           sharing={isSharing}
+          screen={Boolean(localStream)}
+          camera={Boolean(localCameraStream)}
           sharingVideo={peerSharesVideo(state.selfUserId)}
           micStream={localMicStream}
         />
@@ -1639,6 +1643,8 @@ export function WatchRoom({ handle }: { handle: string }) {
               verified={p.flags?.includes("VERIFIED")}
               micOn={p.mic}
               sharing={p.sharing}
+              screen={p.screen}
+              camera={p.camera}
               sharingVideo={peerSharesVideo(p.userId)}
               micStream={remoteMicStreams[p.id]}
               muted={micsMuted || mutedPeerIds.has(p.id)}

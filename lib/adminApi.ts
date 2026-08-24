@@ -106,9 +106,38 @@ export type AdminRoomPeer = {
   id: string;
   name: string | null;
   sharing: boolean;
+  // Which of the two channels `sharing` is made of. null means the peer's
+  // client never reported the breakdown (an outdated client), which is not
+  // the same as false — see PeerInfo.screen in lib/signalingClient.ts.
+  // Undefined only from a server that predates the fields.
+  screen?: boolean | null;
+  camera?: boolean | null;
+  // How many room video sources this person added (see lib/videoSource.ts).
+  // A third, separate kind of "transmitting": nothing of theirs is being
+  // streamed, but a video is on everyone's screen and only they can steer
+  // it. Undefined from a server that predates the field.
+  videoSources?: number;
   mic: boolean;
   ip: string;
   isGuest: boolean;
+  // The three below are what the moderation panel's search actually matches
+  // a person on (see ModerationPanel's peerMatches). All optional: a server
+  // that predates them simply sends nothing, and search just falls back to
+  // the fields above instead of breaking.
+  //
+  // Account id — the same id /user/[id] is keyed on, so a profile URL
+  // pasted into the search box finds that person's room.
+  accountId?: string | null;
+  // Account username, which is *not* necessarily the display name in
+  // `name` (see the server's AccountDoc: username vs displayName).
+  username?: string | null;
+  // Stable across a guest's reconnects, unlike `id` — the only durable
+  // handle a non-account visitor has.
+  guestId?: string | null;
+  // Hash of this person's browser/device traits (see lib/fingerprint.ts).
+  // Survives a new guest identity, a fresh account and an IP change, which
+  // is what makes it worth banning on. null when the client didn't send one.
+  fingerprint?: string | null;
 };
 
 export type AdminRoom = {
@@ -117,6 +146,14 @@ export type AdminRoom = {
   createdAt: number;
   peopleCount: number;
   peers: AdminRoomPeer[];
+  // Stable id (account or guest) of the room's current owner. Optional for
+  // the same old-server reason as the peer fields above.
+  ownerId?: string | null;
+  // Private room access code, when the room has one.
+  code?: string | null;
+  // Total room video sources, across everyone — the sum of the peers'
+  // `videoSources` above.
+  videoSourceCount?: number;
 };
 
 export async function fetchAdminRooms(signal?: AbortSignal): Promise<AdminRoom[]> {
@@ -268,6 +305,11 @@ export type AdminStats = {
   publicRooms: number;
   privateRooms: number;
   bannedIps: number;
+  // Both optional: a server that predates per-subject bans reports only the
+  // IP count, and rendering a hard 0 for the other two would read as a real
+  // measurement rather than "this server doesn't have them".
+  bannedAccounts?: number;
+  bannedFingerprints?: number;
   bannedWords: number;
   mongo: { enabled: boolean; connected: boolean };
 };
@@ -276,29 +318,76 @@ export async function fetchAdminStats(): Promise<AdminStats> {
   return adminFetch<AdminStats>("/admin/stats");
 }
 
-export type IpBan = {
-  ip: string;
+// What a ban is keyed on (see the server's moderationStore.ts). An IP is the
+// weakest of the three — shared behind a CGNAT, and reassigned on its own to
+// anyone on mobile data — which is why an account id and a browser
+// fingerprint can be banned too.
+export type BanSubject = "ip" | "account" | "fingerprint";
+
+export const BAN_SUBJECT_LABELS: Record<BanSubject, string> = {
+  ip: "IP",
+  account: "Conta",
+  fingerprint: "Navegador",
+};
+
+export type Ban = {
+  subject: BanSubject;
+  value: string;
   reason: string;
   createdAt: number;
   expiresAt: number | null;
 };
 
-export async function fetchBans(): Promise<IpBan[]> {
-  const data = await adminFetch<{ bans: IpBan[] }>("/admin/bans");
-  return data.bans;
+// A server that predates ban subjects answers with the bare `{ ip, ... }`
+// shape and no subject/value at all — everything it ever banned was an IP.
+// Normalising here (rather than letting undefined through) is the mirror of
+// the legacy `ip` alias the current server still sends: it keeps this panel
+// working against the older one, which is exactly what happens in the window
+// between the frontend and the API being deployed.
+function normalizeBan(raw: Ban & { ip?: string }): Ban {
+  return {
+    subject: raw.subject ?? "ip",
+    value: raw.value ?? raw.ip ?? "",
+    reason: raw.reason ?? "",
+    createdAt: raw.createdAt,
+    expiresAt: raw.expiresAt ?? null,
+  };
 }
 
-export async function banIp(input: { ip: string; reason: string; durationMinutes?: number }): Promise<IpBan> {
-  const data = await adminFetch<{ ban: IpBan }>("/admin/bans", {
+export async function fetchBans(): Promise<Ban[]> {
+  const data = await adminFetch<{ bans: (Ban & { ip?: string })[] }>("/admin/bans");
+  // An entry with no value at all can't be displayed or removed, and two of
+  // them would collide on the list key — drop them rather than render them.
+  return data.bans.map(normalizeBan).filter((ban) => ban.value.length > 0);
+}
+
+export type BanInput = {
+  subject: BanSubject;
+  value: string;
+  reason: string;
+  // Omitted/undefined means permanent.
+  durationMinutes?: number;
+};
+
+export async function createBan(input: BanInput): Promise<Ban> {
+  const data = await adminFetch<{ ban: Ban & { ip?: string } }>("/admin/bans", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
+    // `ip` alongside `value` so a server that predates ban subjects still
+    // reads the value out of the field it knows (it ignores the rest, and
+    // only ever banned IPs anyway).
+    body: JSON.stringify({ ...input, ip: input.value }),
   });
-  return data.ban;
+  // Same normalisation as fetchBans — the echoed ban goes straight into the
+  // list, so an un-normalised one would sit there keyed on undefined.
+  return normalizeBan(data.ban);
 }
 
-export async function unbanIp(ip: string): Promise<void> {
-  await adminFetch<void>(`/admin/bans/${encodeURIComponent(ip)}`, { method: "DELETE" });
+export async function removeBan(subject: BanSubject, value: string): Promise<void> {
+  await adminFetch<void>(
+    `/admin/bans/${encodeURIComponent(subject)}/${encodeURIComponent(value)}`,
+    { method: "DELETE" }
+  );
 }
 
 export async function fetchBannedWords(): Promise<string[]> {

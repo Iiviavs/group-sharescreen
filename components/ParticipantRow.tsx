@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSpeaking } from "@/lib/useSpeaking";
-import { MicIcon, MicOffIcon, ScreenIcon } from "./icons";
+import { MicIcon, MicOffIcon, ScreenIcon, CameraIcon } from "./icons";
 import { MdOutlineOndemandVideo } from "react-icons/md";
 import { VolumeSlider } from "./VolumeSlider";
 import { DisplayUserName } from "./DisplayUserName";
@@ -16,6 +16,8 @@ export function ParticipantRow({
   userId,
   micOn,
   sharing,
+  screen,
+  camera,
   sharingVideo = false,
   micStream,
   muted = false,
@@ -34,6 +36,12 @@ export function ParticipantRow({
   userId?: string;
   micOn: boolean;
   sharing: boolean;
+  // Which of the two channels `sharing` is made of (see PeerInfo.screen in
+  // lib/signalingClient.ts). null/undefined means the peer's client never
+  // said — that falls back to the single screen icon this row has always
+  // shown, rather than guessing a channel and labelling it wrong.
+  screen?: boolean | null;
+  camera?: boolean | null;
   // Whether this person has a room video source on screen (see
   // components/VideoSourceTile) — a different thing from `sharing`, which is
   // about transmitting their own screen or camera. Shown with its own icon
@@ -50,6 +58,9 @@ export function ParticipantRow({
   verified?: boolean;
 }) {
   const speaking = useSpeaking(micOn ? micStream : null);
+  // Whether the screen/camera split is actually known for this peer — see
+  // the `screen`/`camera` props.
+  const knowsChannels = screen != null || camera != null;
   // A guest has no account behind it — nowhere for /user/[id] to point — and
   // an older server that doesn't send userId yet leaves this peer
   // unclickable rather than linking to a broken profile.
@@ -92,7 +103,26 @@ export function ParticipantRow({
         ) : (
           <MicOffIcon className="h-4 w-4 text-zinc-400 dark:text-zinc-600" />
         )}
-        {sharing && <ScreenIcon className="h-4 w-4 text-emerald-500" />}
+        {knowsChannels ? (
+          <>
+            {screen && (
+              <Tooltip content={`${name} está transmitindo a tela`}>
+                <span className="flex shrink-0 items-center">
+                  <ScreenIcon className="h-4 w-4 text-emerald-500" />
+                </span>
+              </Tooltip>
+            )}
+            {camera && (
+              <Tooltip content={`${name} está transmitindo a câmera`}>
+                <span className="flex shrink-0 items-center">
+                  <CameraIcon className="h-4 w-4 text-violet-500" />
+                </span>
+              </Tooltip>
+            )}
+          </>
+        ) : (
+          sharing && <ScreenIcon className="h-4 w-4 text-emerald-500" />
+        )}
         {sharingVideo && (
           <Tooltip content={`${name} adicionou uma ou mais fontes de vídeo`}>
             <span className="flex shrink-0 items-center">

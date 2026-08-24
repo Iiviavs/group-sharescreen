@@ -6,12 +6,12 @@ const nextConfig: NextConfig = {
       {
         source: "/bot",
         destination: "https://discord.com/oauth2/authorize?client_id=1540460243270635600",
-        permanent: false,
+        permanent: true,
       },
       {
         source: "/stats",
         destination: "https://stats.nemtudo.me/public-dashboards/9be4846ec8774ff5888baa7d33862ccc",
-        permanent: false,
+        permanent: true,
       },
     ];
   },

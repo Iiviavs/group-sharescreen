@@ -5,7 +5,7 @@ import { AnnouncementPanel } from "./AnnouncementPanel";
 import { PartnerAdsPanel } from "./PartnerAdsPanel";
 import { AntiSpamPanel } from "./AntiSpamPanel";
 import { BannedWordsPanel } from "./BannedWordsPanel";
-import { IpBansPanel } from "./IpBansPanel";
+import { BansPanel } from "./BansPanel";
 import { SupportersPanel } from "./SupportersPanel";
 
 export function DashboardPanel() {
@@ -17,7 +17,7 @@ export function DashboardPanel() {
       <SupportersPanel />
       <AntiSpamPanel />
       <BannedWordsPanel />
-      <IpBansPanel />
+      <BansPanel />
     </div>
   );
 }

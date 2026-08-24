@@ -1,6 +1,7 @@
 "use client";
 
 import type { ChatMessage } from "./signalingClient";
+import type { VideoSource } from "./videoSource";
 
 const WS_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || "ws://localhost:4000/ws";
 
@@ -8,6 +9,11 @@ export type AdminPeerInfo = {
   id: string;
   name: string;
   sharing: boolean;
+  // Same fields/meaning as WatchRoom's PeerInfo.screen/camera — see their
+  // doc comment in signalingClient.ts. null when the peer's client didn't
+  // report which channel it is, undefined from an older server.
+  screen?: boolean | null;
+  camera?: boolean | null;
   mic: boolean;
   // Stable per-account/per-guest identity (see server/signaling.ts's
   // stableUserId) — same field WatchRoom's PeerInfo carries, used the same
@@ -26,6 +32,11 @@ export type AdminClientState = {
   selfId: string | null;
   peers: AdminPeerInfo[];
   chatMessages: ChatMessage[];
+  // The room's video sources (see lib/videoSource.ts). A moderator never
+  // embeds them — only `addedById` is actually used here, to mark who in the
+  // participant list put a video on everyone's screen, which is a different
+  // kind of transmitting from a screen or camera share.
+  videoSources: VideoSource[];
   error: string | null;
 };
 
@@ -38,6 +49,7 @@ const initialState: AdminClientState = {
   selfId: null,
   peers: [],
   chatMessages: [],
+  videoSources: [],
   error: null,
 };
 
@@ -177,6 +189,7 @@ class AdminSignalingClient {
           selfId: msg.selfId as string,
           peers: msg.peers as AdminPeerInfo[],
           chatMessages: Array.isArray(msg.messages) ? (msg.messages as ChatMessage[]) : [],
+          videoSources: Array.isArray(msg.videoSources) ? (msg.videoSources as VideoSource[]) : [],
         });
         break;
       case "peer-joined": {
@@ -211,7 +224,14 @@ class AdminSignalingClient {
       case "peer-sharing":
         this.setState({
           peers: this.state.peers.map((p) =>
-            p.id === msg.id ? { ...p, sharing: Boolean(msg.sharing) } : p
+            p.id === msg.id
+              ? {
+                  ...p,
+                  sharing: Boolean(msg.sharing),
+                  screen: typeof msg.screen === "boolean" ? msg.screen : null,
+                  camera: typeof msg.camera === "boolean" ? msg.camera : null,
+                }
+              : p
           ),
         });
         break;
@@ -221,6 +241,14 @@ class AdminSignalingClient {
             p.id === msg.id ? { ...p, mic: Boolean(msg.mic) } : p
           ),
         });
+        break;
+      // Only add/remove matter here: playback state (video-source-state) is
+      // for players, and a moderator has none.
+      case "video-source-added":
+        this.setState({ videoSources: [...this.state.videoSources, msg.source as VideoSource] });
+        break;
+      case "video-source-removed":
+        this.setState({ videoSources: this.state.videoSources.filter((v) => v.id !== msg.id) });
         break;
       case "signal":
         this.signalListeners.forEach((l) => l(msg.from as string, msg.data as Record<string, unknown>));

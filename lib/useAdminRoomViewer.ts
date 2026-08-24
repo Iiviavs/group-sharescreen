@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { adminSignalingClient, type AdminPeerInfo } from "./adminClient";
 import type { ChatMessage } from "./signalingClient";
+import type { VideoSource } from "./videoSource";
 import { ICE_CONFIG } from "./iceConfig";
 
 type Channel = "screen" | "camera" | "mic";
@@ -232,6 +233,8 @@ export type AdminRoomViewerState = {
   error: string | null;
   peers: AdminPeerInfo[];
   chatMessages: ChatMessage[];
+  // See AdminClientState.videoSources — used only to tell who added one.
+  videoSources: VideoSource[];
   selfId: string | null;
   screenStreams: Record<string, MediaStream>;
   cameraStreams: Record<string, MediaStream>;
@@ -276,6 +279,7 @@ export function useAdminRoomViewer(room: string, token: string | null): AdminRoo
     error: state.error,
     peers: state.peers,
     chatMessages: state.chatMessages,
+    videoSources: state.videoSources,
     selfId: state.selfId,
     screenStreams: screen.remoteStreams,
     cameraStreams: camera.remoteStreams,
