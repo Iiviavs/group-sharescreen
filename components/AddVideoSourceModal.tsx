@@ -83,7 +83,7 @@ export function AddVideoSourceModal({
     >
       <div className="flex items-start justify-between gap-2">
         <p className="text-sm font-semibold">
-          <BetaMark /> Adicionar fonte de vídeo
+          <BetaMark /> Adicionar fonte de vídeo ou live
         </p>
         <button
           type="button"
@@ -131,6 +131,7 @@ export function AddVideoSourceModal({
             type="radio"
             name="video-source-control-mode"
             checked={controlMode === "owner"}
+            disabled={kind === "twitch"}
             onChange={() => setControlMode("owner")}
           />
           Só eu posso controlar
@@ -139,7 +140,7 @@ export function AddVideoSourceModal({
           <input
             type="radio"
             name="video-source-control-mode"
-            checked={controlMode === "anyone"}
+            checked={controlMode === "anyone" || kind === "twitch"} //twitch dont allow hidden the controls
             onChange={() => setControlMode("anyone")}
           />
           Qualquer um pode controlar
