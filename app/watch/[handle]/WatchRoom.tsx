@@ -227,8 +227,8 @@ function QualityControls({
                 type="button"
                 onClick={() => setShareProfile(opt.value)}
                 className={`rounded-md border px-2 py-1.5 text-left text-xs transition ${shareProfile === opt.value
-                    ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
-                    : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                  ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
+                  : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
                   }`}
               >
                 <span className="block font-medium">{opt.label}</span>
@@ -1763,8 +1763,8 @@ export function WatchRoom({ handle }: { handle: string }) {
                 onClick={() => setVideoSourceOpen((o) => !o)}
                 aria-label="Adicionar fonte de vídeo"
                 className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-white transition ${videoSourceOpen
-                    ? "bg-emerald-700"
-                    : "bg-emerald-600 hover:bg-emerald-700"
+                  ? "bg-emerald-700"
+                  : "bg-emerald-600 hover:bg-emerald-700"
                   }`}
               >
                 <MdOutlineOndemandVideo className="h-5 w-5 shrink-0" />
@@ -1994,6 +1994,7 @@ export function WatchRoom({ handle }: { handle: string }) {
                     Compartilhar tela
                   </button>
                 )}
+
                 {screenShareMode !== "unsupported" && (
                   <button
                     type="button"
@@ -2004,29 +2005,25 @@ export function WatchRoom({ handle }: { handle: string }) {
                     Compartilhar câmera
                   </button>
                 )}
-                {/* Third way to fill this pane, and the only one that needs
-                    no camera, no screen capture and no upload — which is why
-                    it is offered even where the other two are unsupported
-                    (a browser with no getDisplayMedia can still watch a
-                    YouTube source with the room). Same box as the header's
-                    button, opened from here so the control is where the
-                    person is already looking. */}
-                <Popover
-                  open={videoSourceEmptyOpen}
-                  onClose={() => setVideoSourceEmptyOpen(false)}
-                  placement="bottom"
-                  content={videoSourceForm}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setVideoSourceEmptyOpen((o) => !o)}
-                    className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+
+                <div className="basis-full flex justify-center">
+                  <Popover
+                    open={videoSourceEmptyOpen}
+                    onClose={() => setVideoSourceEmptyOpen(false)}
+                    placement="bottom"
+                    content={videoSourceForm}
                   >
-                    <MdOutlineOndemandVideo className="h-5 w-5 shrink-0" />
-                    Adicionar fonte de vídeo
-                    <BetaMark />
-                  </button>
-                </Popover>
+                    <button
+                      type="button"
+                      onClick={() => setVideoSourceEmptyOpen((o) => !o)}
+                      className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+                    >
+                      <MdOutlineOndemandVideo className="h-5 w-5 shrink-0" />
+                      Adicionar fonte de vídeo
+                      <BetaMark />
+                    </button>
+                  </Popover>
+                </div>
               </div>
             </div>
           ) : (
