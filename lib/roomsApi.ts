@@ -25,6 +25,22 @@ export function isPrivateRoomHandle(handle: string): boolean {
 // that could drift out of step with the one in the link.
 export const ROOM_CODE_LENGTH = 6;
 const ROOM_CODE_RE = /^\d{6}$/;
+
+// Whether a private room is *required* to carry its code in its handle.
+// The client half of the server flag of the same name (see
+// server/signaling.ts, which has the full reasoning) — the two are meant to
+// be flipped together, and both default to off.
+//
+// What it governs here is narrow but important: whether the home page's
+// "Entrar em sala" refuses a bare name with no code. While it's off, a name
+// alone is accepted, which is the only way into a private room created
+// before this scheme existed — those handles are code-less forever, and a
+// client that insisted on a code would lock people out of rooms they have
+// been using for months. The room still has to actually exist either way
+// (see roomExists), so accepting a bare name costs nothing: a typo is
+// caught by that check rather than by the shape of what was typed.
+export const ENFORCE_NEW_ROOM_CODE_SYSTEM =
+  process.env.NEXT_PUBLIC_ENFORCE_NEW_ROOM_CODE_SYSTEM === "true";
 // The server's HANDLE_RE caps a handle at 32 characters, and a private one
 // spends "priv-" (5) plus "-" plus the 6 digits (7) on structure — so this
 // is what's left for the name someone actually types.

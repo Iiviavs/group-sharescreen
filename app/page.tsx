@@ -16,6 +16,7 @@ import {
   splitPrivateRoomHandle,
   ROOM_CODE_LENGTH,
   MAX_PRIVATE_ROOM_NAME_LENGTH,
+  ENFORCE_NEW_ROOM_CODE_SYSTEM,
 } from "@/lib/roomsApi";
 import { useAuth } from "@/lib/AuthContext";
 import { CreateAccountForm } from "@/components/CreateAccountForm";
@@ -306,7 +307,12 @@ export default function Home() {
         setRoomError("Use de 1 a 32 letras, números, - e _.");
         return;
       }
-      if (!splitPrivateRoomHandle(handle)) {
+      // Only demanded once the scheme is being enforced — see
+      // ENFORCE_NEW_ROOM_CODE_SYSTEM. While it's off a bare name is allowed
+      // through, because private rooms created before this existed have no
+      // code to type and this is the only way back into them. The existence
+      // check below is what catches a typo either way.
+      if (ENFORCE_NEW_ROOM_CODE_SYSTEM && !splitPrivateRoomHandle(handle)) {
         setRoomError(`Inclua o código no fim: nome-${"0".repeat(ROOM_CODE_LENGTH)}`);
         return;
       }
@@ -664,8 +670,13 @@ export default function Home() {
                   Geramos um código de {ROOM_CODE_LENGTH} dígitos e ele vira parte do link. Quem
                   tiver o link entra; a sala não aparece na lista pública.
                 </>
-              ) : (
+              ) : ENFORCE_NEW_ROOM_CODE_SYSTEM ? (
                 <>Cole o nome com o código no fim, como no link que te mandaram.</>
+              ) : (
+                // While the code scheme isn't enforced, a room from before
+                // it exists has no code to type — so this can't read as if
+                // one were mandatory.
+                <>Cole o nome da sala, com o código no fim se ela tiver um.</>
               )}
             </p>
 
