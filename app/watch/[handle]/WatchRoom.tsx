@@ -47,6 +47,8 @@ import { PartnerCard } from "@/components/PartnerCard";
 import { SupportersTooltipContent } from "@/components/SupportersTooltip";
 import { DisplayUserName } from "@/components/DisplayUserName";
 import { CreateAccountForm } from "@/components/CreateAccountForm";
+import { VideoSourceTile } from "@/components/VideoSourceTile";
+import { parseYouTubeVideoId } from "@/lib/videoSource";
 import {
   MicIcon,
   MicOffIcon,
@@ -71,7 +73,7 @@ import {
 } from "@/components/icons";
 import { Tooltip, Popover } from "@/components/Tooltip";
 import { useMediaQuery, SM_BREAKPOINT_QUERY, LG_BREAKPOINT_QUERY } from "@/lib/useMediaQuery";
-import { MdHome } from "react-icons/md";
+import { MdHome, MdOutlineOndemandVideo } from "react-icons/md";
 import { BsGearFill, BsCoin } from "react-icons/bs";
 
 // Mirrors server/signaling.ts's HANDLE_RE — must match exactly, or a name
@@ -525,6 +527,14 @@ function SwitchRoomFields({
   );
 }
 
+// Spotlight and hyperfocus address tiles by id, and those ids share one
+// namespace with peer connection ids and "self" — so a source's tile id is
+// prefixed rather than being its bare id.
+const VIDEO_SOURCE_TILE_PREFIX = "video-source:";
+function videoSourceTileId(sourceId: string): string {
+  return VIDEO_SOURCE_TILE_PREFIX + sourceId;
+}
+
 export function WatchRoom({ handle }: { handle: string }) {
   const router = useRouter();
   const state = useSignaling();
@@ -646,6 +656,16 @@ export function WatchRoom({ handle }: { handle: string }) {
   // actually free up bandwidth/CPU, not just screen space. Mutually
   // exclusive with spotlightId.
   const [hyperfocusId, setHyperfocusId] = useState<string | null>(null);
+  // "Adicionar fonte de vídeo": the URL box behind the header button, and
+  // whatever the last attempt had to say about what was typed into it.
+  // Video sources this viewer stepped out of (the eye button on a source
+  // they didn't add). Purely local — the video keeps playing for the room,
+  // and the tile is replaced by the same "you left this" placeholder a
+  // stopped transmission gets, so there's a way back in.
+  const [leftVideoSourceIds, setLeftVideoSourceIds] = useState<Set<string>>(new Set());
+  const [videoSourceOpen, setVideoSourceOpen] = useState(false);
+  const [videoSourceInput, setVideoSourceInput] = useState("");
+  const [videoSourceError, setVideoSourceError] = useState<string | null>(null);
   // Consolidates every header control except the mic toggle and the
   // share/camera transmission buttons into one "more options" panel — see
   // the header below. Those sub-toggles (renaming/switching/qualityOpen)
@@ -799,10 +819,20 @@ export function WatchRoom({ handle }: { handle: string }) {
     const gone =
       hyperfocusId === "self"
         ? !((isSharing && localStream) || localCameraStream)
-        : !(hyperfocusId in remoteStreams) && !(hyperfocusId in remoteCameraStreams);
+        : hyperfocusId.startsWith(VIDEO_SOURCE_TILE_PREFIX)
+          ? !state.videoSources.some((v) => videoSourceTileId(v.id) === hyperfocusId)
+          : !(hyperfocusId in remoteStreams) && !(hyperfocusId in remoteCameraStreams);
     if (!gone) return;
     queueMicrotask(() => setHyperfocusId(null));
-  }, [hyperfocusId, isSharing, localStream, localCameraStream, remoteStreams, remoteCameraStreams]);
+  }, [
+    hyperfocusId,
+    isSharing,
+    localStream,
+    localCameraStream,
+    remoteStreams,
+    remoteCameraStreams,
+    state.videoSources,
+  ]);
 
   function handleNameSubmit(e: FormEvent) {
     e.preventDefault();
@@ -1070,7 +1100,13 @@ export function WatchRoom({ handle }: { handle: string }) {
     hyperfocusId !== null &&
     (hyperfocusId === "self"
       ? !hasLocalTile
-      : !(hyperfocusId in remoteStreams) && !(hyperfocusId in remoteCameraStreams));
+      : // A room video source is a tile like any other here, and this check
+        // not knowing that was why hyperfocusing one did nothing at all:
+        // every source id looked like a peer that had stopped transmitting,
+        // so the focus was dropped in the same render that set it.
+        hyperfocusId.startsWith(VIDEO_SOURCE_TILE_PREFIX)
+        ? !state.videoSources.some((v) => videoSourceTileId(v.id) === hyperfocusId)
+        : !(hyperfocusId in remoteStreams) && !(hyperfocusId in remoteCameraStreams));
   // Used everywhere below instead of the raw state, so this render already
   // behaves as un-focused rather than waiting for the effect that clears it.
   const activeHyperfocusId = hyperfocusTargetGone ? null : hyperfocusId;
@@ -1090,8 +1126,26 @@ export function WatchRoom({ handle }: { handle: string }) {
       : remoteCameraEntries.filter(([peerId]) => peerId === activeHyperfocusId)
     : remoteCameraEntries;
   const localTileCount = (isSharing && localStream ? 1 : 0) + (localCameraStream ? 1 : 0);
+  // Room video sources (YouTube, today — see components/VideoSourceTile).
+  // They are tiles in every sense the room cares about: they take a grid
+  // slot, they can be focused and hyperfocused, and they count toward
+  // "is there more than one thing on screen". The only difference is that
+  // nobody is transmitting them.
+  const watchedVideoSources = state.videoSources.filter((v) => !leftVideoSourceIds.has(v.id));
+  const visibleVideoSources = activeHyperfocusId
+    ? watchedVideoSources.filter((v) => videoSourceTileId(v.id) === activeHyperfocusId)
+    : watchedVideoSources;
+  // Placeholders for the ones this viewer stepped out of — hidden while
+  // hyperfocused for the same reason a stopped peer's placeholder is.
+  const leftVideoSources = activeHyperfocusId
+    ? []
+    : state.videoSources.filter((v) => leftVideoSourceIds.has(v.id));
   const hasMultipleShares =
-    remoteScreenEntries.length + remoteCameraEntries.length + localTileCount > 1;
+    remoteScreenEntries.length +
+      remoteCameraEntries.length +
+      state.videoSources.length +
+      localTileCount >
+    1;
   // A peer we deliberately stopped watching (manually, or via the autoJoin
   // gate, or hyperfocus freeing them up) has no entry in remoteStreams, but
   // still gets a tile slot showing a "click to watch"/"you left this
@@ -1117,6 +1171,7 @@ export function WatchRoom({ handle }: { handle: string }) {
   const nothingToShow =
     remoteScreenEntries.length === 0 &&
     remoteCameraEntries.length === 0 &&
+    state.videoSources.length === 0 &&
     stoppedEntries.length === 0 &&
     resumingEntries.length === 0 &&
     !isSharing;
@@ -1127,6 +1182,8 @@ export function WatchRoom({ handle }: { handle: string }) {
     visibleResumingEntries.length +
     visibleStoppedCameraEntries.length +
     visibleResumingCameraEntries.length +
+    visibleVideoSources.length +
+    leftVideoSources.length +
     (hyperfocusVisible ? localTileCount : 0);
   const isSingleTile = tileCount === 1;
   // Below `sm`, 2 tiles side by side are still each bigger than a single
@@ -1136,6 +1193,23 @@ export function WatchRoom({ handle }: { handle: string }) {
   // scrolling through a wall of tiles even though 2-up comfortably fits
   // more of them in view at once.
   const mobileGridCols = tileCount <= 2 ? "grid-cols-1" : "grid-cols-2";
+
+  function handleAddVideoSource(e: FormEvent) {
+    e.preventDefault();
+    const raw = videoSourceInput.trim();
+    if (!raw) return;
+    // Only to catch an obvious paste mistake without a round trip — the
+    // server parses it again, and its answer is what everyone embeds.
+    if (!parseYouTubeVideoId(raw)) {
+      setVideoSourceError("Cole um link de vídeo ou live do YouTube.");
+      return;
+    }
+    signalingClient.addVideoSource(raw);
+    trackEvent("video_source_added", { kind: "youtube" });
+    setVideoSourceInput("");
+    setVideoSourceError(null);
+    setVideoSourceOpen(false);
+  }
 
   function toggleSpotlight(id: string) {
     setSpotlightId((prev) => (prev === id ? null : id));
@@ -1523,6 +1597,14 @@ export function WatchRoom({ handle }: { handle: string }) {
   // Same reasoning as mainControls above — defined once, rendered either in
   // the shared mobile pane (tab-switched with chatSection) or in its own
   // full-height column from lg up (see isWideLayout), never both at once.
+  // Whether this person has a room video source on screen — which is also
+  // who controls it (see the server's "video-source-state" handler), so the
+  // icon it drives in the participant list doubles as "ask them to pause".
+  function peerSharesVideo(userId: string | null | undefined): boolean {
+    if (!userId) return false;
+    return state.videoSources.some((v) => v.addedById === userId);
+  }
+
   const participantsSection = (
     <>
       {connectingAudioPeers && (
@@ -1543,6 +1625,7 @@ export function WatchRoom({ handle }: { handle: string }) {
           verified={state.account?.flags?.includes("VERIFIED")}
           micOn={isMicOn}
           sharing={isSharing}
+          sharingVideo={peerSharesVideo(state.selfUserId)}
           micStream={localMicStream}
         />
         {visiblePeers.map((p) => {
@@ -1556,6 +1639,7 @@ export function WatchRoom({ handle }: { handle: string }) {
               verified={p.flags?.includes("VERIFIED")}
               micOn={p.mic}
               sharing={p.sharing}
+              sharingVideo={peerSharesVideo(p.userId)}
               micStream={remoteMicStreams[p.id]}
               muted={micsMuted || mutedPeerIds.has(p.id)}
               onToggleMute={() => togglePeerMute(p.id)}
@@ -1625,6 +1709,65 @@ export function WatchRoom({ handle }: { handle: string }) {
                 out here rather than in "Mais opções" because they're used
                 while talking, not once at setup. */}
             <div className="flex flex-wrap items-center justify-end gap-2">{mainControls}</div>
+
+            {/* Adding a YouTube video/live to the room. Sits with the
+                transmission controls because that's what it produces: one
+                more tile everyone in the room sees, with the same focus and
+                hyperfocus buttons — the difference is that nobody is
+                uploading it. */}
+            <Popover
+              open={videoSourceOpen}
+              onClose={() => setVideoSourceOpen(false)}
+              placement="bottom-end"
+              tooltip="Adicionar fonte de vídeo"
+              content={
+                <form
+                  onSubmit={handleAddVideoSource}
+                  className="w-72 max-w-[calc(100vw-1rem)] rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-950"
+                >
+                  <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                    Adicionar fonte de vídeo
+                  </p>
+                  <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                    Cole o link de um vídeo ou live do YouTube. Ele aparece pra todo mundo na sala, e
+                    play, pause e avanço ficam sincronizados.
+                  </p>
+                  <input
+                    value={videoSourceInput}
+                    onChange={(e) => {
+                      setVideoSourceInput(e.target.value);
+                      setVideoSourceError(null);
+                    }}
+                    placeholder="https://youtube.com/watch?v=..."
+                    aria-label="Link do YouTube"
+                    className="mt-2 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                  />
+                  {videoSourceError && (
+                    <p className="mt-1 text-xs text-red-500">{videoSourceError}</p>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={!videoSourceInput.trim()}
+                    className="mt-2 w-full rounded-lg bg-zinc-950 px-3 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+                  >
+                    Adicionar
+                  </button>
+                </form>
+              }
+            >
+              <button
+                type="button"
+                onClick={() => setVideoSourceOpen((o) => !o)}
+                aria-label="Adicionar fonte de vídeo"
+                className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${videoSourceOpen
+                  ? "border-zinc-400 bg-zinc-100 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                  : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                  }`}
+              >
+                <MdOutlineOndemandVideo className="h-5 w-5 shrink-0" />
+                <span className="hidden lg:inline">Adicionar fonte de vídeo</span>
+              </button>
+            </Popover>
 
             {/* Still desktop-only: on a phone these two live inside "Mais
                 opções" (see above), the only place with room for them. */}
@@ -1933,6 +2076,53 @@ export function WatchRoom({ handle }: { handle: string }) {
                     onToggleMicsMuted={toggleMicsMuted}
                   />
                 )}
+                {visibleVideoSources.map((videoSource) => {
+                  const tileId = videoSourceTileId(videoSource.id);
+                  return (
+                    <VideoSourceTile
+                      key={tileId}
+                      source={videoSource}
+                      // Only whoever added it drives — for themselves and,
+                      // through the server, for everyone else.
+                      canControl={
+                        state.selfUserId !== null && videoSource.addedById === state.selfUserId
+                      }
+                      label={`${videoSource.addedByName} adicionou`}
+                      fill={isSingleTile || spotlightId === tileId}
+                      className={spotlightId === tileId && !isSingleTile ? "sm:col-span-2 sm:row-span-2" : ""}
+                      onStateChange={(playing, positionSeconds, playbackRate) =>
+                        signalingClient.setVideoSourceState(
+                          videoSource.id,
+                          playing,
+                          positionSeconds,
+                          playbackRate
+                        )
+                      }
+                      onRemove={() => signalingClient.removeVideoSource(videoSource.id)}
+                      onLeave={() =>
+                        setLeftVideoSourceIds((prev) => new Set(prev).add(videoSource.id))
+                      }
+                      onFocus={() => toggleSpotlight(tileId)}
+                      isSpotlighted={spotlightId === tileId}
+                      onHyperfocus={() => toggleHyperfocus(tileId)}
+                      isHyperfocused={activeHyperfocusId === tileId}
+                    />
+                  );
+                })}
+                {leftVideoSources.map((videoSource) => (
+                  <StoppedPeerTile
+                    key={`left-${videoSource.id}`}
+                    label={`vídeo de ${videoSource.addedByName}`}
+                    fill={isSingleTile}
+                    onResume={() =>
+                      setLeftVideoSourceIds((prev) => {
+                        const next = new Set(prev);
+                        next.delete(videoSource.id);
+                        return next;
+                      })
+                    }
+                  />
+                ))}
                 {visibleScreenEntries.map(([peerId, stream]) => {
                   const peer = state.peers.find((p) => p.id === peerId);
                   const volumeKey = peer?.userId ?? peerId;

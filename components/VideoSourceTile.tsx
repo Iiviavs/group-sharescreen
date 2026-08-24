@@ -1,0 +1,621 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { FocusIcon, HyperfocusIcon, FullscreenIcon, FullscreenExitIcon, EyeOffIcon } from "@/components/icons";
+import { Tooltip } from "@/components/Tooltip";
+import { MdClose, MdSettings } from "react-icons/md";
+import { videoSourcePosition, type VideoSource } from "@/lib/videoSource";
+import { signalingClient } from "@/lib/signalingClient";
+
+// How far out of step with the room this player may drift before it is
+// pulled back, and how often that is checked. Tight: a third of a second is
+// about where two screens side by side stop looking like the same video.
+// It can't go much below that — a seek is not free, and correcting noise
+// that YouTube's own buffering created would be a player that constantly
+// yanks itself around.
+const DRIFT_TOLERANCE_SECONDS = 0.35;
+const DRIFT_CHECK_MS = 1000;
+// Past this, catching up gradually would take longer than it's worth and the
+// jump is the lesser evil. Under it, the correction is a small change of
+// speed instead — a seek costs a re-buffer, and re-buffering is itself what
+// put the player behind, so seeking at every third of a second would chase
+// its own tail forever.
+const DRIFT_SEEK_SECONDS = 1.75;
+// How hard the catch-up pulls: ±12% of the room's speed, which closes a
+// second of lag in about eight and is hard to notice while it happens.
+const DRIFT_NUDGE_FACTOR = 0.12;
+// Stop nudging once this close, rather than at zero — chasing the last
+// milliseconds would leave the rate permanently oscillating.
+const DRIFT_SETTLED_SECONDS = 0.1;
+// A seek doesn't land instantly: the player re-buffers, and during that it
+// reads as badly behind. Correcting again inside that window is how a seek
+// loop starts.
+const SEEK_SETTLE_MS = 1500;
+// The room extrapolates a playing video's position from the owner's last
+// report, so a report from twenty minutes ago carries twenty minutes of the
+// owner's own buffering as error. They re-report on this interval to keep
+// the room's arithmetic anchored to something recent.
+const OWNER_HEARTBEAT_MS = 10_000;
+// A seek/play issued to follow someone else fires the same events a person
+// pressing the button would, and reporting those back would bounce around
+// the room forever. Short on purpose: this used to be more than a second,
+// which was long enough to *eat a real action* — pause, then immediately
+// scrub, and the scrub landed inside the window and was never sent. Long
+// enough to swallow the event storm a programmatic seek makes, no longer.
+const REMOTE_APPLY_QUIET_MS = 400;
+// Scrubbing produces a state change per frame of the drag, and each one is
+// a message. They're coalesced: the first goes out immediately (so a plain
+// pause is instant for everyone), the rest collapse into one trailing send
+// once the burst settles, which is the one that carries the final position.
+const STATE_PUSH_MIN_INTERVAL_MS = 300;
+const STATE_PUSH_SETTLE_MS = 350;
+// YouTube's IFrame API, loaded once for the whole page the first time a
+// source tile mounts. Not in the document head: a room with no video source
+// (the overwhelming majority) should not be pulling YouTube's script at all.
+type YTPlayer = {
+  playVideo: () => void;
+  pauseVideo: () => void;
+  seekTo: (seconds: number, allowSeekAhead: boolean) => void;
+  getCurrentTime: () => number;
+  getPlayerState: () => number;
+  getPlaybackRate: () => number;
+  setPlaybackRate: (rate: number) => void;
+  destroy: () => void;
+};
+type YTNamespace = {
+  Player: new (el: HTMLElement, options: Record<string, unknown>) => YTPlayer;
+  PlayerState: { PLAYING: number; PAUSED: number; ENDED: number; BUFFERING: number };
+};
+declare global {
+  interface Window {
+    YT?: YTNamespace;
+    onYouTubeIframeAPIReady?: () => void;
+  }
+}
+
+let youtubeApiPromise: Promise<YTNamespace> | null = null;
+
+function loadYouTubeApi(): Promise<YTNamespace> {
+  if (youtubeApiPromise) return youtubeApiPromise;
+  youtubeApiPromise = new Promise<YTNamespace>((resolve, reject) => {
+    if (window.YT?.Player) {
+      resolve(window.YT);
+      return;
+    }
+    // The API calls this global once, for whoever asked first — chaining
+    // onto any existing one keeps a second tile mounting in the same tick
+    // from replacing the first one's callback.
+    const previous = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      previous?.();
+      if (window.YT?.Player) resolve(window.YT);
+      else reject(new Error("YouTube API carregada sem Player"));
+    };
+    const script = document.createElement("script");
+    script.src = "https://www.youtube.com/iframe_api";
+    script.async = true;
+    script.onerror = () => reject(new Error("Falha ao carregar o player do YouTube"));
+    document.head.appendChild(script);
+  }).catch((err) => {
+    // Let a later tile retry rather than caching the failure forever.
+    youtubeApiPromise = null;
+    throw err;
+  });
+  return youtubeApiPromise;
+}
+
+// One room video source, rendered as a tile that behaves like a transmission
+// tile (see VideoTile): same label bar, same focus/hyperfocus buttons, same
+// place in the grid. What it is *not* is a MediaStream — it embeds YouTube's
+// own player, which is why it can't simply be VideoTile with a different
+// source.
+//
+// Playback is shared: whatever anyone does to their player (play, pause,
+// seek) is reported up and applied by everyone else, and a periodic drift
+// check silently pulls a lagging player back in line without telling the
+// room about it. There is deliberately no "controller" — this is a shared
+// room, and the same people who can add a source can steer it.
+export function VideoSourceTile({
+  source,
+  canControl,
+  onStateChange,
+  onRemove,
+  onLeave,
+  label,
+  fill = false,
+  className = "",
+  onFocus,
+  isSpotlighted = false,
+  onHyperfocus,
+  isHyperfocused = false,
+}: {
+  source: VideoSource;
+  // Whether this viewer is the one who added the source, and so the one
+  // whose play/pause/seek the room follows (the server enforces the same
+  // rule — see its "video-source-state" handler). Everyone else gets a
+  // player with no controls at all and a shield over it, because a click
+  // that YouTube honours locally but the room never hears about would put
+  // this viewer out of step with everyone else, silently.
+  canControl: boolean;
+  onStateChange: (playing: boolean, positionSeconds: number, playbackRate: number) => void;
+  // Ends the video for the whole room — only offered to whoever added it.
+  onRemove: () => void;
+  // Hides it for this viewer alone, exactly like leaving someone's
+  // transmission: the room carries on, and there's a placeholder to come
+  // back through. What everyone who isn't the adder gets instead of onRemove.
+  onLeave: () => void;
+  label: ReactNode;
+  fill?: boolean;
+  className?: string;
+  onFocus?: () => void;
+  isSpotlighted?: boolean;
+  onHyperfocus?: () => void;
+  isHyperfocused?: boolean;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mountRef = useRef<HTMLDivElement | null>(null);
+  const playerRef = useRef<YTPlayer | null>(null);
+  // Set while a remote update is being applied — see REMOTE_APPLY_QUIET_MS.
+  const applyingRemoteRef = useRef(false);
+  const applyingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // When this player was last seeked, and whether it is currently running
+  // fast/slow to close a gap — see the drift effect.
+  const lastSeekAtRef = useRef(0);
+  const nudgingRef = useRef(false);
+  // Read by the player's callbacks, which are created once and would
+  // otherwise capture the first render's props forever. Kept current from an
+  // effect rather than during render — a ref write in the render body is
+  // exactly what React tells you not to do.
+  const sourceRef = useRef(source);
+  const onStateChangeRef = useRef(onStateChange);
+  // Whether this viewer asked for YouTube's own player chrome. Only ever
+  // true for someone who isn't driving: the owner has it from the start.
+  // Driving stays with the adder either way — see the sync effect, which
+  // keeps pulling this player back to the room's playback.
+  const [showNativeControls, setShowNativeControls] = useState(false);
+  const canControlRef = useRef(canControl);
+  const nativeControlsRef = useRef(false);
+  useEffect(() => {
+    sourceRef.current = source;
+    onStateChangeRef.current = onStateChange;
+    canControlRef.current = canControl;
+    nativeControlsRef.current = showNativeControls;
+  });
+
+
+  // Everything the owner reports goes through here, so a play, a speed
+  // change and a caption toggle all send the same complete picture — the
+  // server merges by field, and a partial update would leave the others to
+  // be guessed.
+  // Reads the player and reports where it actually is. Never called
+  // directly by an event — see schedulePush, which decides *when*.
+  const sendCurrentState = useCallback(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    const YTState = window.YT?.PlayerState;
+    if (!YTState) return;
+    const state = player.getPlayerState();
+    // BUFFERING is a "still playing, just not right now" state: reporting it
+    // as paused would pause the whole room every time the owner's connection
+    // hiccups, and reporting the position mid-buffer is the position they
+    // are about to resume from anyway.
+    const playing = state === YTState.PLAYING || state === YTState.BUFFERING;
+    onStateChangeRef.current(playing, player.getCurrentTime(), player.getPlaybackRate?.() ?? 1);
+  }, []);
+
+  const lastPushAtRef = useRef(0);
+  const pushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Leading + trailing. The leading send keeps a single pause instant for
+  // everyone; the trailing one is what makes a scrub end up right, since the
+  // position that matters is the one the drag *finished* on and every event
+  // before it is already stale by the time it arrives.
+  const schedulePush = useCallback(() => {
+    if (!canControlRef.current) return;
+    const now = Date.now();
+    if (now - lastPushAtRef.current >= STATE_PUSH_MIN_INTERVAL_MS) {
+      lastPushAtRef.current = now;
+      sendCurrentState();
+    }
+    if (pushTimerRef.current) clearTimeout(pushTimerRef.current);
+    pushTimerRef.current = setTimeout(() => {
+      pushTimerRef.current = null;
+      lastPushAtRef.current = Date.now();
+      sendCurrentState();
+    }, STATE_PUSH_SETTLE_MS);
+  }, [sendCurrentState]);
+
+  useEffect(() => {
+    const timerRef = pushTimerRef;
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+
+  const [ready, setReady] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Creates the player once per video. Everything the player needs to know
+  // afterwards arrives through the sync effect below rather than by
+  // rebuilding it — recreating an iframe on every state change would reload
+  // the video each time anyone pressed pause.
+  useEffect(() => {
+    let cancelled = false;
+    const mount = mountRef.current;
+    if (!mount) return;
+
+    function markApplyingRemote() {
+      applyingRemoteRef.current = true;
+      if (applyingTimerRef.current) clearTimeout(applyingTimerRef.current);
+      applyingTimerRef.current = setTimeout(() => {
+        applyingRemoteRef.current = false;
+      }, REMOTE_APPLY_QUIET_MS);
+    }
+
+    loadYouTubeApi()
+      .then((YT) => {
+        if (cancelled || !mountRef.current) return;
+        markApplyingRemote();
+        playerRef.current = new YT.Player(mountRef.current, {
+          // Without these the API stamps its default 640x390 onto the
+          // iframe it swaps in for the mount node — and since that node's
+          // classes go with it, the iframe ends up *larger than the tile*,
+          // with YouTube's whole control bar sitting below the visible area.
+          // That is what "the owner has no controls" actually was. The CSS
+          // on the wrapper below pins it to the box as well, for the same
+          // reason belt goes with braces.
+          width: "100%",
+          height: "100%",
+          videoId: sourceRef.current.videoId,
+          playerVars: {
+            autoplay: sourceRef.current.playing ? 1 : 0,
+            // Only the owner sees YouTube's controls; for everyone else they
+            // would be buttons that appear to work and then get undone by
+            // the next sync.
+            controls: canControlRef.current || nativeControlsRef.current ? 1 : 0,
+            disablekb: canControlRef.current || nativeControlsRef.current ? 0 : 1,
+            // Where the room already is — someone joining an hour into a
+            // video starts an hour in, not at the beginning.
+            start: Math.floor(videoSourcePosition(sourceRef.current, signalingClient.serverNow())),
+            rel: 0,
+            modestbranding: 1,
+            playsinline: 1,
+          },
+          events: {
+            onReady: () => {
+              if (!cancelled) setReady(true);
+            },
+            onError: () => {
+              if (!cancelled) setLoadError(true);
+            },
+            onStateChange: (event: { data: number }) => {
+              // Only what this viewer did travels, and only if this viewer
+              // is the one driving. A play/pause this tile just performed to
+              // follow someone else is exactly what must not be echoed back.
+              if (!canControlRef.current || applyingRemoteRef.current) return;
+              const player = playerRef.current;
+              if (!player) return;
+              const YTState = window.YT?.PlayerState;
+              if (!YTState) return;
+              // Every transition schedules a push; which state it *is* gets
+              // read at send time, so a burst of them collapses into the
+              // truth at the end instead of a queue of stale snapshots.
+              if (
+                event.data === YTState.PLAYING ||
+                event.data === YTState.PAUSED ||
+                event.data === YTState.ENDED ||
+                event.data === YTState.BUFFERING
+              ) {
+                schedulePush();
+              }
+            },
+            // Speed has its own event.
+            onPlaybackRateChange: () => {
+              if (!canControlRef.current || applyingRemoteRef.current) return;
+              schedulePush();
+            },
+          },
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError(true);
+      });
+
+    return () => {
+      cancelled = true;
+      if (applyingTimerRef.current) clearTimeout(applyingTimerRef.current);
+      playerRef.current?.destroy();
+      playerRef.current = null;
+      // The API replaces the mount node with its iframe, so the next mount
+      // needs a fresh one — React puts it back when this effect re-runs.
+      if (mount) mount.innerHTML = "";
+    };
+    // `controls` can only be set when the player is built, so asking for
+    // YouTube's chrome rebuilds it. It comes back at the room's current
+    // position (see `start` above), which is the same thing that happens
+    // when someone joins mid-video.
+  }, [source.videoId, canControl, showNativeControls, schedulePush]);
+
+  // Follows the room. Runs on every broadcast state change (`updatedAt` is
+  // what makes even a re-pause at the same position a distinct update).
+  //
+  // Skipped entirely for whoever is driving: their player *is* the reference
+  // the room extrapolates from, so applying the room's state back to them
+  // would be correcting the original against a copy of itself — a loop where
+  // any hiccup of theirs gets echoed back as a seek.
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!ready || !player || canControl) return;
+    applyingRemoteRef.current = true;
+    if (applyingTimerRef.current) clearTimeout(applyingTimerRef.current);
+    applyingTimerRef.current = setTimeout(() => {
+      applyingRemoteRef.current = false;
+    }, REMOTE_APPLY_QUIET_MS);
+
+    const target = videoSourcePosition(source, signalingClient.serverNow());
+    if (Math.abs(player.getCurrentTime() - target) > DRIFT_TOLERANCE_SECONDS) {
+      player.seekTo(target, true);
+      lastSeekAtRef.current = Date.now();
+    }
+    // Speed before play: starting at the old rate and correcting a moment
+    // later is both audible and a fresh source of drift. Also clears any
+    // catch-up nudge in progress — the room just set a new baseline.
+    nudgingRef.current = false;
+    if (player.getPlaybackRate?.() !== source.playbackRate) {
+      player.setPlaybackRate?.(source.playbackRate || 1);
+    }
+    if (source.playing) player.playVideo();
+    else player.pauseVideo();
+  }, [ready, source, canControl]);
+
+  // Keeps everyone who isn't driving on the room's frame, between
+  // broadcasts. Nothing here is ever sent: the room's state hasn't changed,
+  // only this copy of it slipped.
+  //
+  // Two corrections, because they fix different problems. A big gap gets a
+  // seek. A small one gets a change of speed — 12% faster or slower until
+  // it's closed — which is both invisible to watch and, unlike a seek,
+  // doesn't cost the re-buffer that would put the player right back behind.
+  useEffect(() => {
+    if (!ready || canControl) return;
+    const timer = setInterval(() => {
+      const player = playerRef.current;
+      const current = sourceRef.current;
+      if (!player || applyingRemoteRef.current) return;
+      if (Date.now() - lastSeekAtRef.current < SEEK_SETTLE_MS) return;
+
+      const YTState = window.YT?.PlayerState;
+      const baseRate = current.playbackRate || 1;
+
+      if (!current.playing) {
+        // The room is paused. Anyone whose player kept going (their own
+        // pause button, with native controls showing) is put back.
+        if (YTState && player.getPlayerState() === YTState.PLAYING) player.pauseVideo();
+        const stopped = Math.abs(player.getCurrentTime() - current.positionSeconds);
+        if (stopped > DRIFT_TOLERANCE_SECONDS) {
+          player.seekTo(current.positionSeconds, true);
+          lastSeekAtRef.current = Date.now();
+        }
+        return;
+      }
+
+      // The room is playing, so this player must be too — a viewer with
+      // native controls can have paused their own copy.
+      if (YTState && player.getPlayerState() === YTState.PAUSED) player.playVideo();
+
+      const target = videoSourcePosition(current, signalingClient.serverNow());
+      const drift = target - player.getCurrentTime(); // positive: behind
+      const distance = Math.abs(drift);
+
+      if (distance > DRIFT_SEEK_SECONDS) {
+        if (nudgingRef.current) {
+          player.setPlaybackRate?.(baseRate);
+          nudgingRef.current = false;
+        }
+        player.seekTo(target, true);
+        lastSeekAtRef.current = Date.now();
+        return;
+      }
+
+      if (distance > DRIFT_TOLERANCE_SECONDS) {
+        const factor = drift > 0 ? 1 + DRIFT_NUDGE_FACTOR : 1 - DRIFT_NUDGE_FACTOR;
+        const wanted = Math.round(baseRate * factor * 100) / 100;
+        if (player.getPlaybackRate?.() !== wanted) player.setPlaybackRate?.(wanted);
+        nudgingRef.current = true;
+        return;
+      }
+
+      if (nudgingRef.current && distance <= DRIFT_SETTLED_SECONDS) {
+        player.setPlaybackRate?.(baseRate);
+        nudgingRef.current = false;
+      }
+    }, DRIFT_CHECK_MS);
+    return () => clearInterval(timer);
+  }, [ready, canControl]);
+
+  // The owner's side of the same problem: the room extrapolates from their
+  // last report, so a long stretch without one drifts by however much their
+  // own playback did. Cheap to re-anchor, and it costs nothing while paused.
+  useEffect(() => {
+    if (!ready || !canControl) return;
+    const timer = setInterval(() => {
+      const player = playerRef.current;
+      const YTState = window.YT?.PlayerState;
+      if (!player || !YTState) return;
+      if (player.getPlayerState() !== YTState.PLAYING) return;
+      sendCurrentState();
+    }, OWNER_HEARTBEAT_MS);
+    return () => clearInterval(timer);
+  }, [ready, canControl, sendCurrentState]);
+
+  useEffect(() => {
+    function onFullscreenChange() {
+      setIsFullscreen(document.fullscreenElement === containerRef.current);
+    }
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
+
+  function toggleFullscreen() {
+    if (document.fullscreenElement === containerRef.current) void document.exitFullscreen();
+    else void containerRef.current?.requestFullscreen?.();
+  }
+
+  return (
+    <div
+      className={`flex flex-col overflow-hidden rounded-xl bg-zinc-950 ${
+        fill ? "h-full w-full" : "w-full"
+      } ${className}`}
+    >
+      {/* A real bar above the video, not an overlay. The site's own chrome
+          used to float on top of the iframe, which meant it sat over
+          YouTube's controls — its progress bar, its fullscreen button, its
+          settings — and there is no z-index arrangement that fixes that,
+          because the two are competing for the same corner of the same
+          rectangle. So the tile is a column now: our row, then the video,
+          and nothing of ours ever covers a pixel of theirs. */}
+      <div className="flex shrink-0 items-center justify-between gap-2 bg-zinc-900 px-2.5 py-1.5">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate text-sm font-medium text-white">{label}</span>
+          <span className="shrink-0 rounded-full bg-red-500/90 px-2 py-0.5 text-[10px] font-semibold uppercase text-white">
+            youtube
+          </span>
+        </span>
+
+        <span className="flex shrink-0 items-center gap-1">
+          {/* Legendas, qualidade, velocidade de exibição: tudo isso vive no
+              menu do próprio YouTube, e a única forma honesta de oferecer
+              isso é entregar o menu dele. Só aparece pra quem não controla o
+              vídeo — quem adicionou já tem os controles desde o início. */}
+          {!canControl && (
+            <Tooltip
+              content={
+                showNativeControls
+                  ? "Voltar ao player sem controles"
+                  : "Mostra os controles do YouTube pra você ajustar legenda, qualidade e afins. Você continua sem controlar a reprodução: play, pause e avanço seguem quem adicionou o vídeo."
+              }
+            >
+              <button
+                type="button"
+                onClick={() => setShowNativeControls((shown) => !shown)}
+                aria-pressed={showNativeControls}
+                className={`flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium text-white transition ${
+                  showNativeControls ? "bg-emerald-600 hover:bg-emerald-700" : "hover:bg-white/10"
+                }`}
+              >
+                <MdSettings className="h-3.5 w-3.5 shrink-0" />
+              </button>
+            </Tooltip>
+          )}
+          {onFocus && (
+            <Tooltip content={isSpotlighted ? "Remover destaque" : "Focar nesse vídeo"}>
+              <button
+                type="button"
+                onClick={onFocus}
+                aria-label={isSpotlighted ? "Remover destaque" : "Focar nesse vídeo"}
+                aria-pressed={isSpotlighted}
+                className={`rounded-full p-1.5 text-white transition ${
+                  isSpotlighted ? "bg-emerald-600 hover:bg-emerald-700" : "hover:bg-white/10"
+                }`}
+              >
+                <FocusIcon className="h-4 w-4" />
+              </button>
+            </Tooltip>
+          )}
+          {onHyperfocus && (
+            <Tooltip content="Hiperfoco nesse vídeo. Esconde as outras transmissões">
+              <button
+                type="button"
+                onClick={onHyperfocus}
+                aria-label="Hiperfoco nesse vídeo"
+                aria-pressed={isHyperfocused}
+                className={`rounded-full p-1.5 text-white transition ${
+                  isHyperfocused ? "bg-emerald-600 hover:bg-emerald-700" : "hover:bg-white/10"
+                }`}
+              >
+                <HyperfocusIcon className="h-4 w-4" />
+              </button>
+            </Tooltip>
+          )}
+          <Tooltip content={isFullscreen ? "Sair da tela cheia" : "Tela cheia"}>
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              aria-label={isFullscreen ? "Sair da tela cheia" : "Tela cheia"}
+              className="rounded-full p-1.5 text-white transition hover:bg-white/10"
+            >
+              {isFullscreen ? (
+                <FullscreenExitIcon className="h-4 w-4" />
+              ) : (
+                <FullscreenIcon className="h-4 w-4" />
+              )}
+            </button>
+          </Tooltip>
+          {/* Two different actions wearing one slot: the adder ends the
+              video for the room (×), everyone else just steps out of it for
+              themselves (the same eye as leaving a transmission), which is
+              the difference between "this is over" and "not for me". */}
+          {canControl ? (
+            <Tooltip content="Remover esse vídeo da sala (para todos)">
+              <button
+                type="button"
+                onClick={onRemove}
+                aria-label="Remover esse vídeo da sala"
+                className="rounded-full p-1.5 text-white transition hover:bg-white/10"
+              >
+                <MdClose className="h-4 w-4" />
+              </button>
+            </Tooltip>
+          ) : (
+            <Tooltip content="Sair desse vídeo">
+              <button
+                type="button"
+                onClick={onLeave}
+                aria-label="Sair desse vídeo"
+                className="rounded-full p-1.5 text-white transition hover:bg-white/10"
+              >
+                <EyeOffIcon className="h-4 w-4" />
+              </button>
+            </Tooltip>
+          )}
+        </span>
+      </div>
+
+      {/* The video's own rectangle. Nothing of ours is positioned inside it
+          except the loading spinner (before there is anything to cover) and,
+          for a viewer who isn't driving, a fully transparent shield. */}
+      <div
+        ref={containerRef}
+        className={`relative bg-black ${fill ? "min-h-0 flex-1" : "aspect-video w-full"}`}
+      >
+        {/* The API replaces this node with its iframe, so the sizing has to
+            come from the parent (see the width/height above too). */}
+        <div className="absolute inset-0 [&>iframe]:h-full [&>iframe]:w-full">
+          <div ref={mountRef} className="h-full w-full" />
+        </div>
+
+        {!ready && !loadError && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/20 border-t-white/80" />
+          </div>
+        )}
+        {loadError && (
+          <div className="absolute inset-0 flex items-center justify-center px-4 text-center">
+            <p className="text-sm text-zinc-300">
+              Não foi possível carregar esse vídeo do YouTube.
+            </p>
+          </div>
+        )}
+        {!canControl && !showNativeControls && !loadError && (
+          // Invisible and deliberately empty: YouTube still renders a
+          // clickable surface (and a click-to-pause area) even with
+          // controls off, and a pause only this viewer knows about is the
+          // one thing a synchronized video can't have.
+          <div className="absolute inset-0" aria-hidden />
+        )}
+      </div>
+    </div>
+  );
+}

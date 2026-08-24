@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useSpeaking } from "@/lib/useSpeaking";
 import { MicIcon, MicOffIcon, ScreenIcon } from "./icons";
+import { MdOutlineOndemandVideo } from "react-icons/md";
 import { VolumeSlider } from "./VolumeSlider";
 import { DisplayUserName } from "./DisplayUserName";
+import { Tooltip } from "./Tooltip";
 import { MAX_GAIN } from "@/lib/audioGain";
 
 export function ParticipantRow({
@@ -14,6 +16,7 @@ export function ParticipantRow({
   userId,
   micOn,
   sharing,
+  sharingVideo = false,
   micStream,
   muted = false,
   onToggleMute,
@@ -31,6 +34,11 @@ export function ParticipantRow({
   userId?: string;
   micOn: boolean;
   sharing: boolean;
+  // Whether this person has a room video source on screen (see
+  // components/VideoSourceTile) — a different thing from `sharing`, which is
+  // about transmitting their own screen or camera. Shown with its own icon
+  // because it also says who is allowed to play/pause it.
+  sharingVideo?: boolean;
   micStream?: MediaStream | null;
   muted?: boolean;
   onToggleMute?: () => void;
@@ -85,6 +93,13 @@ export function ParticipantRow({
           <MicOffIcon className="h-4 w-4 text-zinc-400 dark:text-zinc-600" />
         )}
         {sharing && <ScreenIcon className="h-4 w-4 text-emerald-500" />}
+        {sharingVideo && (
+          <Tooltip content={`${name} adicionou uma ou mais fontes de vídeo`}>
+            <span className="flex shrink-0 items-center">
+              <MdOutlineOndemandVideo className="h-4 w-4 text-red-500" />
+            </span>
+          </Tooltip>
+        )}
         {!isSelf && onVolumeChange && (
           <VolumeSlider
             value={volume}

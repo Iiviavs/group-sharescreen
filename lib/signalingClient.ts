@@ -1,6 +1,7 @@
 "use client";
 
 import { trackEvent } from "./analytics";
+import type { VideoSource } from "./videoSource";
 import type { Announcement } from "./announcement";
 import type { Partner } from "./partner";
 import type { Supporter } from "./supporter";
@@ -64,6 +65,11 @@ export type RegisteredAccount = {
 export type SignalingState = {
   status: SignalingStatus;
   selfId: string | null;
+  // This connection's *stable* identity (account id, or the guest id minted
+  // at register) — what a room video source is attributed to, and therefore
+  // what says whether this viewer is the one allowed to steer it. The
+  // connection id above changes on every reconnect and can't answer that.
+  selfUserId: string | null;
   name: string | null;
   nameError: string | null;
   account: RegisteredAccount | null;
@@ -81,6 +87,10 @@ export type SignalingState = {
   // was targeted.
   peers: PeerInfo[];
   chatMessages: ChatMessage[];
+  // Videos added to the room from an external service (YouTube, today) — see
+  // lib/videoSource.ts. Server-owned and room-scoped: a fresh "room-state"
+  // replaces this wholesale, which is also what empties it on a room switch.
+  videoSources: VideoSource[];
   // Site-wide banner, independent of room — null when none is active. Set
   // from the server's "announcement" push (see server/signaling.ts's
   // broadcastToAll), which also fires once right after "welcome" for a
@@ -166,6 +176,7 @@ const BANNED_CLOSE_CODE = 4003;
 const initialState: SignalingState = {
   status: "idle",
   selfId: null,
+  selfUserId: null,
   name: null,
   nameError: null,
   account: null,
@@ -173,6 +184,7 @@ const initialState: SignalingState = {
   joinError: null,
   peers: [],
   chatMessages: [],
+  videoSources: [],
   announcement: null,
   announcementLive: false,
   announcementSeq: 0,
@@ -276,6 +288,16 @@ function setStoredGuestToken(token: string) {
 
 class SignalingClient {
   private ws: WebSocket | null = null;
+  // How far this browser's clock is behind the server's, in ms (see
+  // serverNow). Zero until the first sample lands, which is the honest
+  // starting point: no measurement yet means no correction.
+  private clockOffsetMs = 0;
+  // The round trip of the sample the offset came from. Kept so a later,
+  // noisier sample doesn't overwrite a better one — the shortest round trip
+  // is the one where the server's timestamp is least ambiguous, which is the
+  // same reason NTP picks its samples that way.
+  private clockSampleRttMs = Number.POSITIVE_INFINITY;
+  private clockSyncTimer: ReturnType<typeof setInterval> | null = null;
   private listeners = new Set<Listener>();
   private signalListeners = new Set<SignalListener>();
   private roomJoinedListeners = new Set<Listener>();
@@ -376,6 +398,7 @@ class SignalingClient {
     ws.onopen = () => {
       this.reconnectAttempts = 0;
       this.setState({ status: "open" });
+      this.startClockSync();
       if (this.desiredName) {
         this.rawSend({
           type: "register",
@@ -534,10 +557,12 @@ class SignalingClient {
         this.setState({
           room: msg.room as string,
           selfId: msg.selfId as string,
+          selfUserId: (msg.selfUserId as string | undefined) ?? null,
           joinError: null,
           peers: msg.peers as PeerInfo[],
           chatMessages:
             history.length > MAX_CHAT_MESSAGES ? history.slice(-MAX_CHAT_MESSAGES) : history,
+          videoSources: Array.isArray(msg.videoSources) ? (msg.videoSources as VideoSource[]) : [],
         });
         trackEvent("room_joined");
         this.roomJoinedListeners.forEach((l) => l());
@@ -608,6 +633,53 @@ class SignalingClient {
           ),
         });
         break;
+      // Room video sources (see lib/videoSource.ts). Three separate messages
+      // rather than re-sending the whole list each time: "state" fires on
+      // every play/pause/seek anyone performs, and that is not a reason to
+      // re-render every other source's player.
+      case "video-source-added":
+        this.setState({ videoSources: [...this.state.videoSources, msg.source as VideoSource] });
+        break;
+      case "video-source-removed":
+        this.setState({
+          videoSources: this.state.videoSources.filter((v) => v.id !== msg.id),
+        });
+        break;
+      case "video-source-state":
+        this.setState({
+          videoSources: this.state.videoSources.map((v) =>
+            v.id === msg.id
+              ? {
+                  ...v,
+                  playing: Boolean(msg.playing),
+                  positionSeconds: Number(msg.positionSeconds) || 0,
+                  // Absent from a server that predates it — keep whatever the
+                  // source already had rather than resetting to 1x.
+                  playbackRate: Number(msg.playbackRate) || v.playbackRate || 1,
+                  updatedAt: Number(msg.updatedAt) || Date.now(),
+                }
+              : v
+          ),
+        });
+        break;
+      case "time-sync": {
+        const t0 = Number(msg.t0) || 0;
+        const serverTime = Number(msg.serverTime) || 0;
+        if (!t0 || !serverTime) break;
+        const rtt = Date.now() - t0;
+        if (rtt < 0 || rtt > 5000) break;
+        // The server stamped `serverTime` somewhere inside the round trip;
+        // assuming it was halfway is the standard approximation, and it is
+        // wrong by at most half the asymmetry of the link.
+        const offset = serverTime + rtt / 2 - Date.now();
+        // A fresh connection starts over: the previous socket's best sample
+        // may have come from a different network path entirely.
+        if (rtt <= this.clockSampleRttMs) {
+          this.clockSampleRttMs = rtt;
+          this.clockOffsetMs = offset;
+        }
+        break;
+      }
       case "peer-typing": {
         const id = msg.id as string;
         const typing = Boolean(msg.typing);
@@ -764,11 +836,59 @@ class SignalingClient {
     this.rawSend({ type: "join", room, turnstileToken });
   }
 
+  /**
+   * Now, on the server's clock. Anything that has to agree across machines
+   * to the frame — the shared video sources' playback position — measures
+   * with this instead of Date.now(), because two browsers whose clocks
+   * differ by ten seconds would otherwise each be confidently five seconds
+   * off in opposite directions, and no amount of drift correction can see
+   * that: every client's own reading is self-consistent.
+   */
+  serverNow(): number {
+    return Date.now() + this.clockOffsetMs;
+  }
+
+  // A short burst on connect (the first samples are the noisiest — the
+  // socket has just opened) and a slow trickle afterwards, so a laptop that
+  // slept through an NTP correction re-converges on its own.
+  private startClockSync() {
+    if (this.clockSyncTimer) clearInterval(this.clockSyncTimer);
+    this.clockSampleRttMs = Number.POSITIVE_INFINITY;
+    const sample = () => this.rawSend({ type: "time-sync", t0: Date.now() });
+    sample();
+    setTimeout(sample, 400);
+    setTimeout(sample, 1200);
+    this.clockSyncTimer = setInterval(sample, 30_000);
+  }
+
   leaveRoom() {
     this.desiredRoom = null;
     this.rawSend({ type: "leave" });
     this.clearAllTyping();
-    this.setState({ room: null, peers: [], chatMessages: [], joinError: null });
+    this.setState({ room: null, peers: [], chatMessages: [], videoSources: [], joinError: null });
+  }
+
+  // Adds a video source to the room. The URL is parsed server-side (the
+  // client's own parseYouTubeVideoId only exists to reject an obviously bad
+  // paste before it travels), and the server answers with a broadcast that
+  // reaches this client like any other.
+  addVideoSource(url: string) {
+    this.rawSend({ type: "video-source-add", kind: "youtube", url });
+  }
+
+  removeVideoSource(id: string) {
+    this.rawSend({ type: "video-source-remove", id });
+  }
+
+  // Play/pause/seek performed locally, pushed so everyone else's player
+  // follows. Position is where the local player actually is, in seconds.
+  setVideoSourceState(
+    id: string,
+    playing: boolean,
+    positionSeconds: number,
+    playbackRate: number
+  ) {
+    this.rawSend({ type: "video-source-state", id, playing, positionSeconds, playbackRate });
   }
 
   setSharing(sharing: boolean) {
