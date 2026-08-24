@@ -650,6 +650,11 @@ export function WatchRoom({ handle }: { handle: string }) {
   // stopped transmission gets, so there's a way back in.
   const [leftVideoSourceIds, setLeftVideoSourceIds] = useState<Set<string>>(new Set());
   const [videoSourceOpen, setVideoSourceOpen] = useState(false);
+  // The same box, opened from the empty pane's centred button instead of the
+  // header's. Its own flag rather than a shared one: both triggers are
+  // mounted at the same time while nobody is transmitting, so one flag would
+  // pop both panels at once.
+  const [videoSourceEmptyOpen, setVideoSourceEmptyOpen] = useState(false);
   const [videoSourceInput, setVideoSourceInput] = useState("");
   const [videoSourceError, setVideoSourceError] = useState<string | null>(null);
   // Consolidates every header control except the mic toggle and the
@@ -1197,6 +1202,7 @@ export function WatchRoom({ handle }: { handle: string }) {
     setVideoSourceInput("");
     setVideoSourceError(null);
     setVideoSourceOpen(false);
+    setVideoSourceEmptyOpen(false);
   }
 
   function toggleSpotlight(id: string) {
@@ -1593,6 +1599,42 @@ export function WatchRoom({ handle }: { handle: string }) {
     return state.videoSources.some((v) => v.addedById === userId);
   }
 
+  // One box, two triggers: the header's icon button and the empty pane's
+  // centred one (see below). Shared as a variable rather than duplicated so
+  // the copy, the validation message and the input can never drift apart.
+  const videoSourceForm = (
+    <form
+      onSubmit={handleAddVideoSource}
+      className="w-72 max-w-[calc(100vw-1rem)] rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-950"
+    >
+      <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+        <BetaMark /> Adicionar fonte de vídeo
+      </p>
+      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+        Cole o link de um vídeo ou live do YouTube. Ele aparece pra todo mundo na sala e fica
+        sincronizado. Só você terá o controle.
+      </p>
+      <input
+        value={videoSourceInput}
+        onChange={(e) => {
+          setVideoSourceInput(e.target.value);
+          setVideoSourceError(null);
+        }}
+        placeholder="https://youtube.com/watch?v=..."
+        aria-label="Link do YouTube"
+        className="mt-2 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+      />
+      {videoSourceError && <p className="mt-1 text-xs text-red-500">{videoSourceError}</p>}
+      <button
+        type="submit"
+        disabled={!videoSourceInput.trim()}
+        className="mt-2 w-full rounded-lg bg-zinc-950 px-3 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
+      >
+        Adicionar
+      </button>
+    </form>
+  );
+
   const participantsSection = (
     <>
       {connectingAudioPeers && (
@@ -1713,37 +1755,7 @@ export function WatchRoom({ handle }: { handle: string }) {
               placement="bottom-end"
               tooltip="Adicionar fonte de vídeo"
               content={
-                <form
-                  onSubmit={handleAddVideoSource}
-                  className="w-72 max-w-[calc(100vw-1rem)] rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-950"
-                >
-                  <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    <BetaMark /> Adicionar fonte de vídeo
-                  </p>
-                  <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                    Cole o link de um vídeo ou live do YouTube. Ele aparece pra todo mundo na sala e fica sincronizado. Só você terá o controle.
-                  </p>
-                  <input
-                    value={videoSourceInput}
-                    onChange={(e) => {
-                      setVideoSourceInput(e.target.value);
-                      setVideoSourceError(null);
-                    }}
-                    placeholder="https://youtube.com/watch?v=..."
-                    aria-label="Link do YouTube"
-                    className="mt-2 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-                  />
-                  {videoSourceError && (
-                    <p className="mt-1 text-xs text-red-500">{videoSourceError}</p>
-                  )}
-                  <button
-                    type="submit"
-                    disabled={!videoSourceInput.trim()}
-                    className="mt-2 w-full rounded-lg bg-zinc-950 px-3 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
-                  >
-                    Adicionar
-                  </button>
-                </form>
+                videoSourceForm
               }
             >
               <button
@@ -1966,22 +1978,23 @@ export function WatchRoom({ handle }: { handle: string }) {
                   on the space where it fits. Only ever shown while nobody —
                   including us — is transmitting, so these are always "start",
                   never "stop": see nothingToShow. */}
-              {screenShareMode === "unsupported" ? (
+              {screenShareMode === "unsupported" && (
                 <p className="text-sm text-zinc-500 dark:text-zinc-500">
                   Seu navegador não permite compartilhar tela nem câmera.
                 </p>
-              ) : (
-                <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-                  {screenShareMode === "display" && (
-                    <button
-                      type="button"
-                      onClick={() => startShare("display")}
-                      className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
-                    >
-                      <ScreenIcon className="h-5 w-5" />
-                      Compartilhar tela
-                    </button>
-                  )}
+              )}
+              <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+                {screenShareMode === "display" && (
+                  <button
+                    type="button"
+                    onClick={() => startShare("display")}
+                    className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+                  >
+                    <ScreenIcon className="h-5 w-5" />
+                    Compartilhar tela
+                  </button>
+                )}
+                {screenShareMode !== "unsupported" && (
                   <button
                     type="button"
                     onClick={() => startCameraShare()}
@@ -1990,8 +2003,31 @@ export function WatchRoom({ handle }: { handle: string }) {
                     <CameraIcon className="h-5 w-5" />
                     Compartilhar câmera
                   </button>
-                </div>
-              )}
+                )}
+                {/* Third way to fill this pane, and the only one that needs
+                    no camera, no screen capture and no upload — which is why
+                    it is offered even where the other two are unsupported
+                    (a browser with no getDisplayMedia can still watch a
+                    YouTube source with the room). Same box as the header's
+                    button, opened from here so the control is where the
+                    person is already looking. */}
+                <Popover
+                  open={videoSourceEmptyOpen}
+                  onClose={() => setVideoSourceEmptyOpen(false)}
+                  placement="bottom"
+                  content={videoSourceForm}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setVideoSourceEmptyOpen((o) => !o)}
+                    className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+                  >
+                    <MdOutlineOndemandVideo className="h-5 w-5 shrink-0" />
+                    Adicionar fonte de vídeo
+                    <BetaMark />
+                  </button>
+                </Popover>
+              </div>
             </div>
           ) : (
             <>
