@@ -233,7 +233,8 @@ export type AdminRoomViewerState = {
   error: string | null;
   peers: AdminPeerInfo[];
   chatMessages: ChatMessage[];
-  // See AdminClientState.videoSources — used only to tell who added one.
+  // See AdminClientState.videoSources — both embedded as read-only tiles and
+  // read to tell who added one.
   videoSources: VideoSource[];
   selfId: string | null;
   screenStreams: Record<string, MediaStream>;

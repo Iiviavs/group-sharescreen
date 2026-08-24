@@ -159,6 +159,11 @@ function isLiveBroadcast(player: EmbeddedPlayer): boolean {
   return (player.getDuration?.() ?? 0) <= 0;
 }
 
+// The default clock for the `serverNow` prop below. Module-level and
+// arrow-wrapped on purpose: `signalingClient.serverNow` handed over bare
+// would be called with no `this` and blow up on its own field.
+const defaultServerNow = () => signalingClient.serverNow();
+
 let youtubeApiPromise: Promise<YTNamespace> | null = null;
 
 function loadYouTubeApi(): Promise<YTNamespace> {
@@ -290,6 +295,7 @@ export function VideoSourceTile({
   label,
   volume,
   onVolumeChange,
+  serverNow = defaultServerNow,
   fill = false,
   className = "",
   onFocus,
@@ -331,6 +337,15 @@ export function VideoSourceTile({
   // tile keep the dial in its own state instead.
   volume?: number;
   onVolumeChange?: (volume: number) => void;
+  // This viewer's best estimate of the *server's* clock, which is the origin
+  // every position in `source` is stamped against — see videoSourcePosition.
+  // Injectable because it belongs to whichever connection this tile is
+  // watching through: a participant has signalingClient (the default), and
+  // the moderation viewer has its own separate socket, whose offset is the
+  // only one measured for it (see adminClient.serverNow). Passing the wrong
+  // one would silently put the moderator's player off by that connection's
+  // clock skew, which is exactly the error the drift correction can't see.
+  serverNow?: () => number;
   fill?: boolean;
   className?: string;
   onFocus?: () => void;
@@ -359,6 +374,10 @@ export function VideoSourceTile({
   // exactly what React tells you not to do.
   const sourceRef = useRef(source);
   const onStateChangeRef = useRef(onStateChange);
+  // Kept in a ref like the callbacks above rather than read directly, so a
+  // caller passing an inline arrow can't churn the effects below — the
+  // player-creation and drift effects would otherwise re-run every render.
+  const serverNowRef = useRef(serverNow);
   // Whether this viewer asked for YouTube's own player chrome. Only ever
   // true for someone who isn't driving: the owner has it from the start.
   // Driving stays with the adder either way — see the sync effect, which
@@ -381,6 +400,7 @@ export function VideoSourceTile({
   useEffect(() => {
     sourceRef.current = source;
     onStateChangeRef.current = onStateChange;
+    serverNowRef.current = serverNow;
     canControlRef.current = canControl;
     nativeControlsRef.current = showNativeControls;
     volumeRef.current = effectiveVolume;
@@ -534,7 +554,7 @@ export function VideoSourceTile({
               disablekb: canControlRef.current || nativeControlsRef.current ? 0 : 1,
               // Where the room already is — someone joining an hour into a
               // video starts an hour in, not at the beginning.
-              start: Math.floor(videoSourcePosition(sourceRef.current, signalingClient.serverNow())),
+              start: Math.floor(videoSourcePosition(sourceRef.current, serverNowRef.current())),
               rel: 0,
               modestbranding: 1,
               playsinline: 1,
@@ -633,7 +653,7 @@ export function VideoSourceTile({
     // See isLiveBroadcast — a live source has no position to line up on, so
     // only play/pause below applies to it.
     if (!isLiveBroadcast(player)) {
-      const target = videoSourcePosition(source, signalingClient.serverNow());
+      const target = videoSourcePosition(source, serverNowRef.current());
       if (Math.abs(player.getCurrentTime() - target) > DRIFT_TOLERANCE_SECONDS) {
         player.seekTo(target, true);
         lastSeekAtRef.current = Date.now();
@@ -696,7 +716,7 @@ export function VideoSourceTile({
         return;
       }
 
-      const target = videoSourcePosition(current, signalingClient.serverNow());
+      const target = videoSourcePosition(current, serverNowRef.current());
       const drift = target - player.getCurrentTime(); // positive: behind
       const distance = Math.abs(drift);
 

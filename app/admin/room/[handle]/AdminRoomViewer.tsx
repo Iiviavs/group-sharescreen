@@ -13,11 +13,18 @@ import {
   setStoredTransmissionVolume,
 } from "@/lib/mediaPreferences";
 import { VideoTile, StoppedPeerTile, ResumingPeerTile } from "@/components/VideoTile";
+import { VideoSourceTile } from "@/components/VideoSourceTile";
+import { adminSignalingClient } from "@/lib/adminClient";
 import { RemoteAudio } from "@/components/RemoteAudio";
 import { ParticipantRow } from "@/components/ParticipantRow";
 import { ChatPanel } from "@/components/ChatPanel";
 import { DisplayUserName } from "@/components/DisplayUserName";
 import { MdHome } from "react-icons/md";
+
+// The moderation socket's clock, for the embedded video sources below.
+// Arrow-wrapped rather than passed as a bare method reference, which would
+// arrive with no `this` and throw on its own field.
+const adminServerNow = () => adminSignalingClient.serverNow();
 
 export function AdminRoomViewer({ handle }: { handle: string }) {
   const router = useRouter();
@@ -31,6 +38,13 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
   // room benefits from the same "zoom in on one stream" escape hatch a
   // regular participant gets.
   const [focusedPeerId, setFocusedPeerId] = useState<string | null>(null);
+  // Video sources this moderator stepped out of, exactly like WatchRoom's
+  // state of the same name: purely local, the room never hears about it, and
+  // the tile is replaced by the same "you left this" placeholder a stopped
+  // transmission gets so there's a way back in. Worth having here because a
+  // moderator looking into a busy room may want the embedded video out of
+  // the way to see the actual transmissions.
+  const [leftVideoSourceIds, setLeftVideoSourceIds] = useState<Set<string>>(new Set());
 
   const {
     status,
@@ -109,7 +123,8 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
   const focusedCameraEntries = focusedPeerId
     ? cameraEntries.filter(([peerId]) => peerId === focusedPeerId)
     : cameraEntries;
-  const hasMultipleShares = screenEntries.length + cameraEntries.length > 1;
+  const hasMultipleShares =
+    screenEntries.length + cameraEntries.length + videoSources.length > 1;
   // Mirrors WatchRoom's placeholder handling: a peer the moderator stopped
   // watching (or is waiting to resume) has no entry in screenStreams/
   // cameraStreams (the connection is closed to save resources) but still
@@ -126,9 +141,20 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
   const resumingCameraEntries = peers.filter(
     (p) => resumingCameraPeers.has(p.id) && !(p.id in cameraStreams)
   );
+  // Room video sources are tiles here in the same sense they are in
+  // WatchRoom: they take a grid slot and count toward "is there anything on
+  // screen", the only difference being that nobody is transmitting them.
+  // Hidden entirely while focused on one peer's stream, for the same reason
+  // the other peers' tiles are.
+  const watchedVideoSources = videoSources.filter((v) => !leftVideoSourceIds.has(v.id));
+  const visibleVideoSources = focusedPeerId ? [] : watchedVideoSources;
+  const leftVideoSources = focusedPeerId
+    ? []
+    : videoSources.filter((v) => leftVideoSourceIds.has(v.id));
   const nothingToShow =
     screenEntries.length === 0 &&
     cameraEntries.length === 0 &&
+    videoSources.length === 0 &&
     stoppedScreenEntries.length === 0 &&
     resumingScreenEntries.length === 0 &&
     stoppedCameraEntries.length === 0 &&
@@ -136,6 +162,8 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
   const tileCount =
     focusedScreenEntries.length +
     focusedCameraEntries.length +
+    visibleVideoSources.length +
+    leftVideoSources.length +
     stoppedScreenEntries.length +
     resumingScreenEntries.length +
     stoppedCameraEntries.length +
@@ -260,6 +288,62 @@ export function AdminRoomViewer({ handle }: { handle: string }) {
                     />
                   );
                 })}
+                {/* The room's embedded videos (YouTube/Twitch). A moderator
+                    gets the same tile a participant does, but strictly
+                    read-only: canControl and isOwner are both false, so the
+                    player carries no controls, the transparent shield sits
+                    over it, and neither the × nor any state push can be
+                    reached. That keeps the mode's promise intact — watching
+                    one of these is entirely client-side (nothing is sent, the
+                    server is never told), so it stays invisible to the room
+                    exactly like watching a transmission does.
+
+                    The clock has to come from this connection: the tile
+                    defaults to signalingClient's, which on the moderation
+                    page belongs to a socket that never joined this room. */}
+                {visibleVideoSources.map((videoSource) => {
+                  // Keyed on the platform id, not the source id, for the same
+                  // reason WatchRoom does it — a source id is minted fresh
+                  // every time someone adds the video, so a dial keyed on it
+                  // would never actually persist.
+                  const volumeKey = `video:${videoSource.videoId}`;
+                  return (
+                    <VideoSourceTile
+                      key={`video-source-${videoSource.id}`}
+                      source={videoSource}
+                      canControl={false}
+                      isOwner={false}
+                      serverNow={adminServerNow}
+                      volume={transmissionVolumes[volumeKey] ?? 1}
+                      onVolumeChange={(volume) => setTransmissionVolume(volumeKey, volume)}
+                      label={`${videoSource.addedByName} adicionou`}
+                      fill={isSingleTile}
+                      // Unreachable with isOwner false — the × that would
+                      // call it is never rendered.
+                      onRemove={() => {}}
+                      onLeave={() =>
+                        setLeftVideoSourceIds((prev) => new Set(prev).add(videoSource.id))
+                      }
+                      // Same: canControl false short-circuits every push
+                      // before it reaches this.
+                      onStateChange={() => {}}
+                    />
+                  );
+                })}
+                {leftVideoSources.map((videoSource) => (
+                  <StoppedPeerTile
+                    key={`left-video-source-${videoSource.id}`}
+                    label={`vídeo de ${videoSource.addedByName}`}
+                    fill={isSingleTile}
+                    onResume={() =>
+                      setLeftVideoSourceIds((prev) => {
+                        const next = new Set(prev);
+                        next.delete(videoSource.id);
+                        return next;
+                      })
+                    }
+                  />
+                ))}
                 {stoppedScreenEntries.map((peer) => (
                   <StoppedPeerTile
                     key={`stopped-screen-${peer.id}`}
