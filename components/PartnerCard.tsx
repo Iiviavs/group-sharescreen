@@ -831,6 +831,8 @@ export function PartnerCard() {
                   imageUrl: data.imageUrl,
                   buttonLabel: data.buttonLabel,
                   buttonUrl: data.buttonUrl,
+                  buttonBackgroundColor: data.buttonBackgroundColor,
+                  buttonTextColor: data.buttonTextColor,
                   clickRewardPoints: clickRewardAppliesTo(data, "video")
                     ? data.clickRewardPoints
                     : null,

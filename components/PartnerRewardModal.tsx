@@ -57,6 +57,11 @@ export type PartnerRewardPopupData = {
   imageUrl?: string | null;
   buttonLabel: string;
   buttonUrl: string;
+  // The CTA's colors, straight from the ad (same fields the card paints its
+  // own button with) — so the button someone sees after the video is the
+  // same button they saw on the card, not a neutral popup-styled one.
+  buttonBackgroundColor?: string | null;
+  buttonTextColor?: string | null;
   // Points for clicking the CTA below, or null when this ad has no click
   // reward *for this spot* — PartnerCard already resolves the ad's
   // clickRewardPlacement before handing the popup this value, so there is
@@ -100,6 +105,8 @@ export function PartnerRewardModal({
     imageUrl,
     buttonLabel,
     buttonUrl,
+    buttonBackgroundColor,
+    buttonTextColor,
     clickRewardPoints,
     onClaimed,
   },
@@ -384,6 +391,10 @@ export function PartnerRewardModal({
   // exists to make "watched it" mean something. Once it does, the popup
   // hands the whole player over and gets out of the way.
   const playerUnlocked = unlocked;
+  // How much of the video has played, for the claim button's fill. Clamped
+  // because a video's currentTime can momentarily read past its own duration.
+  const watchedFraction =
+    duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
 
   return (
     <div className="flex flex-col bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
@@ -564,7 +575,26 @@ export function PartnerRewardModal({
               // new tab, so nothing is racing an unload here.
               if (clickRewardActive) claimClickReward();
             }}
-            className="relative flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-zinc-300 px-4 py-2.5 text-center text-sm font-semibold transition hover:bg-black/5 dark:border-white/30 dark:hover:bg-white/10"
+            // Neutral while the video plays, and only then the ad's own
+            // colors (the same ones PartnerCard paints its CTA with, same
+            // fallbacks) plus the glow: the button lighting up *is* the
+            // signal that the video is over and the click is the one thing
+            // left to do — arriving already colored would spend that signal
+            // before there was anything to signal.
+            style={
+              hasEnded
+                ? {
+                    backgroundColor: buttonBackgroundColor ?? "#18181b",
+                    color: buttonTextColor ?? "#ffffff",
+                    ["--partner-cta-glow-color" as string]: buttonBackgroundColor ?? "#18181b",
+                  }
+                : undefined
+            }
+            className={`relative flex flex-1 items-center justify-center gap-1.5 rounded-lg px-4 py-2.5 text-center text-sm font-semibold transition ${
+              hasEnded
+                ? "partner-cta-glow hover:opacity-90"
+                : "border border-zinc-300 hover:bg-black/5 dark:border-white/30 dark:hover:bg-white/10"
+            }`}
           >
             {/* "Resgatado!" is laid over the label rather than replacing it,
                 so the button keeps the exact size it had instead of
@@ -592,8 +622,21 @@ export function PartnerRewardModal({
             // Deliberately not disabled for a signed-out visitor: handleClaim
             // turns that click into the notice below instead of a dead button.
             disabled={!unlocked || claiming || claimed || alreadyClaimed}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-400"
+            className="relative flex flex-1 items-center justify-center gap-1.5 overflow-hidden rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-400"
           >
+            {/* The reward filling up as the video plays — the same
+                information the strip under the video carries, put where the
+                thing being waited for actually is. Only while it's still
+                being earned: once unlocked the button is solid emerald and a
+                progress bar over it would be saying nothing. */}
+            {!unlocked && watchedFraction > 0 && (
+              <span
+                aria-hidden
+                className="absolute inset-y-0 left-0 bg-emerald-500/30 transition-[width] duration-300 ease-linear dark:bg-emerald-500/25"
+                style={{ width: `${watchedFraction * 100}%` }}
+              />
+            )}
+            <span className="relative flex items-center justify-center gap-1.5">
             {claimed ? (
               <>
                 <CheckIcon className="h-4 w-4 shrink-0" />
@@ -615,6 +658,7 @@ export function PartnerRewardModal({
             ) : (
               "Assista até o fim para resgatar"
             )}
+            </span>
           </button>
         </div>
         {claimAttemptedSignedOut && !account && !claimed && !alreadyClaimed && (

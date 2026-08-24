@@ -125,3 +125,32 @@ body {
 html .ntpopups-main {
   --ntpopups-bg-overlay: rgba(0, 0, 0, 0.6);
 }
+
+/* The reward-video popup's call-to-action, once the video has played through
+   (see components/PartnerRewardModal.tsx). A glow rather than a color change
+   because the button already wears the advertiser's own colors — the whole
+   point is to draw the eye to it at the moment the video stops without
+   repainting it into something the advertiser didn't choose.
+   --partner-cta-glow-color is set inline from those same colors. */
+@keyframes partner-cta-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--partner-cta-glow-color, #ffffff) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 18px 5px color-mix(in srgb, var(--partner-cta-glow-color, #ffffff) 45%, transparent);
+  }
+}
+
+.partner-cta-glow {
+  animation: partner-cta-glow 1.6s ease-in-out infinite;
+}
+
+/* Still highlighted, just not blinking — a pulsing button is exactly the
+   kind of motion this setting exists to stop. */
+@media (prefers-reduced-motion: reduce) {
+  .partner-cta-glow {
+    animation: none;
+    box-shadow: 0 0 14px 3px color-mix(in srgb, var(--partner-cta-glow-color, #ffffff) 45%, transparent);
+  }
+}
