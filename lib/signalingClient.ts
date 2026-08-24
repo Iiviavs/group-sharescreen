@@ -917,11 +917,11 @@ class SignalingClient {
   }
 
   // Adds a video source to the room. The URL is parsed server-side (the
-  // client's own parseYouTubeVideoId only exists to reject an obviously bad
-  // paste before it travels), and the server answers with a broadcast that
-  // reaches this client like any other.
-  addVideoSource(url: string) {
-    this.rawSend({ type: "video-source-add", kind: "youtube", url });
+  // client's own parseYouTubeVideoId/parseTwitchChannel only exist to reject
+  // an obviously bad paste before it travels), and the server answers with a
+  // broadcast that reaches this client like any other.
+  addVideoSource(kind: "youtube" | "twitch", url: string, controlMode: "owner" | "anyone") {
+    this.rawSend({ type: "video-source-add", kind, url, controlMode });
   }
 
   removeVideoSource(id: string) {

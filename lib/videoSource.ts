@@ -5,10 +5,15 @@
 // room watch the same frame at the same time.
 export type VideoSource = {
   id: string;
-  kind: "youtube";
+  kind: "youtube" | "twitch";
+  // The YouTube video id for a "youtube" source, or the channel login for a
+  // "twitch" one — see parseYouTubeVideoId/parseTwitchChannel below.
   videoId: string;
   addedById: string;
   addedByName: string;
+  // "owner" (only addedById may steer it) or "anyone" (the whole room may) —
+  // see VideoSourceTile's canControl, which this decides alongside identity.
+  controlMode: "owner" | "anyone";
   playing: boolean;
   positionSeconds: number;
   // Shared playback speed. Part of the position arithmetic below, not just a
@@ -68,4 +73,29 @@ export function parseYouTubeVideoId(raw: string): string | null {
     }
   }
   return id && YOUTUBE_VIDEO_ID_RE.test(id) ? id : null;
+}
+
+const TWITCH_CHANNEL_RE = /^[A-Za-z][A-Za-z0-9_]{3,24}$/;
+
+// Client-side twin of the server's parseTwitchChannel (see server/signaling.ts)
+// — same caveat as parseYouTubeVideoId above: only to reject an obvious
+// mistake before sending, never the gate. Accepts a bare channel name or a
+// twitch.tv/<channel> URL; a VOD or clip link (more than one path segment)
+// is rejected rather than guessed at, since only a live channel embed is
+// supported.
+export function parseTwitchChannel(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (TWITCH_CHANNEL_RE.test(trimmed)) return trimmed;
+  let url: URL;
+  try {
+    url = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.replace(/^www\./, "").replace(/^m\./, "").toLowerCase();
+  if (host !== "twitch.tv") return null;
+  const segments = url.pathname.split("/").filter(Boolean);
+  if (segments.length !== 1) return null;
+  const channel = segments[0];
+  return TWITCH_CHANNEL_RE.test(channel) ? channel : null;
 }

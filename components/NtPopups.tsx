@@ -5,6 +5,7 @@ import { useSyncExternalStore } from "react";
 import { NtPopupProvider } from "ntpopups";
 import "ntpopups/dist/styles.css";
 import { PartnerRewardModal } from "@/components/PartnerRewardModal";
+import { AddVideoSourceModal } from "@/components/AddVideoSourceModal";
 
 // Popup types this app registers with the library, opened by name through
 // `useNtPopups().openPopup(...)`. The cast is because the library types
@@ -13,6 +14,7 @@ import { PartnerRewardModal } from "@/components/PartnerRewardModal";
 // itself, which it can't express here.
 const customPopups: Record<string, ComponentType> = {
   partner_reward: PartnerRewardModal as ComponentType,
+  add_video_source: AddVideoSourceModal as ComponentType,
 };
 
 // Matches the rest of the app, which themes purely off the OS preference

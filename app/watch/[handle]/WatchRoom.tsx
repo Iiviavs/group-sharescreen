@@ -48,7 +48,7 @@ import { SupportersTooltipContent } from "@/components/SupportersTooltip";
 import { DisplayUserName } from "@/components/DisplayUserName";
 import { CreateAccountForm } from "@/components/CreateAccountForm";
 import { VideoSourceTile } from "@/components/VideoSourceTile";
-import { parseYouTubeVideoId } from "@/lib/videoSource";
+import useNtPopups from "ntpopups";
 import {
   MicIcon,
   MicOffIcon,
@@ -545,6 +545,7 @@ export function WatchRoom({ handle }: { handle: string }) {
   useBackgroundKeepAlive(Boolean(state.room));
   const hasStoredName = useHasStoredName();
   const { loading: resolvingAccount, account } = useAuth();
+  const { openPopup } = useNtPopups();
   const validHandle = HANDLE_RE.test(handle);
   const screenShareMode = useScreenShareMode();
 
@@ -642,21 +643,14 @@ export function WatchRoom({ handle }: { handle: string }) {
   // actually free up bandwidth/CPU, not just screen space. Mutually
   // exclusive with spotlightId.
   const [hyperfocusId, setHyperfocusId] = useState<string | null>(null);
-  // "Adicionar fonte de vídeo": the URL box behind the header button, and
-  // whatever the last attempt had to say about what was typed into it.
+  // "Adicionar fonte de vídeo" itself lives in the AddVideoSourceModal
+  // popup (see handleAddVideoSource below) — nothing about that box's own
+  // state belongs here.
   // Video sources this viewer stepped out of (the eye button on a source
   // they didn't add). Purely local — the video keeps playing for the room,
   // and the tile is replaced by the same "you left this" placeholder a
   // stopped transmission gets, so there's a way back in.
   const [leftVideoSourceIds, setLeftVideoSourceIds] = useState<Set<string>>(new Set());
-  const [videoSourceOpen, setVideoSourceOpen] = useState(false);
-  // The same box, opened from the empty pane's centred button instead of the
-  // header's. Its own flag rather than a shared one: both triggers are
-  // mounted at the same time while nobody is transmitting, so one flag would
-  // pop both panels at once.
-  const [videoSourceEmptyOpen, setVideoSourceEmptyOpen] = useState(false);
-  const [videoSourceInput, setVideoSourceInput] = useState("");
-  const [videoSourceError, setVideoSourceError] = useState<string | null>(null);
   // Consolidates every header control except the mic toggle and the
   // share/camera transmission buttons into one "more options" panel — see
   // the header below. Those sub-toggles (renaming/switching/qualityOpen)
@@ -1187,22 +1181,13 @@ export function WatchRoom({ handle }: { handle: string }) {
   // more of them in view at once.
   const mobileGridCols = tileCount <= 2 ? "grid-cols-1" : "grid-cols-2";
 
-  function handleAddVideoSource(e: FormEvent) {
-    e.preventDefault();
-    const raw = videoSourceInput.trim();
-    if (!raw) return;
-    // Only to catch an obvious paste mistake without a round trip — the
-    // server parses it again, and its answer is what everyone embeds.
-    if (!parseYouTubeVideoId(raw)) {
-      setVideoSourceError("Cole um link de vídeo ou live do YouTube.");
-      return;
-    }
-    signalingClient.addVideoSource(raw);
-    trackEvent("video_source_added", { kind: "youtube" });
-    setVideoSourceInput("");
-    setVideoSourceError(null);
-    setVideoSourceOpen(false);
-    setVideoSourceEmptyOpen(false);
+  // The actual add — link parsing/validation lives in AddVideoSourceModal
+  // itself now (see components/AddVideoSourceModal.tsx), which only calls
+  // this once it's satisfied. Opened from two places (the header button and
+  // the empty pane's centred one), both passing this same callback.
+  function handleAddVideoSource(kind: "youtube" | "twitch", url: string, controlMode: "owner" | "anyone") {
+    signalingClient.addVideoSource(kind, url, controlMode);
+    trackEvent("video_source_added", { kind });
   }
 
   function toggleSpotlight(id: string) {
@@ -1599,41 +1584,13 @@ export function WatchRoom({ handle }: { handle: string }) {
     return state.videoSources.some((v) => v.addedById === userId);
   }
 
-  // One box, two triggers: the header's icon button and the empty pane's
-  // centred one (see below). Shared as a variable rather than duplicated so
-  // the copy, the validation message and the input can never drift apart.
-  const videoSourceForm = (
-    <form
-      onSubmit={handleAddVideoSource}
-      className="w-72 max-w-[calc(100vw-1rem)] rounded-lg border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-950"
-    >
-      <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-        <BetaMark /> Adicionar fonte de vídeo
-      </p>
-      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-        Cole o link de um vídeo ou live do YouTube. Ele aparece pra todo mundo na sala e fica
-        sincronizado. Só você terá o controle.
-      </p>
-      <input
-        value={videoSourceInput}
-        onChange={(e) => {
-          setVideoSourceInput(e.target.value);
-          setVideoSourceError(null);
-        }}
-        placeholder="https://youtube.com/watch?v=..."
-        aria-label="Link do YouTube"
-        className="mt-2 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-      />
-      {videoSourceError && <p className="mt-1 text-xs text-red-500">{videoSourceError}</p>}
-      <button
-        type="submit"
-        disabled={!videoSourceInput.trim()}
-        className="mt-2 w-full rounded-lg bg-zinc-950 px-3 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
-      >
-        Adicionar
-      </button>
-    </form>
-  );
+  // Opens the popup shared by both triggers below (the header's icon button
+  // and the empty pane's centred one) — see components/AddVideoSourceModal.
+  function openAddVideoSourcePopup() {
+    openPopup("add_video_source", {
+      data: { onSubmit: handleAddVideoSource },
+    });
+  }
 
   const participantsSection = (
     <>
@@ -1744,33 +1701,25 @@ export function WatchRoom({ handle }: { handle: string }) {
                 while talking, not once at setup. */}
             <div className="flex flex-wrap items-center justify-end gap-2">{mainControls}</div>
 
-            {/* Adding a YouTube video/live to the room. Sits with the
+            {/* Adding a YouTube/Twitch video/live to the room. Sits with the
                 transmission controls because that's what it produces: one
                 more tile everyone in the room sees, with the same focus and
                 hyperfocus buttons — the difference is that nobody is
-                uploading it. */}
-            <Popover
-              open={videoSourceOpen}
-              onClose={() => setVideoSourceOpen(false)}
-              placement="bottom-end"
-              tooltip="Adicionar fonte de vídeo"
-              content={
-                videoSourceForm
-              }
-            >
+                uploading it. Opens components/AddVideoSourceModal as an
+                ntpopups popup rather than the little inline box this used to
+                be — picking a platform and who gets to control it needs more
+                room than a popover corner has. */}
+            <Tooltip content="Adicionar fonte de vídeo">
               <button
                 type="button"
-                onClick={() => setVideoSourceOpen((o) => !o)}
+                onClick={openAddVideoSourcePopup}
                 aria-label="Adicionar fonte de vídeo"
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-white transition ${videoSourceOpen
-                  ? "bg-emerald-700"
-                  : "bg-emerald-600 hover:bg-emerald-700"
-                  }`}
+                className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
               >
                 <MdOutlineOndemandVideo className="h-5 w-5 shrink-0" />
                 <span className="hidden lg:inline"><BetaMark /></span>
               </button>
-            </Popover>
+            </Tooltip>
 
             {/* Still desktop-only: on a phone these two live inside "Mais
                 opções" (see above), the only place with room for them. */}
@@ -2007,22 +1956,15 @@ export function WatchRoom({ handle }: { handle: string }) {
                 )}
 
                 <div className="basis-full flex justify-center">
-                  <Popover
-                    open={videoSourceEmptyOpen}
-                    onClose={() => setVideoSourceEmptyOpen(false)}
-                    placement="bottom"
-                    content={videoSourceForm}
+                  <button
+                    type="button"
+                    onClick={openAddVideoSourcePopup}
+                    className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
                   >
-                    <button
-                      type="button"
-                      onClick={() => setVideoSourceEmptyOpen((o) => !o)}
-                      className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
-                    >
-                      <MdOutlineOndemandVideo className="h-5 w-5 shrink-0" />
-                      Adicionar fonte de vídeo
-                      <BetaMark />
-                    </button>
-                  </Popover>
+                    <MdOutlineOndemandVideo className="h-5 w-5 shrink-0" />
+                    Adicionar fonte de vídeo
+                    <BetaMark />
+                  </button>
                 </div>
               </div>
             </div>
@@ -2098,9 +2040,20 @@ export function WatchRoom({ handle }: { handle: string }) {
                       source={videoSource}
                       volume={transmissionVolumes[volumeKey] ?? 1}
                       onVolumeChange={(volume) => setTransmissionVolume(volumeKey, volume)}
-                      // Only whoever added it drives — for themselves and,
-                      // through the server, for everyone else.
+                      // Whoever added it drives — or, if they set it to
+                      // "anyone" when adding it, everyone does. Either way
+                      // this is enforced again server-side (see
+                      // "video-source-state" in signaling.ts), not just here.
                       canControl={
+                        state.selfUserId !== null &&
+                        (videoSource.controlMode === "anyone" ||
+                          videoSource.addedById === state.selfUserId)
+                      }
+                      // Ownership itself, unlike canControl, never widens
+                      // with controlMode — ending the video for the room
+                      // stays with whoever added it regardless of who's
+                      // allowed to drive it.
+                      isOwner={
                         state.selfUserId !== null && videoSource.addedById === state.selfUserId
                       }
                       label={`${videoSource.addedByName} adicionou`}
