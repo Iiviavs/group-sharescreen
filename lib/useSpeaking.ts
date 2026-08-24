@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { getSharedAudioContext, ensureSharedAudioContextRunning } from "./audioContext";
 
 const SPEAKING_THRESHOLD = 0.02;
 const HOLD_MS = 400;
@@ -21,13 +22,15 @@ export function useSpeaking(stream: MediaStream | null | undefined): boolean {
       return;
     }
 
-    const AudioContextCtor =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioContextCtor) return;
-
-    const audioContext = new AudioContextCtor();
-    audioContext.resume().catch(() => {});
+    // The app-wide context, not one of its own. This used to build a whole
+    // AudioContext per participant, which in a call of six or more hit
+    // Chrome's cap on concurrent contexts — and past that cap the
+    // constructor *throws*, so the next thing to ask for a context (the
+    // playback gain graph, the mic's noise suppression) couldn't get one
+    // either. An analyser is a node; it never needed a context of its own.
+    const audioContext = getSharedAudioContext();
+    if (!audioContext) return;
+    void ensureSharedAudioContextRunning();
     const analyser = audioContext.createAnalyser();
     analyser.fftSize = 512;
     analyser.smoothingTimeConstant = 0.6;
@@ -56,7 +59,8 @@ export function useSpeaking(stream: MediaStream | null | undefined): boolean {
       clearInterval(interval);
       source.disconnect();
       analyser.disconnect();
-      audioContext.close().catch(() => {});
+      // Never closed here: it's shared now, and closing it would silence
+      // every other stream on the page along with this analyser.
       setSpeaking(false);
     };
   }, [stream]);

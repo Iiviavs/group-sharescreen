@@ -1,12 +1,12 @@
 "use client";
 
+import { getSharedAudioContext, ensureSharedAudioContextRunning } from "./audioContext";
+
 // Every effect here is synthesized with the Web Audio API instead of
 // shipped as audio files — keeps this asset-free and avoids having to pick
-// (and clear the rights to) actual sound files. A shared, lazily-created
-// AudioContext is reused across calls; browsers start it suspended until a
-// user gesture happens elsewhere on the page, which by the time anyone's in
-// a room already occurred (joining requires typing a name and submitting).
-let audioCtx: AudioContext | null = null;
+// (and clear the rights to) actual sound files. It plays through the
+// app-wide shared AudioContext (see audioContext.ts), which is also what
+// tracks whether the browser has let audio start at all yet.
 
 // Global on/off switch for every effect in this file (room join/leave,
 // share start/stop, mentions, and the site-wide warning banner) — a single
@@ -34,14 +34,13 @@ export function setSoundEffectsEnabled(value: boolean) {
 }
 
 function getAudioContext(): AudioContext | null {
-  if (typeof window === "undefined") return null;
-  const AudioContextCtor =
-    window.AudioContext ??
-    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (!AudioContextCtor) return null;
-  if (!audioCtx) audioCtx = new AudioContextCtor();
-  if (audioCtx.state === "suspended") void audioCtx.resume();
-  return audioCtx;
+  const ctx = getSharedAudioContext();
+  if (!ctx) return null;
+  // Resuming here also arms a retry on the next click (see audioContext.ts),
+  // so an effect that fired while the context was still blocked isn't the
+  // reason the next one is silent too.
+  if (ctx.state !== "running") void ensureSharedAudioContextRunning();
+  return ctx;
 }
 
 type Note = {

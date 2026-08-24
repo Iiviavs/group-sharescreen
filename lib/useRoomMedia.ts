@@ -29,6 +29,7 @@ import { PeerQualityRegistry, type DegradationMode } from "./peerQualityControll
 import { qualityNegotiator } from "./qualityNegotiation";
 import { useMeshCapacity, useMeshTopology, type PeerCapacity } from "./useMeshTopology";
 import { RelayManager, RELAY_ENABLED, type RelayChild } from "./relayLink";
+import { setPreferredAudioSink } from "./audioContext";
 
 type Channel = "screen" | "camera" | "mic";
 type ShareSource = "display" | "camera";
@@ -1710,6 +1711,20 @@ export function useRoomMedia(room: string) {
     setSpeakerDeviceIdState(deviceId);
     setStoredSpeakerDeviceId(deviceId);
   }, []);
+
+  // Remote audio doesn't come out of the <audio> element while the gain graph
+  // has it (see audioGain.ts), so telling only the element about the chosen
+  // speaker left it playing on the system default — for anyone whose default
+  // is a monitor with no speakers, that reads as "picked my headset and still
+  // hear nothing". The shared context has to be pointed at it too, and where
+  // it can't be, this is what makes playback fall back to the element so the
+  // choice is honoured at all.
+  //
+  // An effect rather than a line in setSpeakerDevice above, so a device
+  // restored from storage on load is applied as well as one just picked.
+  useEffect(() => {
+    setPreferredAudioSink(speakerDeviceId);
+  }, [speakerDeviceId]);
 
   // Restores a returning visitor's mic-on preference — fires on mount and
   // again after a room switch (the mic itself always stops on a room

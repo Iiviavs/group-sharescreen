@@ -4,6 +4,7 @@
 // (and its `class ... extends AudioWorkletNode` at module scope, see below)
 // into the server bundle.
 import type { RnnoiseWorkletNode, loadRnnoise as LoadRnnoiseFn } from "@sapphi-red/web-noise-suppressor";
+import { getSharedAudioContext, ensureSharedAudioContextRunning } from "./audioContext";
 
 // Static assets copied from node_modules/@sapphi-red/web-noise-suppressor/dist
 // into public/rnnoise — served as plain files so this works regardless of
@@ -31,6 +32,8 @@ function getRnnoiseWasmBinary(loadRnnoise: typeof LoadRnnoiseFn): Promise<ArrayB
 
 export type MicNoiseGraph = {
   rawStream: MediaStream;
+  // The app-wide shared context (see audioContext.ts) — emphatically not
+  // this graph's to close.
   audioCtx: AudioContext;
   source: MediaStreamAudioSourceNode;
   rnnoiseNode: RnnoiseWorkletNode;
@@ -65,6 +68,24 @@ export async function captureNoiseSuppressedMic(
     return { stream: rawStream, graph: null };
   }
 
+  // The processed mic is produced by an audio graph, and a graph in a
+  // suspended AudioContext does not run: its destination node emits digital
+  // silence, which is then dutifully encoded and sent to everyone. That is
+  // exactly what happened whenever the mic auto-started from a stored
+  // preference on page load, before anything had been clicked — the person
+  // appeared to be transmitting and no one could hear a word.
+  //
+  // So the graph is only built once the context is confirmed running. If the
+  // browser won't start it yet, the raw capture is broadcast unprocessed
+  // instead: noisy audio beats silent audio, and the caller greys out the
+  // suppression toggle (graph === null) rather than claiming a feature that
+  // isn't there.
+  const running = await ensureSharedAudioContextRunning();
+  const audioCtx = getSharedAudioContext();
+  if (!running || !audioCtx) {
+    return { stream: rawStream, graph: null };
+  }
+
   try {
     // Dynamic: this package's classes do `extends AudioWorkletNode` at
     // module scope, which throws a bare ReferenceError if evaluated on the
@@ -72,7 +93,9 @@ export async function captureNoiseSuppressedMic(
     // on the server for the initial render). Importing it here, after the
     // AudioWorkletNode guard above, means it only ever loads in the browser.
     const { RnnoiseWorkletNode, loadRnnoise } = await import("@sapphi-red/web-noise-suppressor");
-    const audioCtx = new AudioContext();
+    // Adding the same module twice on one context is allowed and resolves
+    // to the already-registered processor, so a second mic start in the same
+    // tab costs nothing here.
     await audioCtx.audioWorklet.addModule(WORKLET_URL);
     const wasmBinary = await getRnnoiseWasmBinary(loadRnnoise);
 
@@ -98,8 +121,13 @@ export async function captureNoiseSuppressedMic(
       "ended",
       () => {
         rawStream.getTracks().forEach((t) => t.stop());
+        source.disconnect();
+        rnnoiseNode.disconnect();
         rnnoiseNode.destroy();
-        audioCtx.close().catch(() => {});
+        // The context is shared with playback, the speaking analysers and
+        // the sound effects now — closing it here would take the whole
+        // page's audio down with the mic. Disconnecting this graph's own
+        // nodes is the entire cleanup this owns.
         onGraphEnded?.();
       },
       { once: true }

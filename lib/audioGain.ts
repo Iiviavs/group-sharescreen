@@ -2,25 +2,19 @@
 
 // Lets a stream's volume go above the native <audio>/<video> element
 // ceiling of 1.0 (100%) by routing it through a Web Audio GainNode instead
-// of the element's own `.volume`, which browsers hard-clamp to [0, 1]. One
-// AudioContext shared by every remote stream in the app — an AudioContext
-// per tile is unnecessary overhead, and browsers cap how many can exist
-// anyway.
+// of the element's own `.volume`, which browsers hard-clamp to [0, 1]. The
+// context itself is the app-wide shared one (see audioContext.ts), which is
+// also what guarantees it is actually running — a graph in a suspended
+// context is silent, and this path mutes the element, so the two together
+// used to add up to hearing nothing at all.
+
+import {
+  getSharedAudioContext,
+  ensureSharedAudioContextRunning,
+  canRouteToPreferredSink,
+} from "./audioContext";
 
 export const MAX_GAIN = 3;
-
-let sharedContext: AudioContext | null = null;
-
-function getContext(): AudioContext | null {
-  if (typeof window === "undefined") return null;
-  if (sharedContext) return sharedContext;
-  const Ctor =
-    window.AudioContext ??
-    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (!Ctor) return null;
-  sharedContext = new Ctor();
-  return sharedContext;
-}
 
 export interface GainHandle {
   setGain(value: number): void;
@@ -42,12 +36,19 @@ export function attachGain(
   initialGain: number,
   initialMuted: boolean
 ): GainHandle | null {
-  const ctx = getContext();
+  const ctx = getSharedAudioContext();
   if (!ctx || stream.getAudioTracks().length === 0) return null;
-  // Some browsers start a newly-created context "suspended" until a user
-  // gesture resumes it — by the time a remote stream arrives the room join
-  // itself was already a gesture, but resuming defensively costs nothing.
-  ctx.resume().catch(() => {});
+  // The shared context's output can't be moved to the speaker this person
+  // picked (no AudioContext.setSinkId in this browser), so taking over
+  // playback here would quietly send their audio to the wrong device — and
+  // "the wrong device" is frequently one with nothing plugged into it. The
+  // element keeps playback instead: capped at 100%, but audible.
+  if (!canRouteToPreferredSink()) return null;
+  // Kicks the context, and arms a retry on the next click if the browser
+  // refuses for now. Not awaited — the graph can be wired up while
+  // suspended, it just won't make sound until this succeeds, and
+  // useGainedAudio keeps the element unmuted meanwhile.
+  void ensureSharedAudioContextRunning();
 
   const source = ctx.createMediaStreamSource(stream);
   const gainNode = ctx.createGain();
