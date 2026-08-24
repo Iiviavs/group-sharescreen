@@ -22,7 +22,14 @@ import {
   SHARE_BITRATE_OPTIONS,
 } from "@/lib/useRoomMedia";
 import { trackEvent } from "@/lib/analytics";
-import { toRoomHandle, isPrivateRoomHandle } from "@/lib/roomsApi";
+import {
+  toRoomHandle,
+  isPrivateRoomHandle,
+  toPrivateRoomHandle,
+  generateRoomCode,
+  splitPrivateRoomHandle,
+  MAX_PRIVATE_ROOM_NAME_LENGTH,
+} from "@/lib/roomsApi";
 import { useRoomSoundEffects } from "@/lib/useRoomSoundEffects";
 import { useBackgroundKeepAlive } from "@/lib/useBackgroundKeepAlive";
 import { getSoundEffectsEnabled, setSoundEffectsEnabled } from "@/lib/soundEffects";
@@ -497,7 +504,7 @@ function SwitchRoomFields({
         autoFocus
         value={switchInput}
         onChange={(e) => setSwitchInput(e.target.value)}
-        placeholder="Ex: reuniao-time"
+        placeholder="Ex: reuniao-time ou priv-familia-123456"
         className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
       />
       <label className="mt-2 flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
@@ -507,8 +514,13 @@ function SwitchRoomFields({
           onChange={(e) => setSwitchIsPrivate(e.target.checked)}
           className="h-3.5 w-3.5 rounded border-zinc-300 dark:border-zinc-700"
         />
-        Sala privada
+        Criar sala privada (gera um código)
       </label>
+      {/* Says what the box above already accepts, so nobody assumes the
+          only way back into a private room is the home page. */}
+      <p className="mt-1 text-[11px] leading-snug text-zinc-500 dark:text-zinc-500">
+        Para entrar numa sala privada que já existe, cole o nome.
+      </p>
       {switchError && <p className="mt-1 text-xs text-red-500">{switchError}</p>}
       <button
         type="submit"
@@ -547,6 +559,9 @@ export function WatchRoom({ handle }: { handle: string }) {
   const { loading: resolvingAccount, account } = useAuth();
   const { openPopup } = useNtPopups();
   const validHandle = HANDLE_RE.test(handle);
+  // Name and access code, for a private room whose handle carries one — null
+  // for a public room, and for a private one predating the code scheme.
+  const privateRoomParts = splitPrivateRoomHandle(handle);
   const screenShareMode = useScreenShareMode();
 
   const {
@@ -837,7 +852,29 @@ export function WatchRoom({ handle }: { handle: string }) {
   function handleSwitchSubmit(e: FormEvent) {
     e.preventDefault();
     const trimmed = switchInput.trim();
-    const fullHandle = toRoomHandle(trimmed, switchIsPrivate);
+    // Three ways in, in order of how specific the input is:
+    //
+    // A full private handle pasted straight in ("priv-familia-123456", the
+    // tail of a link someone sent) already carries its own code and is
+    // taken as-is — prefixing it again would build "priv-priv-...".
+    //
+    // Otherwise the checkbox decides: ticked means *create*, so a fresh
+    // code is minted here exactly like the home page's "Criar sala" does
+    // (see roomsApi's toPrivateRoomHandle). There's deliberately no code
+    // field in this little popover — joining a specific private room is
+    // what pasting its handle above is for.
+    let fullHandle: string;
+    if (isPrivateRoomHandle(trimmed)) {
+      fullHandle = trimmed;
+    } else if (switchIsPrivate) {
+      if (trimmed.length > MAX_PRIVATE_ROOM_NAME_LENGTH) {
+        setSwitchError(`O nome pode ter no máximo ${MAX_PRIVATE_ROOM_NAME_LENGTH} caracteres.`);
+        return;
+      }
+      fullHandle = toPrivateRoomHandle(trimmed, generateRoomCode());
+    } else {
+      fullHandle = toRoomHandle(trimmed, false);
+    }
     if (!HANDLE_RE.test(fullHandle)) {
       setSwitchError("Use de 1 a 32 letras, números, - e _.");
       return;
@@ -1679,11 +1716,22 @@ export function WatchRoom({ handle }: { handle: string }) {
             <Link href={"/"} className="shrink-0 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
               <MdHome />
             </Link>
+            {/* For a private room the code is split out of the handle and
+                shown on its own: it's the room's whole secret now (see
+                roomsApi's toPrivateRoomHandle), so it's the thing someone
+                reads out loud to let a friend in, and picking it out of
+                "priv-familia-123456" by eye is needless work. The tooltip
+                still carries the raw handle for anyone who wants it. */}
             <Tooltip content={handle} placement="bottom">
               <h1 className="truncate text-base font-semibold text-zinc-950 dark:text-zinc-50 sm:text-lg">
-                {handle}
+                {privateRoomParts ? privateRoomParts.name : handle}
               </h1>
             </Tooltip>
+            {privateRoomParts && (
+              <span className="shrink-0 rounded-full bg-zinc-200 px-2.5 py-1 font-mono text-xs font-medium tracking-wider text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                {privateRoomParts.code}
+              </span>
+            )}
             <span
               className={`hidden shrink-0 rounded-full px-2.5 py-1 text-xs font-medium text-white sm:inline-block ${isPrivateRoomHandle(handle) ? "bg-red-600" : "bg-emerald-600"
                 }`}

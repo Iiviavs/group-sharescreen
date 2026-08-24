@@ -6,7 +6,17 @@ import Link from "next/link";
 import { signalingClient } from "@/lib/signalingClient";
 import { useSignaling, useHasStoredName } from "@/lib/useSignaling";
 import { trackEvent } from "@/lib/analytics";
-import { toRoomHandle, fetchPeopleOnline } from "@/lib/roomsApi";
+import {
+  toRoomHandle,
+  isPrivateRoomHandle,
+  fetchPeopleOnline,
+  generateRoomCode,
+  roomExists,
+  toPrivateRoomHandle,
+  splitPrivateRoomHandle,
+  ROOM_CODE_LENGTH,
+  MAX_PRIVATE_ROOM_NAME_LENGTH,
+} from "@/lib/roomsApi";
 import { useAuth } from "@/lib/AuthContext";
 import { CreateAccountForm } from "@/components/CreateAccountForm";
 import { OAuthButtons } from "@/components/OAuthButtons";
@@ -14,13 +24,18 @@ import { CompleteOAuthSignupForm } from "@/components/CompleteOAuthSignupForm";
 import { AccountConnections } from "@/components/AccountConnections";
 import type { OAuthResult } from "@/lib/oauthApi";
 import { GlobeIcon } from "@/components/icons";
-import { Tooltip } from "@/components/Tooltip";
+import { MdLock } from "react-icons/md";
 
 // Mirrors server/signaling.ts's HANDLE_RE — must match exactly, or a name
 // this lets through but the server rejects lands the user in a dead room
 // (join fails server-side, but the client's already navigated to it).
 const HANDLE_RE = /^[a-zA-Z0-9_-]{1,32}$/;
 const PEOPLE_COUNT_POLL_MS = 8000;
+// How long typing has to settle before the room lookup fires. Long enough
+// that a name typed straight through costs one request rather than one per
+// letter, short enough that the button has settled by the time someone's
+// hand reaches it.
+const ROOM_CHECK_DEBOUNCE_MS = 450;
 
 const inputClass =
   "rounded-lg border border-zinc-300 bg-white px-4 py-2.5 text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50";
@@ -31,10 +46,29 @@ const secondaryButtonClass =
 const linkButtonClass =
   "self-start text-sm font-medium underline underline-offset-2 text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100";
 const labelClass = "text-sm font-medium text-zinc-700 dark:text-zinc-300";
+// The room-type / create-vs-join choices below. Selected state is a filled
+// button rather than a subtle border, because which one is active decides
+// what the rest of the form asks for.
+function roomTabClass(selected: boolean): string {
+  return `flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${
+    selected
+      ? "border-zinc-950 bg-zinc-950 text-white dark:border-zinc-50 dark:bg-zinc-50 dark:text-zinc-950"
+      : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+  }`;
+}
 
 // Pre-registration identity choice — "landing" is the two-button choice
 // itself, the other three are the forms each choice opens.
 type IdentityMode = "landing" | "create" | "login";
+
+// What the room form is currently set up to do. Private rooms split in two
+// because the two directions genuinely need different things from the
+// person: creating takes a name and mints the code, joining takes a name
+// *and* the code someone already has. Collapsing them into one box (the old
+// "sala privada" checkbox) meant a typo in the code created a second, empty
+// room instead of failing — the person then sat alone in it, with no way to
+// tell that from "nobody showed up yet".
+type RoomMode = "public" | "private-create" | "private-join";
 
 export default function Home() {
   const state = useSignaling();
@@ -44,7 +78,17 @@ export default function Home() {
   const [peopleOnline, setPeopleOnline] = useState<number | null>(null);
   const [roomInput, setRoomInput] = useState("");
   const [roomError, setRoomError] = useState<string | null>(null);
-  const [roomIsPrivate, setRoomIsPrivate] = useState(false);
+  const [roomMode, setRoomMode] = useState<RoomMode>("public");
+  const [checkingRoom, setCheckingRoom] = useState(false);
+  // Every "does this room exist?" answer this session, keyed by handle.
+  // State rather than a ref because a landing answer has to re-render the
+  // button, and a plain map doubles as the cache: backspacing through a
+  // name never re-asks about a handle already answered.
+  const [roomExistsAnswers, setRoomExistsAnswers] = useState<Record<string, boolean>>({});
+  // Read by the lookup effect, which must *not* re-run when an answer lands
+  // — that would restart the very fetch that produced it. Kept current from
+  // an effect rather than during render, which is what React asks for.
+  const roomExistsAnswersRef = useRef(roomExistsAnswers);
 
   const [mode, setMode] = useState<IdentityMode>("landing");
   const [nameInput, setNameInput] = useState("");
@@ -77,6 +121,22 @@ export default function Home() {
     const id = setTimeout(() => setMounted(true), 0);
     return () => clearTimeout(id);
   }, []);
+
+  // The public handle currently worth looking up, or null when there's
+  // nothing to ask about (another mode, empty, or not a legal handle).
+  // Derived rather than stored, so it can never disagree with the field.
+  const trimmedRoomInput = roomInput.trim();
+  const publicRoomToCheck =
+    roomMode === "public" && trimmedRoomInput && HANDLE_RE.test(trimmedRoomInput)
+      ? trimmedRoomInput
+      : null;
+  // What the button should say it's about to do. null = not known yet,
+  // which reads as "Criar sala" — the resting assumption, since entering
+  // and creating are the same click for a public room and most names typed
+  // are new ones.
+  const publicRoomExists = publicRoomToCheck
+    ? roomExistsAnswers[publicRoomToCheck] ?? null
+    : null;
 
   const registered = Boolean(state.name);
   const isAccount = Boolean(state.account);
@@ -167,15 +227,113 @@ export default function Home() {
     resetIdentityForm();
   }
 
-  function handleRoomSubmit(e: FormEvent) {
+  useEffect(() => {
+    roomExistsAnswersRef.current = roomExistsAnswers;
+  }, [roomExistsAnswers]);
+
+  // Looks up the public room being typed, so the button can say whether
+  // this is about to create one or walk into one that's already running.
+  // Public only, deliberately: for a private room the handle *is* the
+  // secret, and a lookup firing on every keystroke would turn this into a
+  // fast way to probe codes. "Entrar em sala" checks on submit instead.
+  useEffect(() => {
+    // Nothing to ask about, or the answer is already in hand — note this
+    // reads `roomExistsAnswers` but doesn't depend on it: a landing answer
+    // must not re-trigger the very effect that fetched it.
+    if (!publicRoomToCheck || publicRoomToCheck in roomExistsAnswersRef.current) return;
+    const handle = publicRoomToCheck;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setCheckingRoom(true);
+      try {
+        const exists = await roomExists(handle, controller.signal);
+        setRoomExistsAnswers((prev) => ({ ...prev, [handle]: exists }));
+      } catch {
+        // Unreachable directory, or superseded by the next keystroke. Left
+        // unanswered rather than guessed at — the button falls back to
+        // "Criar sala", and for a public room the click does the right
+        // thing either way.
+      } finally {
+        setCheckingRoom(false);
+      }
+    }, ROOM_CHECK_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [publicRoomToCheck]);
+
+  // Clears whatever the previous mode had to say about what was typed — an
+  // error about a missing code has no business surviving a switch to the
+  // form that doesn't ask for one.
+  function switchRoomMode(next: RoomMode) {
+    setRoomMode(next);
+    setRoomError(null);
+  }
+
+  async function handleRoomSubmit(e: FormEvent) {
     e.preventDefault();
     const trimmed = roomInput.trim();
-    const fullHandle = toRoomHandle(trimmed, roomIsPrivate);
+    setRoomError(null);
+
+    if (roomMode === "private-create") {
+      if (trimmed.length > MAX_PRIVATE_ROOM_NAME_LENGTH) {
+        setRoomError(`O nome pode ter no máximo ${MAX_PRIVATE_ROOM_NAME_LENGTH} caracteres.`);
+        return;
+      }
+      // The code is minted here, client-side, and becomes part of the URL —
+      // the server reads it back out of the handle rather than inventing
+      // one of its own (see roomCodeFromHandle), so the link is the room.
+      const handle = toPrivateRoomHandle(trimmed, generateRoomCode());
+      if (!HANDLE_RE.test(handle)) {
+        setRoomError("Use de 1 a 32 letras, números, - e _.");
+        return;
+      }
+      trackEvent("room_create", { visibility: "private" });
+      router.push(`/watch/${handle}`);
+      return;
+    }
+
+    if (roomMode === "private-join") {
+      // Name and code arrive as one string ("familia-123456"), the same
+      // shape the handle itself has minus the "priv-" — so it's what
+      // someone reads off a link, and there's no second field to get out
+      // of step with the first. Pasting the whole handle straight from a
+      // link works too: the prefix is stripped rather than doubled, since
+      // "priv-priv-familia-123456" is nobody's intent.
+      const handle = isPrivateRoomHandle(trimmed) ? trimmed : toRoomHandle(trimmed, true);
+      if (!HANDLE_RE.test(handle)) {
+        setRoomError("Use de 1 a 32 letras, números, - e _.");
+        return;
+      }
+      if (!splitPrivateRoomHandle(handle)) {
+        setRoomError(`Inclua o código no fim: nome-${"0".repeat(ROOM_CODE_LENGTH)}`);
+        return;
+      }
+      // Checked before navigating precisely because joining a room that
+      // isn't there would *create* it — the person would land in an empty
+      // room that looks exactly like the right one with nobody in it yet.
+      setCheckingRoom(true);
+      try {
+        if (!(await roomExists(handle))) {
+          setRoomError("Sala não encontrada. Confira o nome e o código.");
+          return;
+        }
+      } catch {
+        setRoomError("Não foi possível verificar a sala. Tente de novo.");
+        return;
+      } finally {
+        setCheckingRoom(false);
+      }
+      router.push(`/watch/${handle}`);
+      return;
+    }
+
+    const fullHandle = toRoomHandle(trimmed, false);
     if (!HANDLE_RE.test(fullHandle)) {
       setRoomError("Use de 1 a 32 letras, números, - e _.");
       return;
     }
-    setRoomError(null);
     router.push(`/watch/${fullHandle}`);
   }
 
@@ -424,31 +582,115 @@ export default function Home() {
                 and stays collapsed until asked for, so the room form below
                 remains the page's main action. */}
             {isAccount && <AccountConnections />}
+            {/* Public/private as two visible options rather than a
+                checkbox under the name field: the choice changes what the
+                form even asks for, so it belongs above the fields it
+                governs instead of below them. */}
+            <span className={labelClass}>Que tipo de sala?</span>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => switchRoomMode("public")}
+                aria-pressed={roomMode === "public"}
+                className={roomTabClass(roomMode === "public")}
+              >
+                <GlobeIcon className="h-4 w-4 shrink-0" />
+                Pública
+              </button>
+              {/* Lands on "Entrar em sala" — someone who was handed a link
+                  or a code is the common arrival here, and creating is the
+                  one click away that a first-timer is already looking for. */}
+              <button
+                type="button"
+                onClick={() => switchRoomMode("private-join")}
+                aria-pressed={roomMode !== "public"}
+                className={roomTabClass(roomMode !== "public")}
+              >
+                <MdLock className="h-4 w-4 shrink-0" />
+                Privada
+              </button>
+            </div>
+
+            {/* Only private rooms split into create/join — a public room
+                needs no such distinction, since its name alone is enough to
+                both find it and make it. */}
+            {roomMode !== "public" && (
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => switchRoomMode("private-join")}
+                  aria-pressed={roomMode === "private-join"}
+                  className={roomTabClass(roomMode === "private-join")}
+                >
+                  Entrar em sala
+                </button>
+                <button
+                  type="button"
+                  onClick={() => switchRoomMode("private-create")}
+                  aria-pressed={roomMode === "private-create"}
+                  className={roomTabClass(roomMode === "private-create")}
+                >
+                  Criar sala
+                </button>
+              </div>
+            )}
+
             <label htmlFor="room" className={labelClass}>
-              Para qual sala você quer ir ou criar?
+              Nome da sala
             </label>
-            <Tooltip content="De 1 a 32 letras, números, - e _. Se a sala já existir, você entra nela.">
-              <input
-                id="room"
-                autoFocus
-                value={roomInput}
-                onChange={(e) => setRoomInput(e.target.value)}
-                placeholder="Ex: reuniao-time"
-                className={inputClass}
-              />
-            </Tooltip>
-            <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
-              <input
-                type="checkbox"
-                checked={roomIsPrivate}
-                onChange={(e) => setRoomIsPrivate(e.target.checked)}
-                className="h-4 w-4 rounded border-zinc-300 dark:border-zinc-700"
-              />
-              Sala privada (não aparece na lista de salas públicas)
-            </label>
+            {/* One field, always. For "Entrar em sala" the code is just the
+                tail of what's typed here ("familia-123456") — the same
+                string someone reads off a link, rather than a second box to
+                split it into. */}
+            <input
+              id="room"
+              autoFocus
+              value={roomInput}
+              onChange={(e) => setRoomInput(e.target.value)}
+              maxLength={roomMode === "private-create" ? MAX_PRIVATE_ROOM_NAME_LENGTH : 32}
+              placeholder={
+                roomMode === "private-join" ? "Ex: familia-123456" : "Ex: reuniao-time"
+              }
+              className={inputClass}
+            />
+
+            {/* One line explaining what this mode is about to do, where the
+                old form had a parenthetical about the public list. */}
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              {roomMode === "public" ? (
+                <>Aparece na lista de salas públicas.</>
+              ) : roomMode === "private-create" ? (
+                <>
+                  Geramos um código de {ROOM_CODE_LENGTH} dígitos e ele vira parte do link. Quem
+                  tiver o link entra; a sala não aparece na lista pública.
+                </>
+              ) : (
+                <>Cole o nome com o código no fim, como no link que te mandaram.</>
+              )}
+            </p>
+
             {roomError && <p className="text-sm text-red-500">{roomError}</p>}
-            <button type="submit" disabled={!roomInput.trim()} className={`mt-2 ${primaryButtonClass}`}>
-              Entrar na sala
+            <button
+              type="submit"
+              disabled={!roomInput.trim() || checkingRoom}
+              className={`mt-2 ${primaryButtonClass}`}
+            >
+              {roomMode === "private-create"
+                ? "Criar sala privada"
+                : roomMode === "private-join"
+                  ? checkingRoom
+                    ? "Verificando..."
+                    : "Entrar na sala"
+                  : // Public: entering and creating are the same click, so
+                    // the label is the only thing that tells someone which
+                    // of the two they're about to do. "Criar sala" is the
+                    // resting state and only a confirmed hit flips it —
+                    // typing a name nobody has used is the common case, and
+                    // promising "Entrar" before the lookup lands would walk
+                    // that back a moment later on most names.
+                    publicRoomExists === true
+                    ? "Entrar na sala"
+                    : "Criar sala"}
             </button>
           </form>
         )}
