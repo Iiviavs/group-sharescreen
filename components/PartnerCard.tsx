@@ -34,6 +34,31 @@ const ROTATE_INTERVAL_MS = 5 * 60 * 1000;
 // before the button goes back to its ordinary label.
 const CLICK_REWARD_CLAIMED_MS = 4000;
 
+// Room the participant list keeps no matter what an ad's description says:
+// four rows plus the "Participantes" heading above them. Measured off
+// ParticipantRow's own markup (px-3 py-2 text-sm) and the list's gap-1.5 —
+// an estimate on purpose, since reading the real rows would couple this card
+// to a list it doesn't own and that may not even be mounted (below lg the
+// drawer shows chat instead).
+const PARTICIPANT_ROW_PX = 36;
+const PARTICIPANT_LIST_GAP_PX = 6;
+const PARTICIPANT_LIST_HEADING_PX = 28;
+const MIN_VISIBLE_PARTICIPANTS = 2;
+const RESERVED_FOR_LIST_PX =
+  MIN_VISIBLE_PARTICIPANTS * PARTICIPANT_ROW_PX +
+  (MIN_VISIBLE_PARTICIPANTS - 1) * PARTICIPANT_LIST_GAP_PX +
+  PARTICIPANT_LIST_HEADING_PX;
+// Floor: a column too short to hold both still leaves the ad something to be.
+const MIN_CARD_HEIGHT_PX = 150;
+// Below lg the card shares one drawer with the list *and* chat, and that
+// drawer's height is content-driven — measuring it to size the card would be
+// measuring something the card is part of, which is a feedback loop. A share
+// of the viewport instead, matching the drawer's own max-h-[60vh].
+const SMALL_SCREEN_CARD_HEIGHT_FRACTION = 0.33;
+// Same boundary WatchRoom's isWideLayout uses to give this card its own
+// column instead of the shared drawer.
+const WIDE_LAYOUT_QUERY = "(min-width: 1024px)";
+
 // Naming everything "partner" instead of "ad"/"advertisement" throughout —
 // element ids, class names, API path, etc. — is deliberate: ad blockers
 // filter on those words, and this card would otherwise get silently hidden
@@ -178,6 +203,20 @@ export function PartnerCard() {
   // card down for four seconds, on a card that is already fighting the room
   // for vertical space.
   const [clickRewardJustClaimed, setClickRewardJustClaimed] = useState(false);
+
+  // Sizing (see the measuring effect below). The card is capped at whatever
+  // its column can spare after the participant list's four rows, and the
+  // description is clamped only when the card wouldn't fit in that — a short
+  // ad in a tall column is never truncated.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const descriptionRef = useRef<HTMLParagraphElement | null>(null);
+  const [maxCardHeight, setMaxCardHeight] = useState<number | null>(null);
+  const [descriptionTruncated, setDescriptionTruncated] = useState(false);
+  // Which description text the reader asked to see in full — the text itself
+  // rather than a boolean, so a rotation onto a different ad (or a switch to
+  // the house ad) starts collapsed again without anything having to reset it.
+  const [expandedDescription, setExpandedDescription] = useState<string | null>(null);
   // Only for the points total in the app's own header — the claim itself is
   // server-side.
   const { refresh: refreshAccount } = useAuth();
@@ -336,6 +375,58 @@ export function PartnerCard() {
   // read off the video itself (see the hook).
   const rewardDurationLabel = useVideoDurationLabel(partner?.rewardVideoUrl);
 
+  // Everything about how tall this card may be, and whether the description
+  // has to be cut to stay that way.
+  //
+  // All of it runs from the ResizeObserver callback (which fires once as soon
+  // as it observes, so the first measurement needs no separate pass) rather
+  // than from the effect body — a setState there would be a cascading render.
+  useEffect(() => {
+    if (!loaded) return;
+    const root = rootRef.current;
+    if (!root) return;
+
+    function measure() {
+      const card = rootRef.current;
+      const description = descriptionRef.current;
+      if (!card) return;
+      const column = card.parentElement;
+      const wide = window.matchMedia(WIDE_LAYOUT_QUERY).matches;
+      const available = Math.max(
+        MIN_CARD_HEIGHT_PX,
+        wide && column
+          ? column.clientHeight - RESERVED_FOR_LIST_PX
+          : Math.round(window.innerHeight * SMALL_SCREEN_CARD_HEIGHT_FRACTION)
+      );
+      setMaxCardHeight(available);
+      if (!description) {
+        setDescriptionTruncated(false);
+        return;
+      }
+      // How tall the card *would* be with the description shown in full.
+      // Computed the same way whether it's currently clamped or not — which
+      // is what stops the answer from flip-flopping, since clamping changes
+      // the very height that decided to clamp.
+      const naturalHeight =
+        card.scrollHeight - description.clientHeight + description.scrollHeight;
+      setDescriptionTruncated(naturalHeight > available);
+    }
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(root);
+    // The column, for how much space there is...
+    if (root.parentElement) observer.observe(root.parentElement);
+    // ...and the card's own content, for how much it needs: the root itself
+    // stops growing at the cap, so it alone would report nothing once the ad
+    // is over it.
+    if (contentRef.current) observer.observe(contentRef.current);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [loaded]);
+
   useEffect(() => {
     if (!clickRewardJustClaimed) return;
     const timer = setTimeout(() => setClickRewardJustClaimed(false), CLICK_REWARD_CLAIMED_MS);
@@ -400,6 +491,11 @@ export function PartnerCard() {
   // counter riding inside it.
   const showOnlineWidget = !showingExample && peopleOnline !== null;
   const displayData = showingRealAd ? data : showingExample ? EXAMPLE_PARTNER : FALLBACK_PARTNER;
+  // "Ler mais" is per-text, so this is false again the moment the slot
+  // rotates onto another ad. Expanding doesn't uncap the card — the extra
+  // lines scroll inside it, so the participant list keeps its room either
+  // way; the reader just chose to scroll for them.
+  const showFullDescription = expandedDescription === displayData.description;
   // Whether the CTA below should advertise (and pay) click points right now:
   // a real ad, configured to offer them on the card, not already collected by
   // this browser. Once collected the button quietly goes back to being a
@@ -455,7 +551,21 @@ export function PartnerCard() {
 
   return (
     <div
-      className="relative mt-auto w-full shrink-0"
+      // Height-capped everywhere, with its own scroll past the cap. The card
+      // sits at the bottom of a column it shares with the participant list —
+      // its own `w-64` aside from lg up, one drawer with the list *and* chat
+      // below that (see WatchRoom) — and in both the list is the flexible
+      // one: a `flex-1` next to this `shrink-0` shrinks to nothing, so an ad
+      // with a long description used to take the entire column and leave the
+      // list with no room at all. The cap is what makes that impossible
+      // regardless of what an advertiser writes; the clamps below are what
+      // keep it from being reached in the first place.
+      ref={rootRef}
+      // The measured cap (see the effect above) wins once it exists; the
+      // classes are what hold the line on the very first paint, before
+      // anything has been measured.
+      style={maxCardHeight === null ? undefined : { maxHeight: maxCardHeight }}
+      className="relative mt-auto max-h-[33dvh] w-full shrink-0 overflow-y-auto lg:max-h-[45dvh]"
       // Pointer events rather than mouse ones so a pen or a hovering trackpad
       // counts too; a touch device never hovers, so there the rotation simply
       // always proceeds.
@@ -491,7 +601,7 @@ export function PartnerCard() {
         />
       </button>
 
-      <div className={`${collapsed ? "hidden" : "block"} lg:block`}>
+      <div ref={contentRef} className={`${collapsed ? "hidden" : "block"} lg:block`}>
       {showingExample && (
         <div className="mb-2">
           <div className="mb-1.5 flex items-center justify-between gap-2">
@@ -609,14 +719,36 @@ export function PartnerCard() {
           <img
             src={displayData.imageUrl}
             alt=""
-            className="mb-2 max-h-20 w-full rounded-lg object-cover sm:max-h-32"
+            // Grows only from lg, not from sm: between the two the card is
+            // still inside the shared drawer, where every pixel it takes is
+            // one the participant list loses.
+            className="mb-2 max-h-20 w-full rounded-lg object-cover lg:max-h-32"
           />
         )}
 
         <p className="text-sm font-semibold">{displayData.title}</p>
-        <p className="mt-1 line-clamp-3 whitespace-pre-line text-xs opacity-80 sm:line-clamp-none">
+        {/* Cut only when the card wouldn't otherwise fit beside four
+            participants (see the measuring effect) — a short ad in a tall
+            column reads in full, exactly as written. */}
+        <p
+          ref={descriptionRef}
+          className={`mt-1 whitespace-pre-line text-xs opacity-80 ${
+            descriptionTruncated && !showFullDescription ? "line-clamp-3" : ""
+          }`}
+        >
           {displayData.description}
         </p>
+        {descriptionTruncated && (
+          <button
+            type="button"
+            onClick={() =>
+              setExpandedDescription(showFullDescription ? null : displayData.description)
+            }
+            className="mt-0.5 text-xs font-semibold underline underline-offset-2 opacity-70 transition hover:opacity-100"
+          >
+            {showFullDescription ? "Ler menos" : "Ler mais"}
+          </button>
+        )}
 
         <a
           href={displayData.buttonUrl}
