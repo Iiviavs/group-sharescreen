@@ -59,6 +59,9 @@ type YTPlayer = {
   pauseVideo: () => void;
   seekTo: (seconds: number, allowSeekAhead: boolean) => void;
   getCurrentTime: () => number;
+  // 0 while a live broadcast's metadata hasn't loaded yet, and 0 for the
+  // rest of its life once it has — see isLiveBroadcast below.
+  getDuration?: () => number;
   getPlayerState: () => number;
   getPlaybackRate: () => number;
   setPlaybackRate: (rate: number) => void;
@@ -94,6 +97,28 @@ function applyPlayerVolume(player: YTPlayer | null, volume: number, muted: boole
   if (player.isMuted?.() === wantMuted) return;
   if (wantMuted) player.mute?.();
   else player.unMute?.();
+}
+
+// The IFrame API has no "this is a livestream" flag, but a live broadcast
+// reports 0 for its duration — both while it's live and, misleadingly,
+// before an ordinary video's metadata has finished loading. Callers only
+// use this a moment after the player reports PLAYING/BUFFERING, by which
+// point a real VOD's duration is already populated, so that transient false
+// positive doesn't come up in practice; a false read is also cheap, since
+// every caller re-checks on the next tick rather than caching the answer.
+//
+// It matters because a live broadcast has no timeline to seek on: everyone
+// is already watching the same real-time feed, and the position arithmetic
+// this file uses for VOD sync (see videoSourcePosition) produces a target
+// that a live stream's short DVR window usually can't reach. Calling
+// seekTo() toward it anyway doesn't error — it just never lands, so the
+// drift check below fires again a second later and tries once more,
+// forever. That loop, not anything about loading the video itself, is what
+// used to leave a live source buffering endlessly for everyone but the
+// person who added it (their own player is never seeked — see the "Follows
+// the room" effect).
+function isLiveBroadcast(player: YTPlayer): boolean {
+  return (player.getDuration?.() ?? 0) <= 0;
 }
 
 let youtubeApiPromise: Promise<YTNamespace> | null = null;
@@ -424,17 +449,21 @@ export function VideoSourceTile({
       applyingRemoteRef.current = false;
     }, REMOTE_APPLY_QUIET_MS);
 
-    const target = videoSourcePosition(source, signalingClient.serverNow());
-    if (Math.abs(player.getCurrentTime() - target) > DRIFT_TOLERANCE_SECONDS) {
-      player.seekTo(target, true);
-      lastSeekAtRef.current = Date.now();
-    }
-    // Speed before play: starting at the old rate and correcting a moment
-    // later is both audible and a fresh source of drift. Also clears any
-    // catch-up nudge in progress — the room just set a new baseline.
-    nudgingRef.current = false;
-    if (player.getPlaybackRate?.() !== source.playbackRate) {
-      player.setPlaybackRate?.(source.playbackRate || 1);
+    // See isLiveBroadcast — a live source has no position to line up on, so
+    // only play/pause below applies to it.
+    if (!isLiveBroadcast(player)) {
+      const target = videoSourcePosition(source, signalingClient.serverNow());
+      if (Math.abs(player.getCurrentTime() - target) > DRIFT_TOLERANCE_SECONDS) {
+        player.seekTo(target, true);
+        lastSeekAtRef.current = Date.now();
+      }
+      // Speed before play: starting at the old rate and correcting a moment
+      // later is both audible and a fresh source of drift. Also clears any
+      // catch-up nudge in progress — the room just set a new baseline.
+      nudgingRef.current = false;
+      if (player.getPlaybackRate?.() !== source.playbackRate) {
+        player.setPlaybackRate?.(source.playbackRate || 1);
+      }
     }
     if (source.playing) player.playVideo();
     else player.pauseVideo();
@@ -458,11 +487,16 @@ export function VideoSourceTile({
 
       const YTState = window.YT?.PlayerState;
       const baseRate = current.playbackRate || 1;
+      // See isLiveBroadcast — below this point, only play/pause is ever
+      // corrected for a live source; the rest chases a position that a live
+      // stream can't be seeked to, which is what used to buffer it forever.
+      const live = isLiveBroadcast(player);
 
       if (!current.playing) {
         // The room is paused. Anyone whose player kept going (their own
         // pause button, with native controls showing) is put back.
         if (YTState && player.getPlayerState() === YTState.PLAYING) player.pauseVideo();
+        if (live) return;
         const stopped = Math.abs(player.getCurrentTime() - current.positionSeconds);
         if (stopped > DRIFT_TOLERANCE_SECONDS) {
           player.seekTo(current.positionSeconds, true);
@@ -474,6 +508,13 @@ export function VideoSourceTile({
       // The room is playing, so this player must be too — a viewer with
       // native controls can have paused their own copy.
       if (YTState && player.getPlayerState() === YTState.PAUSED) player.playVideo();
+      if (live) {
+        if (nudgingRef.current) {
+          player.setPlaybackRate?.(baseRate);
+          nudgingRef.current = false;
+        }
+        return;
+      }
 
       const target = videoSourcePosition(current, signalingClient.serverNow());
       const drift = target - player.getCurrentTime(); // positive: behind
@@ -646,9 +687,9 @@ export function VideoSourceTile({
                 type="button"
                 onClick={onRemove}
                 aria-label="Remover esse vídeo da sala"
-                className="rounded-full p-1.5 text-white transition hover:bg-white/10"
+                className="rounded-full p-1.5 transition hover:bg-white/10"
               >
-                <MdClose className="h-4 w-4" />
+                <MdClose className="h-4 w-4" style={{color: "red"}} />
               </button>
             </Tooltip>
           ) : (
