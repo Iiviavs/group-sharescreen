@@ -840,8 +840,12 @@ class SignalingClient {
     this.rawSend({ type: "partner-session-view", id });
   }
 
-  reportPartnerClick(id: string) {
-    this.rawSend({ type: "partner-click", id });
+  // `source` splits the counter by which copy of the CTA was clicked — the
+  // sidebar card's or the reward-video popup's (see the server's
+  // "partner-click" case). Defaults to the card, which is the button that
+  // existed before the popup had one.
+  reportPartnerClick(id: string, source: "card" | "video" = "card") {
+    this.rawSend({ type: "partner-click", id, source });
   }
 
   // Watch-to-earn funnel (see PartnerRewardModal.tsx) — sent once when the

@@ -9,7 +9,16 @@ import { ArrowLeftIcon, ChartIcon, ChevronUpIcon } from "@/components/icons";
 import { BsCoin } from "react-icons/bs";
 import { PartnerAdCustomizer, type AdForm } from "@/components/PartnerAdCustomizer";
 import useNtPopups from "ntpopups";
-import { hasClaimedPartnerRewardLocally } from "@/lib/partner";
+import {
+  claimPartnerClickReward,
+  clickRewardAppliesTo,
+  hasClaimedPartnerClickRewardLocally,
+  hasClaimedPartnerRewardLocally,
+  markPartnerClickRewardClaimedLocally,
+  type PartnerClickRewardPlacement,
+} from "@/lib/partner";
+import { useAuth } from "@/lib/AuthContext";
+import { useVideoDurationLabel } from "@/lib/useVideoDuration";
 import { Popover } from "@/components/Tooltip";
 
 const STATS_DASHBOARD_URL = process.env.NEXT_PUBLIC_STATS_DASHBOARD_URL;
@@ -20,6 +29,10 @@ const PEOPLE_COUNT_POLL_MS = 8000;
 // at all, and a room is often open for hours, so this is about not showing
 // the same thing for the whole session rather than about churn.
 const ROTATE_INTERVAL_MS = 5 * 60 * 1000;
+
+// How long "Resgatado!" stays in the CTA after a click reward is collected,
+// before the button goes back to its ordinary label.
+const CLICK_REWARD_CLAIMED_MS = 4000;
 
 // Naming everything "partner" instead of "ad"/"advertisement" throughout —
 // element ids, class names, API path, etc. — is deliberate: ad blockers
@@ -49,16 +62,13 @@ type PartnerCardData = {
   // ad with points to give out.
   rewardVideoUrl?: string | null;
   rewardPoints?: number | null;
+  // Click-to-earn reward (points for clicking the CTA below) — absent/null
+  // on FALLBACK_PARTNER/EXAMPLE_PARTNER for the same reason as the video
+  // reward above. `clickRewardPlacement` decides whether those points are
+  // offered here, in the reward-video popup, or in both.
+  clickRewardPoints?: number | null;
+  clickRewardPlacement?: PartnerClickRewardPlacement | null;
 };
-
-// Duration badge on the reward button ("30s", "1:30"). Seconds-only below a
-// minute because that's the shape of every ad video in practice, and "30s"
-// reads as "this is quick" in a way "0:30" doesn't.
-function formatRewardDuration(seconds: number): string {
-  const total = Math.round(seconds);
-  if (total < 60) return `${total}s`;
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
-}
 
 // `currentId` tells the server which ad this slot is showing right now, so a
 // rotation can deliberately land on a *different* one. Sent as a hint, not as
@@ -158,16 +168,19 @@ export function PartnerCard() {
   const bumpRewardStateSoon = useCallback(() => {
     queueMicrotask(() => bumpRewardState((n) => n + 1));
   }, []);
-  // Length of the current ad's reward video (see the probe effect below),
-  // carrying the url it was measured from: a rotation swaps the ad long
-  // before the next probe resolves, and the tag is what stops the outgoing
-  // ad's duration from being shown for a moment under the incoming one's
-  // button. Null until the first probe resolves, which keeps the badge off
-  // rather than showing a placeholder that later jumps.
-  const [rewardDuration, setRewardDuration] = useState<{
-    url: string;
-    seconds: number;
-  } | null>(null);
+  // What to say under the CTA after a click-reward attempt on this card —
+  // null while there's nothing to report. A guest sees the "you need an
+  // account" line only here, after clicking: the button never withholds the
+  // click itself, it just can't pay a visitor there's nobody to pay.
+  const [clickRewardError, setClickRewardError] = useState<string | null>(null);
+  // Success is reported inside the button instead (see CLICK_REWARD_CLAIMED_MS
+  // and the CTA below) — a line of text under it would push the rest of the
+  // card down for four seconds, on a card that is already fighting the room
+  // for vertical space.
+  const [clickRewardJustClaimed, setClickRewardJustClaimed] = useState(false);
+  // Only for the points total in the app's own header — the claim itself is
+  // server-side.
+  const { refresh: refreshAccount } = useAuth();
   // Below lg, this starts collapsed to just a slim title bar — full-size,
   // it was eating a big enough chunk of a phone's height (image, multi-line
   // description, two buttons) to fight the room's own video/chat for space.
@@ -319,33 +332,15 @@ export function PartnerCard() {
     return () => document.removeEventListener("visibilitychange", maybeReport);
   }, [partner]);
 
-  // Reads the reward video's length off the file itself: an ad carries a
-  // video URL and a points value, never a duration, and asking the admin to
-  // type one in is a number that can silently disagree with the video. A
-  // metadata-only load, so it costs the headers and the moov atom rather
-  // than the video. Anything that fails or never resolves just leaves the
-  // badge off.
-  const rewardVideoUrl = partner?.rewardVideoUrl ?? null;
+  // Badge on the reward button — the ad carries no duration field, so it's
+  // read off the video itself (see the hook).
+  const rewardDurationLabel = useVideoDurationLabel(partner?.rewardVideoUrl);
+
   useEffect(() => {
-    if (!rewardVideoUrl) return;
-    const video = document.createElement("video");
-    video.preload = "metadata";
-    video.muted = true;
-    const onLoadedMetadata = () => {
-      if (Number.isFinite(video.duration) && video.duration > 0) {
-        setRewardDuration({ url: rewardVideoUrl, seconds: video.duration });
-      }
-    };
-    video.addEventListener("loadedmetadata", onLoadedMetadata);
-    video.src = rewardVideoUrl;
-    return () => {
-      video.removeEventListener("loadedmetadata", onLoadedMetadata);
-      // Aborts a metadata request still in flight when a rotation swaps the
-      // ad out from under it.
-      video.removeAttribute("src");
-      video.load();
-    };
-  }, [rewardVideoUrl]);
+    if (!clickRewardJustClaimed) return;
+    const timer = setTimeout(() => setClickRewardJustClaimed(false), CLICK_REWARD_CLAIMED_MS);
+    return () => clearTimeout(timer);
+  }, [clickRewardJustClaimed]);
 
   // Runs regardless of whether a real partner is configured: the count now
   // shows next to "Anuncie aqui você também!" over a real ad too, not just
@@ -382,6 +377,9 @@ export function PartnerCard() {
   // landing back on an ad this browser already collected the reward for, and
   // right after the reward popup closes having just claimed one.
   const rewardClaimedLocally = Boolean(data.id && hasClaimedPartnerRewardLocally(data.id));
+  const clickRewardClaimedLocally = Boolean(
+    data.id && hasClaimedPartnerClickRewardLocally(data.id)
+  );
   // True only when the real ad is what's actually on screen — false for the
   // plain house ad, the "ver exemplo" preview, and a real ad temporarily
   // swapped out for the house ad via showingHouseAd below. Drives both the
@@ -402,14 +400,33 @@ export function PartnerCard() {
   // counter riding inside it.
   const showOnlineWidget = !showingExample && peopleOnline !== null;
   const displayData = showingRealAd ? data : showingExample ? EXAMPLE_PARTNER : FALLBACK_PARTNER;
-  // Absent until the probe above resolves for the ad currently on screen —
-  // the button renders without the badge in the meantime rather than
-  // reserving space for it.
-  const rewardDurationLabel =
-    rewardDuration && rewardDuration.url === rewardVideoUrl
-      ? formatRewardDuration(rewardDuration.seconds)
-      : null;
+  // Whether the CTA below should advertise (and pay) click points right now:
+  // a real ad, configured to offer them on the card, not already collected by
+  // this browser. Once collected the button quietly goes back to being a
+  // plain CTA rather than promising points it can no longer give.
+  const cardClickRewardActive =
+    showingRealAd &&
+    Boolean(data.id) &&
+    clickRewardAppliesTo(data, "card") &&
+    !clickRewardClaimedLocally;
 
+  function claimCardClickReward() {
+    const id = data.id;
+    if (!id) return;
+    claimPartnerClickReward(id)
+      .then(() => {
+        markPartnerClickRewardClaimedLocally(id);
+        setClickRewardError(null);
+        setClickRewardJustClaimed(true);
+        trackEvent("partner_click_reward_claimed", { partnerId: id });
+        // Re-resolves /auth/me so the header's total updates without a
+        // reload, same as the video reward does.
+        void refreshAccount();
+      })
+      .catch((err: unknown) => {
+        setClickRewardError(err instanceof Error ? err.message : "Falha ao resgatar os pontos.");
+      });
+  }
   // One panel, two possible triggers (the counter inside the house ad, and
   // the one next to "Anuncie aqui também!" over a real ad) — only ever one of
   // them is on screen at a time, so they share both this markup and the
@@ -610,20 +627,48 @@ export function PartnerCard() {
             // thing being shown — not while a real advertiser's slot is
             // temporarily swapped out for the house ad via showingHouseAd.
             if (showingRealAd && data.id) signalingClient.reportPartnerClick(data.id);
+            // Fire-and-forget alongside the navigation: the link opens in a
+            // new tab, so this request isn't racing a page unload.
+            if (cardClickRewardActive) claimCardClickReward();
             trackEvent("partner_card_clicked", {
               fallback: isFallback,
               example: showingExample,
               houseAd: !isFallback && showingHouseAd,
             });
           }}
-          className="mt-3 block rounded-lg px-3 py-2 text-center text-sm font-semibold transition hover:opacity-90"
+          className="relative mt-3 flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-center text-sm font-semibold transition hover:opacity-90"
           style={{
             backgroundColor: displayData.buttonBackgroundColor ?? "#18181b",
             color: displayData.buttonTextColor ?? "#ffffff",
           }}
         >
-          {displayData.buttonLabel}
+          {/* "Resgatado!" is laid over the label rather than replacing it:
+              the real content stays in the box (just invisible), so the
+              button keeps the exact size it had a moment ago instead of
+              resizing itself around a shorter word and back. */}
+          <span
+            className={`flex min-w-0 items-center justify-center gap-1.5 ${
+              clickRewardJustClaimed ? "invisible" : ""
+            }`}
+          >
+            {cardClickRewardActive && (
+              <>
+                <BsCoin className="h-4 w-4 shrink-0" />
+                <span className="shrink-0 tabular-nums">{data.clickRewardPoints}</span>
+              </>
+            )}
+            <span className="truncate">{displayData.buttonLabel}</span>
+          </span>
+          {clickRewardJustClaimed && (
+            <span className="absolute inset-0 flex items-center justify-center">Resgatado!</span>
+          )}
         </a>
+
+        {clickRewardError && (
+          <p className="mt-1.5 text-center text-[11px] font-medium text-amber-500">
+            {clickRewardError}
+          </p>
+        )}
 
         {showingRealAd && data.id && data.rewardVideoUrl && data.rewardPoints && (
           <button
@@ -654,6 +699,9 @@ export function PartnerCard() {
                   imageUrl: data.imageUrl,
                   buttonLabel: data.buttonLabel,
                   buttonUrl: data.buttonUrl,
+                  clickRewardPoints: clickRewardAppliesTo(data, "video")
+                    ? data.clickRewardPoints
+                    : null,
                   onClaimed: bumpRewardStateSoon,
                 },
               });

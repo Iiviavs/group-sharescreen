@@ -3,7 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/AuthContext";
 import {
+  claimPartnerClickReward,
   claimPartnerVideoReward,
+  hasClaimedPartnerClickRewardLocally,
+  markPartnerClickRewardClaimedLocally,
   getStoredPartnerVideoProgress,
   setStoredPartnerVideoProgress,
   markPartnerRewardClaimedLocally,
@@ -30,6 +33,9 @@ const PLAYBACK_RATE_GUARD_MS = 400;
 // allowed to land — covers ordinary float/timeupdate granularity, nowhere
 // near enough to skip anything that matters.
 const SEEK_TOLERANCE_SECONDS = 0.75;
+// How long "Resgatado!" stays in the CTA after a click reward is collected,
+// before the button goes back to its ordinary label.
+const CLICK_REWARD_CLAIMED_MS = 4000;
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
@@ -51,6 +57,11 @@ export type PartnerRewardPopupData = {
   imageUrl?: string | null;
   buttonLabel: string;
   buttonUrl: string;
+  // Points for clicking the CTA below, or null when this ad has no click
+  // reward *for this spot* — PartnerCard already resolves the ad's
+  // clickRewardPlacement before handing the popup this value, so there is
+  // nothing left here to decide.
+  clickRewardPoints?: number | null;
   // Lets the opener (PartnerCard) know a claim went through, so it can flip
   // its reward button to "Assistir de novo" without waiting for a remount.
   onClaimed?: () => void;
@@ -89,6 +100,7 @@ export function PartnerRewardModal({
     imageUrl,
     buttonLabel,
     buttonUrl,
+    clickRewardPoints,
     onClaimed,
   },
 }: {
@@ -138,6 +150,17 @@ export function PartnerRewardModal({
   // explaining what you don't get. Now the video plays for everyone, and the
   // notice appears at the one moment it answers something they did.
   const [claimAttemptedSignedOut, setClaimAttemptedSignedOut] = useState(false);
+  // Click-to-earn, entirely separate from the watch-to-earn state above: its
+  // own one-per-account claim on the server, its own local flag, and no
+  // dependency on the video having been watched. Read once at mount for the
+  // same reason alreadyClaimed is.
+  const [clickRewardClaimed, setClickRewardClaimed] = useState(() =>
+    hasClaimedPartnerClickRewardLocally(partnerId)
+  );
+  const [clickRewardError, setClickRewardError] = useState<string | null>(null);
+  // Success shows inside the button instead of as another line under it —
+  // see the CTA below.
+  const [clickRewardJustClaimed, setClickRewardJustClaimed] = useState(false);
   const [needsManualPlay, setNeedsManualPlay] = useState(false);
   const [muted, setMuted] = useState(false);
   // Visual only — read from the native play/pause/ended events, purely to
@@ -180,6 +203,12 @@ export function PartnerRewardModal({
   useEffect(() => {
     if (!previouslyCompleted) attemptPlay();
   }, [previouslyCompleted]);
+
+  useEffect(() => {
+    if (!clickRewardJustClaimed) return;
+    const timer = setTimeout(() => setClickRewardJustClaimed(false), CLICK_REWARD_CLAIMED_MS);
+    return () => clearTimeout(timer);
+  }, [clickRewardJustClaimed]);
 
   // One report per popup open, regardless of whether the video ever plays
   // through — this is the admin panel's "quantos Apertos pra ver o vídeo".
@@ -327,6 +356,27 @@ export function PartnerRewardModal({
     } finally {
       setClaiming(false);
     }
+  }
+
+  // The CTA advertises (and pays) points only while there are some left to
+  // give: a real amount for this spot, not already collected by this browser.
+  const clickRewardActive = Boolean(clickRewardPoints) && !clickRewardClaimed;
+
+  function claimClickReward() {
+    claimPartnerClickReward(partnerId)
+      .then(() => {
+        markPartnerClickRewardClaimedLocally(partnerId);
+        setClickRewardClaimed(true);
+        setClickRewardError(null);
+        setClickRewardJustClaimed(true);
+        trackEvent("partner_click_reward_claimed", { partnerId });
+        // Same reason as the video claim: keeps the header's points total
+        // honest without a reload.
+        void refresh();
+      })
+      .catch((err: unknown) => {
+        setClickRewardError(err instanceof Error ? err.message : "Falha ao resgatar os pontos.");
+      });
   }
 
   // Everything the locked player does — no native controls, no seek, the
@@ -503,14 +553,38 @@ export function PartnerRewardModal({
             href={buttonUrl}
             target="_blank"
             rel="noopener noreferrer"
-            // Same click reported by PartnerCard's own CTA — this is the
-            // same button (label + link), just also reachable from inside
-            // the reward popup, so it counts toward the same "Cliques" stat
-            // rather than a separate number the admin panel has to add up.
-            onClick={() => signalingClient.reportPartnerClick(partnerId)}
-            className="flex-1 truncate rounded-lg border border-zinc-300 px-4 py-2.5 text-center text-sm font-semibold transition hover:bg-black/5 dark:border-white/30 dark:hover:bg-white/10"
+            // Same button as PartnerCard's own CTA (label + link), reported
+            // as its own kind of click: the admin panel shows card and video
+            // clicks side by side plus their total, since a click from
+            // someone who sat through a video is worth knowing apart from one
+            // off a sidebar.
+            onClick={() => {
+              signalingClient.reportPartnerClick(partnerId, "video");
+              // Fire-and-forget next to the navigation — the link opens in a
+              // new tab, so nothing is racing an unload here.
+              if (clickRewardActive) claimClickReward();
+            }}
+            className="relative flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-zinc-300 px-4 py-2.5 text-center text-sm font-semibold transition hover:bg-black/5 dark:border-white/30 dark:hover:bg-white/10"
           >
-            {buttonLabel}
+            {/* "Resgatado!" is laid over the label rather than replacing it,
+                so the button keeps the exact size it had instead of
+                resizing around a shorter word and back four seconds later. */}
+            <span
+              className={`flex min-w-0 items-center justify-center gap-1.5 ${
+                clickRewardJustClaimed ? "invisible" : ""
+              }`}
+            >
+              {clickRewardActive && (
+                <>
+                  <BsCoin className="h-4 w-4 shrink-0" />
+                  <span className="shrink-0 tabular-nums">{clickRewardPoints}</span>
+                </>
+              )}
+              <span className="truncate">{buttonLabel}</span>
+            </span>
+            {clickRewardJustClaimed && (
+              <span className="absolute inset-0 flex items-center justify-center">Resgatado!</span>
+            )}
           </a>
           <button
             type="button"
@@ -546,6 +620,11 @@ export function PartnerRewardModal({
         {claimAttemptedSignedOut && !account && !claimed && !alreadyClaimed && (
           <p className="text-center text-xs text-amber-600 dark:text-amber-400">
             Crie uma conta ou entre em uma para poder resgatar os pontos.
+          </p>
+        )}
+        {clickRewardError && (
+          <p className="text-center text-xs text-amber-600 dark:text-amber-400">
+            {clickRewardError}
           </p>
         )}
         {claimError && !claimed && !alreadyClaimed && (

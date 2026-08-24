@@ -11,8 +11,19 @@ import {
   type PartnerInput,
   type PartnerStats,
 } from "@/lib/adminApi";
+import type { PartnerClickRewardPlacement } from "@/lib/partner";
+import { useVideoDurationLabel } from "@/lib/useVideoDuration";
+import { BsCoin } from "react-icons/bs";
 
 const STATS_POLL_INTERVAL_MS = 3000;
+
+// One wording for the click-reward placement, shared by the form's select and
+// the badge on each ad in the list.
+const CLICK_REWARD_PLACEMENT_LABELS: Record<PartnerClickRewardPlacement, string> = {
+  both: "card e vídeo",
+  video: "só no popup do vídeo",
+  card: "só no card",
+};
 
 const inputClass =
   "mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50";
@@ -65,9 +76,24 @@ export function PartnerAdsPanel() {
   // travel as a number on submit, same reasoning as `weight` above.
   const [rewardVideoUrl, setRewardVideoUrl] = useState("");
   const [rewardPointsInput, setRewardPointsInput] = useState("");
+  // Click-to-earn reward — same "kept out of `form`" reasoning as the video
+  // reward above. Empty amount means the ad has none, in which case the
+  // placement below is never sent.
+  const [clickRewardPointsInput, setClickRewardPointsInput] = useState("");
+  const [clickRewardPlacement, setClickRewardPlacement] =
+    useState<PartnerClickRewardPlacement>("both");
   const [sending, setSending] = useState(false);
-  const [previewing, setPreviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // What the preview's two buttons should show, from the form as it stands
+  // right now. The duration badge is measured off the video the same way the
+  // real card measures it, so a bad URL simply shows no badge here either.
+  const previewRewardVideo = Boolean(rewardVideoUrl.trim() && rewardPointsInput.trim());
+  const previewRewardDuration = useVideoDurationLabel(
+    previewRewardVideo ? rewardVideoUrl.trim() : null
+  );
+  const previewCardClickReward =
+    Boolean(clickRewardPointsInput.trim()) && clickRewardPlacement !== "video";
 
   const mountedRef = useRef(true);
   const initialLoadDone = useRef(false);
@@ -123,7 +149,8 @@ export function PartnerAdsPanel() {
     setExpiresInput("");
     setRewardVideoUrl("");
     setRewardPointsInput("");
-    setPreviewing(false);
+    setClickRewardPointsInput("");
+    setClickRewardPlacement("both");
     setError(null);
   }
 
@@ -146,7 +173,8 @@ export function PartnerAdsPanel() {
     setExpiresInput(p.expiresAt ? toDatetimeLocalValue(p.expiresAt) : "");
     setRewardVideoUrl(p.rewardVideoUrl ?? "");
     setRewardPointsInput(p.rewardPoints != null ? String(p.rewardPoints) : "");
-    setPreviewing(false);
+    setClickRewardPointsInput(p.clickRewardPoints != null ? String(p.clickRewardPoints) : "");
+    setClickRewardPlacement(p.clickRewardPlacement ?? "both");
     setError(null);
   }
 
@@ -154,6 +182,7 @@ export function PartnerAdsPanel() {
     e.preventDefault();
     setError(null);
     const trimmedRewardVideoUrl = rewardVideoUrl.trim();
+    const trimmedClickRewardPoints = clickRewardPointsInput.trim();
     if (trimmedRewardVideoUrl && !rewardPointsInput.trim()) {
       setError("Defina quantos pontos a recompensa em vídeo dá.");
       return;
@@ -174,6 +203,8 @@ export function PartnerAdsPanel() {
         expiresAt: neverExpires || !expiresInput ? null : new Date(expiresInput).getTime(),
         rewardVideoUrl: trimmedRewardVideoUrl || undefined,
         rewardPoints: trimmedRewardVideoUrl && rewardPointsInput.trim() ? Number(rewardPointsInput) : undefined,
+        clickRewardPoints: trimmedClickRewardPoints ? Number(trimmedClickRewardPoints) : undefined,
+        clickRewardPlacement: trimmedClickRewardPoints ? clickRewardPlacement : undefined,
       };
       if (mode === "edit" && editingId) {
         await editPartner(editingId, input);
@@ -276,9 +307,11 @@ export function PartnerAdsPanel() {
             // same ad several times in one session, and a ratio whose
             // denominator grows every five minutes while nobody new arrives
             // is a number that only ever falls.
+            const clicksByVideo = s.clicksByVideo ?? 0;
+            const totalClicks = s.clicks + clicksByVideo;
             const ctr =
               s.uniqueViews && s.uniqueViews > 0
-                ? `${((s.clicks / s.uniqueViews) * 100).toFixed(1)}%`
+                ? `${((totalClicks / s.uniqueViews) * 100).toFixed(1)}%`
                 : null;
             return (
               <div
@@ -301,6 +334,12 @@ export function PartnerAdsPanel() {
                   {p.rewardVideoUrl && p.rewardPoints && (
                     <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
                       +{p.rewardPoints} pts por vídeo
+                    </span>
+                  )}
+                  {p.clickRewardPoints && (
+                    <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+                      +{p.clickRewardPoints} pts por clique (
+                      {CLICK_REWARD_PLACEMENT_LABELS[p.clickRewardPlacement ?? "both"]})
                     </span>
                   )}
                   <span className="shrink-0 text-zinc-500 dark:text-zinc-400">peso {p.weight}</span>
@@ -332,7 +371,13 @@ export function PartnerAdsPanel() {
                     <strong>{s.uniqueViews ?? "—"}</strong>
                   </span>
                   <span>
-                    Cliques: <strong>{s.clicks}</strong>
+                    Cliques no card: <strong>{s.clicks}</strong>
+                  </span>
+                  <span>
+                    Cliques no vídeo: <strong>{clicksByVideo}</strong>
+                  </span>
+                  <span>
+                    Cliques totais: <strong>{totalClicks}</strong>
                     {ctr ? ` (${ctr})` : ""}
                   </span>
                   {p.rewardVideoUrl && p.rewardPoints && (
@@ -347,6 +392,12 @@ export function PartnerAdsPanel() {
                         Resgataram os pontos: <strong>{s.rewardClaims ?? 0}</strong>
                       </span>
                     </>
+                  )}
+                  {p.clickRewardPoints && (
+                    <span>
+                      Resgataram os pontos por clique:{" "}
+                      <strong>{s.clickRewardClaims ?? 0}</strong>
+                    </span>
                   )}
                 </div>
               </div>
@@ -474,6 +525,49 @@ export function PartnerAdsPanel() {
             </div>
           </div>
 
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+            <p className={labelClass}>Pontos por clique (opcional)</p>
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              Se preenchido, o botão principal do anúncio vira &quot;[moeda] X {"{label}"}&quot; e dá
+              esses pontos na primeira vez que a pessoa clicar. O link abre normalmente de qualquer
+              jeito — cada conta recebe uma vez só, e isso é independente da recompensa em vídeo.
+            </p>
+            <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-[auto_1fr]">
+              <div>
+                <label htmlFor="partner-click-reward-points" className={labelClass}>
+                  Pontos ao clicar
+                </label>
+                <input
+                  id="partner-click-reward-points"
+                  type="number"
+                  min={1}
+                  max={100000}
+                  value={clickRewardPointsInput}
+                  onChange={(e) => setClickRewardPointsInput(e.target.value)}
+                  className={`${inputClass} sm:w-32`}
+                />
+              </div>
+              <div>
+                <label htmlFor="partner-click-reward-placement" className={labelClass}>
+                  Onde vale
+                </label>
+                <select
+                  id="partner-click-reward-placement"
+                  value={clickRewardPlacement}
+                  onChange={(e) =>
+                    setClickRewardPlacement(e.target.value as PartnerClickRewardPlacement)
+                  }
+                  disabled={!clickRewardPointsInput.trim()}
+                  className={`${inputClass} disabled:cursor-not-allowed disabled:opacity-50`}
+                >
+                  <option value="both">{CLICK_REWARD_PLACEMENT_LABELS.both}</option>
+                  <option value="video">{CLICK_REWARD_PLACEMENT_LABELS.video}</option>
+                  <option value="card">{CLICK_REWARD_PLACEMENT_LABELS.card}</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div>
               <label htmlFor="partner-bg" className={labelClass}>
@@ -573,13 +667,6 @@ export function PartnerAdsPanel() {
 
           <div className="mt-1 flex flex-wrap gap-2">
             <button
-              type="button"
-              onClick={() => setPreviewing((p) => !p)}
-              className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-            >
-              {previewing ? "Ocultar preview" : "Preview"}
-            </button>
-            <button
               type="submit"
               disabled={sending || !form.title.trim() || !form.buttonLabel.trim() || !form.buttonUrl.trim()}
               className="rounded-lg bg-zinc-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
@@ -595,9 +682,15 @@ export function PartnerAdsPanel() {
             </button>
           </div>
 
-          {previewing && (
+          {/* Always on. It costs one narrow column and answers the question
+              the form otherwise leaves open — what the two reward buttons
+              actually end up saying — so there is nothing here worth hiding
+              behind a toggle. Mirrors PartnerCard's real markup; when the two
+              drift, that one is the original. */}
+          <div>
+            <p className={labelClass}>Preview</p>
             <div
-              className="w-72 max-w-full overflow-hidden rounded-lg border border-zinc-200 p-4 dark:border-zinc-800"
+              className="mt-1 w-72 max-w-full overflow-hidden rounded-lg border border-zinc-200 p-4 dark:border-zinc-800"
               style={{ backgroundColor: form.backgroundColor, color: form.textColor }}
             >
               <div className="mb-2 flex items-center">
@@ -614,13 +707,43 @@ export function PartnerAdsPanel() {
                 {form.description || "Descrição do anúncio"}
               </p>
               <div
-                className="mt-3 rounded-lg px-3 py-2 text-center text-sm font-semibold"
+                className="mt-3 flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-center text-sm font-semibold"
                 style={{ backgroundColor: form.buttonBackgroundColor, color: form.buttonTextColor }}
               >
-                {form.buttonLabel || "Botão"}
+                {previewCardClickReward && (
+                  <>
+                    <BsCoin className="h-4 w-4 shrink-0" />
+                    <span className="shrink-0 tabular-nums">{clickRewardPointsInput.trim()}</span>
+                  </>
+                )}
+                <span className="truncate">{form.buttonLabel || "Botão"}</span>
               </div>
+              {previewRewardVideo && (
+                <div
+                  className={`mt-2 flex w-full items-center ${
+                    previewRewardDuration ? "justify-between" : "justify-center"
+                  } gap-2 rounded-lg border border-current px-3 py-1.5 text-xs font-semibold opacity-90`}
+                >
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    Receber
+                    <BsCoin className="h-3.5 w-3.5 shrink-0" />
+                    {rewardPointsInput.trim()}
+                  </span>
+                  {previewRewardDuration && (
+                    <span className="shrink-0 rounded-full bg-black/10 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums dark:bg-white/10">
+                      {previewRewardDuration}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
-          )}
+            {clickRewardPointsInput.trim() && clickRewardPlacement === "video" && (
+              <p className="mt-1.5 w-72 max-w-full text-xs text-zinc-500 dark:text-zinc-400">
+                Os pontos por clique não aparecem aqui porque estão configurados só para o popup do
+                vídeo.
+              </p>
+            )}
+          </div>
         </form>
       )}
     </div>

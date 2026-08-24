@@ -9,7 +9,7 @@ import type {
   AnnouncementSound,
   AnnouncementVisibility,
 } from "./announcement";
-import type { Partner } from "./partner";
+import type { Partner, PartnerClickRewardPlacement } from "./partner";
 import type { Supporter } from "./supporter";
 
 export type { Announcement, AnnouncementButtonAction, AnnouncementColor, AnnouncementSound, AnnouncementVisibility };
@@ -374,7 +374,14 @@ export type PartnerStats = {
   // do not know: an unimplemented field would read as a real, alarming
   // measurement.
   uniqueViews?: number;
+  // CTA clicks from the sidebar card. Anything counted before card and video
+  // clicks were split lives here, since that is where the only button was.
   clicks: number;
+  // CTA clicks from inside the reward-video popup. Optional/absent from a
+  // server that predates the split — rendered as 0, not as "—", because
+  // unlike uniqueViews this one *is* genuinely zero on such a server: no
+  // video click was ever counted anywhere.
+  clicksByVideo?: number;
   // Watch-to-earn funnel (see components/PartnerRewardModal.tsx) — all
   // optional/absent for an ad with no reward configured, or from a server
   // that predates this feature. rewardVideoOpens/rewardVideoCompletions are
@@ -384,6 +391,10 @@ export type PartnerStats = {
   rewardVideoOpens?: number;
   rewardVideoCompletions?: number;
   rewardClaims?: number;
+  // Distinct accounts that collected the click reward — same
+  // one-claim-per-account guarantee as rewardClaims, counted separately
+  // because the two rewards are claimed independently.
+  clickRewardClaims?: number;
 };
 
 export type PartnerAdminList = {
@@ -406,6 +417,11 @@ export type PartnerInput = {
   expiresAt: number | null;
   rewardVideoUrl?: string;
   rewardPoints?: number;
+  // Click-to-earn reward. Omitted entirely when the ad has none; the
+  // placement only travels alongside an amount (see the server's
+  // parsePartnerBody, which pairs them).
+  clickRewardPoints?: number;
+  clickRewardPlacement?: PartnerClickRewardPlacement;
 };
 
 export async function fetchAdminPartners(): Promise<PartnerAdminList> {

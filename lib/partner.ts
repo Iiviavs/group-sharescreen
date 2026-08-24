@@ -24,7 +24,32 @@ export type Partner = {
   // pairing on every write).
   rewardVideoUrl: string | null;
   rewardPoints: number | null;
+  // Optional click-to-earn reward: points for clicking the ad's main button.
+  // null means this ad has none; clickRewardPlacement is non-null exactly
+  // when this is, and says where the button offers them (the reward-video
+  // popup, the sidebar card, or both) — the button itself works everywhere
+  // regardless.
+  clickRewardPoints: number | null;
+  clickRewardPlacement: PartnerClickRewardPlacement | null;
 };
+
+export type PartnerClickRewardPlacement = "video" | "card" | "both";
+
+/** Whether an ad's click reward is offered in this particular spot. Takes the
+ *  two fields loosely so callers holding a partially-typed ad (PartnerCard's
+ *  own PartnerCardData, where everything reward-related is optional) can ask
+ *  without widening their type. */
+export function clickRewardAppliesTo(
+  partner: {
+    clickRewardPoints?: number | null;
+    clickRewardPlacement?: PartnerClickRewardPlacement | null;
+  },
+  spot: "video" | "card"
+): boolean {
+  if (!partner.clickRewardPoints) return false;
+  const placement = partner.clickRewardPlacement ?? "both";
+  return placement === "both" || placement === spot;
+}
 
 // ---------------------------------------------------------------------------
 // Watch-to-earn reward
@@ -34,14 +59,18 @@ import { getAccountToken } from "./accountApi";
 import { getSignalingHttpBase } from "./roomsApi";
 
 // Claims a partner ad's reward for the signed-in account — the server is the
-// only real gate (one claim per account per ad, see
+// only real gate (one claim per account per ad, per kind, see
 // claimPersistedPartnerReward), but a signed-out visitor is rejected here
 // before ever hitting it, since there is no account for the server to credit.
-export async function claimPartnerVideoReward(partnerId: string): Promise<{ points: number | null }> {
+async function claimPartnerReward(
+  partnerId: string,
+  endpoint: "claim-reward" | "claim-click-reward",
+  signedOutMessage: string
+): Promise<{ points: number | null }> {
   const token = getAccountToken();
-  if (!token) throw new Error("Crie uma conta ou entre em uma para resgatar pontos assistindo.");
+  if (!token) throw new Error(signedOutMessage);
   const res = await fetch(
-    `${getSignalingHttpBase()}/partner/${encodeURIComponent(partnerId)}/claim-reward`,
+    `${getSignalingHttpBase()}/partner/${encodeURIComponent(partnerId)}/${endpoint}`,
     { method: "POST", headers: { Authorization: `Bearer ${token}` } }
   );
   const data = await res.json().catch(() => null);
@@ -50,6 +79,25 @@ export async function claimPartnerVideoReward(partnerId: string): Promise<{ poin
     throw new Error(message);
   }
   return data as { points: number | null };
+}
+
+/** Watch-to-earn: the reward for playing an ad's video through to the end. */
+export function claimPartnerVideoReward(partnerId: string): Promise<{ points: number | null }> {
+  return claimPartnerReward(
+    partnerId,
+    "claim-reward",
+    "Crie uma conta ou entre em uma para resgatar pontos assistindo."
+  );
+}
+
+/** Click-to-earn: the reward for clicking an ad's main button. Independent
+ *  of the video one above — collecting either says nothing about the other. */
+export function claimPartnerClickReward(partnerId: string): Promise<{ points: number | null }> {
+  return claimPartnerReward(
+    partnerId,
+    "claim-click-reward",
+    "Crie uma conta ou entre em uma para resgatar pontos clicando."
+  );
 }
 
 // Per-browser hint only (see the server-side claim check above for the real
@@ -72,6 +120,29 @@ export function markPartnerRewardClaimedLocally(partnerId: string): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(CLAIMED_KEY_PREFIX + partnerId, "1");
+  } catch {
+    // ignored - localStorage may be unavailable (private mode, quota, etc.)
+  }
+}
+
+// The click reward's equivalent of the flag above, kept under its own key
+// for the same reason the server keeps a separate claim set: the two rewards
+// are independent, and one being collected must not hide the other.
+const CLICK_CLAIMED_KEY_PREFIX = "sharescreen:partnerClickRewardClaimed:";
+
+export function hasClaimedPartnerClickRewardLocally(partnerId: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(CLICK_CLAIMED_KEY_PREFIX + partnerId) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function markPartnerClickRewardClaimedLocally(partnerId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(CLICK_CLAIMED_KEY_PREFIX + partnerId, "1");
   } catch {
     // ignored - localStorage may be unavailable (private mode, quota, etc.)
   }
