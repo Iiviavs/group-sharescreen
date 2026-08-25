@@ -443,7 +443,7 @@ if (!gotLock) {
 
     // Keeps the shell current. The website updates itself by being loaded
     // fresh; this is for the code that ships inside the executable.
-    initAutoUpdater(() => mainWindow);
+    initAutoUpdater();
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

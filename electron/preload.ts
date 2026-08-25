@@ -40,4 +40,29 @@ contextBridge.exposeInMainWorld("golive", {
     if (typeof url !== "string") return Promise.resolve();
     return ipcRenderer.invoke(IPC.openExternal, url);
   },
+
+  pendingUpdate(): Promise<string | null> {
+    return ipcRenderer.invoke(IPC.updatePending);
+  },
+
+  onUpdateReady(callback: unknown): () => void {
+    if (typeof callback !== "function") return () => {};
+    // The IpcRendererEvent never crosses the bridge: it carries a `sender`
+    // handle, which is both unserializable and exactly the sort of raw IPC
+    // primitive this preload exists to keep away from a remote page. Only
+    // the version string goes through.
+    const listener = (_event: unknown, version: unknown) => {
+      if (typeof version === "string") (callback as (v: string) => void)(version);
+    };
+    ipcRenderer.on(IPC.updateReady, listener);
+    // Returned so React can drop the listener on unmount; without it a
+    // component that mounts per navigation would stack one up every time.
+    return () => {
+      ipcRenderer.off(IPC.updateReady, listener);
+    };
+  },
+
+  installUpdate(): void {
+    ipcRenderer.send(IPC.updateInstall);
+  },
 });

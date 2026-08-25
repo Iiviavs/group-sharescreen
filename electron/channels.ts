@@ -14,6 +14,21 @@ export const IPC = {
   /** main -> renderer: app metadata, resolved once at preload time. */
   appInfo: "golive:app-info",
 
+  /**
+   * main -> renderer: a shell update finished downloading and is sitting on
+   * disk, ready to be applied. Payload is the version string.
+   */
+  updateReady: "golive:update:ready",
+  /**
+   * renderer -> main: the version already downloaded, or null. The push
+   * above can (and usually does) fire while no page is listening — the site
+   * reloads on every navigation, and the download lands 45s after launch —
+   * so the button needs a way to ask rather than only being told.
+   */
+  updatePending: "golive:update:pending",
+  /** renderer -> main: quit and apply the downloaded update now. */
+  updateInstall: "golive:update:install",
+
   /** picker -> main: the sources to show. */
   pickerList: "golive:picker:list",
   /** picker -> main: the user's choice (a source id, or null to cancel). */

@@ -57,6 +57,22 @@ export interface DesktopBridge {
   cancelOAuth(nonce: string): void;
   /** Opens a URL in the default browser. */
   openExternal(url: string): Promise<void>;
+
+  // The three below are optional for a reason that applies to this whole
+  // interface but bites hardest here: the bridge is injected by the *shell
+  // the user installed*, while this file ships with the site. A build from
+  // before these existed is still out there running today's site, so every
+  // one of them must be treated as possibly absent — checked, not assumed.
+
+  /** The version already downloaded and waiting to be applied, or null. */
+  pendingUpdate?(): Promise<string | null>;
+  /**
+   * Subscribes to "an update just finished downloading". Returns an
+   * unsubscribe function.
+   */
+  onUpdateReady?(callback: (version: string) => void): () => void;
+  /** Quits and applies the downloaded update immediately. */
+  installUpdate?(): void;
 }
 
 declare global {

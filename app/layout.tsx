@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { InstallAppButton } from "@/components/InstallAppButton";
+import { UpdateAppButton } from "@/components/UpdateAppButton";
 import { AuthProvider } from "@/lib/AuthContext";
 import { NtPopups } from "@/components/NtPopups";
 import "./globals.css";
@@ -167,6 +168,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               <AnnouncementBanner />
               {children}
               <InstallAppButton />
+              <UpdateAppButton />
             </NtPopups>
           </AuthProvider>
         </SupressErrors>
