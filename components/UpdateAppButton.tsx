@@ -86,15 +86,15 @@ export function UpdateAppButton() {
 
   return (
     <Tooltip
-      content={installing ? "Reiniciando…" : `Instalar atualização (${version})`}
+      content={installing ? "Reiniciando…" : `Atualizações estão disponíveis (${version})`}
       placement="bottom"
     >
       <button
         type="button"
         onClick={handleInstall}
         disabled={installing}
-        aria-label="Instalar atualização"
-        className="fixed right-4 top-4 z-50 flex h-10 w-10 items-center justify-center rounded-full bg-emerald-600 text-white shadow-lg transition hover:bg-emerald-500 disabled:opacity-70 dark:bg-emerald-500 dark:hover:bg-emerald-400"
+        aria-label="Atualizações estão disponíveis"
+        className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-600 text-white shadow-lg transition hover:bg-emerald-500 disabled:opacity-70 dark:bg-emerald-500 dark:hover:bg-emerald-400"
       >
         <DownloadIcon className="h-5 w-5" />
       </button>

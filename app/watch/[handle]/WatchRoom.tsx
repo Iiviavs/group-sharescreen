@@ -89,6 +89,7 @@ import { useMediaQuery, SM_BREAKPOINT_QUERY, LG_BREAKPOINT_QUERY } from "@/lib/u
 import { MdHome, MdOutlineOndemandVideo, MdOutlineDesktopWindows } from "react-icons/md";
 import { BsGearFill, BsCoin } from "react-icons/bs";
 import { BetaMark } from "@/components/BetaMark";
+import { UpdateAppButton } from "@/components/UpdateAppButton";
 
 // Mirrors server/signaling.ts's HANDLE_RE — must match exactly, or a name
 // this lets through but the server rejects lands the user in a dead room
@@ -1933,6 +1934,8 @@ export function WatchRoom({ handle }: { handle: string }) {
                 <MoreIcon className="h-5 w-5" />
               </button>
             </Popover>
+
+            <UpdateAppButton />
 
             {!isDesktopLayout && menuOpen && (
               <>

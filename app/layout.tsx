@@ -168,7 +168,6 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               <AnnouncementBanner />
               {children}
               <InstallAppButton />
-              <UpdateAppButton />
             </NtPopups>
           </AuthProvider>
         </SupressErrors>
