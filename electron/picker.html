@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <!-- Local file with no remote anything: the CSP is restrictive because
-         it can be. Thumbnails arrive as data: URLs over IPC. -->
+         it can be. Thumbnails and app icons arrive as data: URLs over IPC. -->
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline';"
@@ -20,11 +20,18 @@
         --accent: #059669;
       }
       * { box-sizing: border-box; }
+      /* The `hidden` attribute is how everything below is shown and hidden,
+         and on its own it loses: the browser's own [hidden] rule is weaker
+         than any id or class selector that sets a display, so #audio-panel
+         would stay on screen with its own `display: flex`. */
+      [hidden] { display: none !important; }
       body {
         margin: 0;
         height: 100vh;
         display: flex;
         flex-direction: column;
+        /* The settings popover is positioned against this. */
+        position: relative;
         background: var(--bg);
         color: var(--text);
         font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -96,11 +103,12 @@
       }
       footer {
         display: flex;
-        justify-content: flex-end;
+        align-items: center;
         gap: 8px;
         padding: 12px 20px;
         border-top: 1px solid var(--border);
       }
+      footer .spacer { flex: 1; }
       footer button {
         border-radius: 8px;
         padding: 8px 16px;
@@ -117,6 +125,94 @@
         color: #fff;
       }
       footer button.primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+      /* Audio switch and its settings ------------------------------------- */
+      #audio-row { display: flex; align-items: center; gap: 4px; }
+      #audio-row label {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        cursor: pointer;
+        padding: 6px 4px;
+      }
+      #audio-row input { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+      footer button.gear {
+        padding: 6px;
+        line-height: 0;
+        border-color: transparent;
+        color: var(--muted);
+        border-radius: 8px;
+      }
+      footer button.gear:hover:not(:disabled) { border-color: var(--border); color: var(--text); }
+      footer button.gear:disabled { opacity: 0.35; cursor: not-allowed; }
+      footer button.gear[aria-expanded="true"] {
+        border-color: var(--border);
+        background: var(--panel);
+        color: var(--text);
+      }
+
+      /* Clicking anywhere outside the popover closes it. Transparent rather
+         than dimmed: the popover is a detail of one control, not a mode the
+         whole window has entered. */
+      #backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 1;
+      }
+      #audio-panel {
+        position: absolute;
+        left: 20px;
+        bottom: 60px;
+        z-index: 2;
+        width: 340px;
+        max-height: min(360px, calc(100vh - 140px));
+        display: flex;
+        flex-direction: column;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+      }
+      #audio-panel h2 {
+        margin: 0;
+        padding: 12px 14px 0;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      #audio-panel p {
+        margin: 4px 0 0;
+        padding: 0 14px 10px;
+        font-size: 11px;
+        color: var(--muted);
+        border-bottom: 1px solid var(--border);
+      }
+      .apps { overflow-y: auto; padding: 6px; }
+      .apps .status { color: var(--muted); font-size: 12px; padding: 14px; text-align: center; }
+      .app {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        width: 100%;
+        padding: 7px 8px;
+        border-radius: 7px;
+        cursor: pointer;
+      }
+      .app:hover { background: #27272a80; }
+      .app.locked { cursor: default; }
+      .app.locked:hover { background: transparent; }
+      .app input { accent-color: var(--accent); width: 15px; height: 15px; flex: none; cursor: inherit; }
+      .app img { width: 18px; height: 18px; flex: none; }
+      /* Keeps the names in one column whether or not an icon came back. */
+      .app .noicon { width: 18px; flex: none; }
+      .app .name {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+      }
+      .app .hint { color: var(--muted); font-size: 10px; flex: none; }
     </style>
   </head>
   <body>
@@ -129,7 +225,36 @@
       <button type="button" data-tab="window" aria-selected="false">Janelas</button>
     </nav>
     <main id="grid"></main>
+
+    <div id="backdrop" hidden></div>
+    <div id="audio-panel" hidden role="dialog" aria-label="Configurações de som">
+      <h2>Não compartilhar som dos seguintes apps</h2>
+      <p>Apps abertos agora. O que os marcados tocarem fica de fora da transmissão — você continua ouvindo normalmente.</p>
+      <div class="apps" id="audio-apps"></div>
+    </div>
+
     <footer>
+      <div id="audio-row" hidden>
+        <label>
+          <input type="checkbox" id="audio-toggle" />
+          <span>Compartilhar som da tela</span>
+        </label>
+        <button
+          type="button"
+          id="audio-gear"
+          class="gear"
+          aria-label="Configurações de som"
+          aria-expanded="false"
+          hidden
+        >
+          <!-- Inline so the restrictive CSP needs no exception for it. -->
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h.09A1.65 1.65 0 0 0 10 3.09V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+      </div>
+      <div class="spacer"></div>
       <button type="button" id="cancel">Cancelar</button>
       <button type="button" id="confirm" class="primary" disabled>Compartilhar</button>
     </footer>
@@ -140,15 +265,47 @@
       (function () {
         var grid = document.getElementById("grid");
         var confirmBtn = document.getElementById("confirm");
+        var audioRow = document.getElementById("audio-row");
+        var audioToggle = document.getElementById("audio-toggle");
+        var gear = document.getElementById("audio-gear");
+        var panel = document.getElementById("audio-panel");
+        var backdrop = document.getElementById("backdrop");
+        var appList = document.getElementById("audio-apps");
+
         var sources = [];
         var tab = "screen";
         var selectedId = null;
+
+        // The mute list, once the panel has been opened and the applications
+        // have arrived. Null until then, and null is *not* "nothing is muted"
+        // — it is "the user never touched this", which main answers by
+        // leaving the saved list exactly as it was. Sending an empty array
+        // instead would quietly un-mute everything for anyone who opens the
+        // picker and shares without opening the panel, which is almost
+        // everyone.
+        var muted = null;
+        // And what the panel actually had to show, which is only the apps
+        // that were open. main edits those keys and leaves the rest of the
+        // saved list alone — see PickerChoice.
+        var listed = null;
+        var appsLoaded = false;
 
         function choose(id) {
           // Guarded because "closed" also settles the request in main: a
           // double send would be answered by nobody, which is harmless but
           // worth not doing.
-          if (window.picker) window.picker.choose(id);
+          if (!window.picker) return;
+          var choice = { id: id };
+          // Only on a real share. Cancelling calls the whole thing off,
+          // including whatever was changed here on the way out.
+          if (id) {
+            choice.audio = { enabled: audioToggle.checked };
+            if (muted) {
+              choice.audio.muted = muted;
+              choice.audio.listed = listed;
+            }
+          }
+          window.picker.choose(choice);
         }
 
         function render() {
@@ -204,6 +361,129 @@
           });
         }
 
+        // --- audio settings ------------------------------------------------
+
+        function setStatus(text) {
+          appList.textContent = "";
+          var status = document.createElement("p");
+          status.className = "status";
+          status.textContent = text;
+          appList.appendChild(status);
+        }
+
+        function renderApps(apps) {
+          appList.textContent = "";
+          if (apps.length === 0) {
+            setStatus("Nenhum app aberto agora.");
+            return;
+          }
+          apps.forEach(function (entry) {
+            var row = document.createElement("label");
+            row.className = "app" + (entry.locked ? " locked" : "");
+
+            var box = document.createElement("input");
+            box.type = "checkbox";
+            box.checked = entry.muted;
+            // GoLive's own row. Not a preference: sharing our own output is
+            // what makes the room hear itself, so the switch would only ever
+            // be a way to break the call.
+            box.disabled = entry.locked;
+            box.addEventListener("change", function () {
+              if (box.checked) {
+                if (muted.indexOf(entry.key) === -1) muted.push(entry.key);
+              } else {
+                muted = muted.filter(function (key) {
+                  return key !== entry.key;
+                });
+              }
+            });
+            row.appendChild(box);
+
+            if (entry.icon) {
+              var icon = document.createElement("img");
+              icon.src = entry.icon;
+              icon.alt = "";
+              row.appendChild(icon);
+            } else {
+              var placeholder = document.createElement("span");
+              placeholder.className = "noicon";
+              row.appendChild(placeholder);
+            }
+
+            var name = document.createElement("span");
+            name.className = "name";
+            name.textContent = entry.name;
+            name.title = entry.name;
+            row.appendChild(name);
+
+            if (entry.locked) {
+              var hint = document.createElement("span");
+              hint.className = "hint";
+              hint.textContent = "sempre sem som";
+              hint.title =
+                "O som do próprio GoLive nunca entra na transmissão — é o que evita o eco na sala.";
+              row.appendChild(hint);
+            }
+
+            appList.appendChild(row);
+          });
+        }
+
+        function loadApps() {
+          if (appsLoaded) return;
+          appsLoaded = true;
+          setStatus("Procurando apps com som…");
+          window.picker.audioApps().then(
+            function (apps) {
+              // The locked row is GoLive's own and main never stores it, so
+              // it stays out of both lists — see PickerChoice.
+              var switchable = apps.filter(function (entry) {
+                return !entry.locked;
+              });
+              listed = switchable.map(function (entry) {
+                return entry.key;
+              });
+              muted = switchable
+                .filter(function (entry) {
+                  return entry.muted;
+                })
+                .map(function (entry) {
+                  return entry.key;
+                });
+              renderApps(apps);
+            },
+            function () {
+              // Retryable: the list is read fresh the next time the panel is
+              // opened rather than being stuck on the error.
+              appsLoaded = false;
+              setStatus("Não foi possível ler a lista de apps.");
+            }
+          );
+        }
+
+        function openPanel(open) {
+          panel.hidden = !open;
+          backdrop.hidden = !open;
+          gear.setAttribute("aria-expanded", String(open));
+          if (open) loadApps();
+        }
+
+        function syncAudioControls() {
+          // Nothing to configure when the sound is not being shared at all.
+          gear.disabled = !audioToggle.checked;
+          if (!audioToggle.checked) openPanel(false);
+        }
+
+        gear.addEventListener("click", function () {
+          openPanel(panel.hidden);
+        });
+        backdrop.addEventListener("click", function () {
+          openPanel(false);
+        });
+        audioToggle.addEventListener("change", syncAudioControls);
+
+        // --- wiring --------------------------------------------------------
+
         Array.prototype.forEach.call(document.querySelectorAll("nav button"), function (btn) {
           btn.addEventListener("click", function () {
             tab = btn.getAttribute("data-tab");
@@ -221,12 +501,27 @@
           choose(null);
         });
         document.addEventListener("keydown", function (e) {
+          // Escape closes the popover first: dismissing the whole picker
+          // because someone wanted to back out of a panel would throw away
+          // the source they had already chosen.
+          if (e.key === "Escape" && !panel.hidden) {
+            openPanel(false);
+            return;
+          }
           if (e.key === "Escape") choose(null);
-          if (e.key === "Enter" && selectedId) choose(selectedId);
+          if (e.key === "Enter" && selectedId && panel.hidden) choose(selectedId);
         });
 
-        window.picker.list().then(function (list) {
-          sources = list;
+        window.picker.list().then(function (data) {
+          sources = data.sources;
+
+          audioToggle.checked = data.audio.enabled;
+          audioRow.hidden = !data.audio.supported;
+          // Without the native helper the choice is all of the sound or none
+          // of it, so the gear would open a panel that cannot do anything.
+          gear.hidden = !data.audio.perApp;
+          syncAudioControls();
+
           // Open on whichever tab actually has something in it, so a machine
           // with a single screen and many windows does not start on a view
           // that looks empty.

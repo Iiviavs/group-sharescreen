@@ -31,7 +31,15 @@ import {
   type DesktopCapturerSource,
 } from "electron";
 import path from "node:path";
-import { IPC, SYSTEM_AUDIO_ARG, VERSION_ARG, type PickerSource } from "./channels";
+import {
+  IPC,
+  SYSTEM_AUDIO_ARG,
+  VERSION_ARG,
+  type PickerAudioApp,
+  type PickerChoice,
+  type PickerData,
+  type PickerSource,
+} from "./channels";
 // The website's own definition of the marker path, imported rather than
 // re-implemented: both sides have to agree on the exact nonce format or a
 // perfectly good login is silently dropped, and a regex copied into two
@@ -41,8 +49,17 @@ import { IPC, SYSTEM_AUDIO_ARG, VERSION_ARG, type PickerSource } from "./channel
 import { desktopOAuthNonce } from "../lib/desktop";
 import { initAutoUpdater } from "./updater";
 import {
+  getSystemAudioSettings,
+  normalizeMutedApps,
+  ownAppKey,
+  saveSystemAudioSettings,
+} from "./audioSettings";
+import {
+  applySystemAudioSettings,
   isSystemAudioCapturing,
   isSystemAudioExclusionSupported,
+  listAudioApps,
+  listOpenApps,
   startSystemAudioCapture,
   stopSystemAudioCapture,
 } from "./systemAudio";
@@ -177,19 +194,33 @@ function handleDeepLink(rawUrl: string) {
 // Screen picker
 // ---------------------------------------------------------------------------
 
+/** A confirmed choice, with the audio settings already resolved to a value. */
+interface ResolvedChoice {
+  id: string | null;
+  audio: { enabled: boolean; mutedApps: string[] } | null;
+}
+
+interface PickResult {
+  /** The surface to capture, or null when the picker was dismissed. */
+  source: DesktopCapturerSource | null;
+  /** The audio settings as confirmed, or null on a dismissal. */
+  audio: ResolvedChoice["audio"];
+}
+
 // Shown only when the OS has no picker of its own (see useSystemPicker
 // below). Its own window rather than something rendered by the site, because
-// the site must never be handed the source list: that list includes the
-// titles of every open window, which is a meaningful amount of information
-// about the user, and remote content has no business seeing it before a
-// choice is made.
-async function pickSource(parent: BrowserWindow | null): Promise<DesktopCapturerSource | null> {
+// the site must never be handed the source list — or the list of applications
+// making sound, which the audio settings need: between them they name every
+// open window and every program running on the machine, which is a meaningful
+// amount of information about the user, and remote content has no business
+// seeing it before a choice is made.
+async function pickSource(parent: BrowserWindow | null): Promise<PickResult> {
   const sources = await desktopCapturer.getSources({
     types: ["screen", "window"],
     thumbnailSize: { width: 320, height: 200 },
     fetchWindowIcons: true,
   });
-  if (sources.length === 0) return null;
+  if (sources.length === 0) return { source: null, audio: null };
 
   const picker = new BrowserWindow({
     parent: parent ?? undefined,
@@ -220,20 +251,40 @@ async function pickSource(parent: BrowserWindow | null): Promise<DesktopCapturer
     appIcon: source.appIcon && !source.appIcon.isEmpty() ? source.appIcon.toDataURL() : null,
   }));
 
+  const data: PickerData = {
+    sources: payload,
+    audio: {
+      // Electron's loopback capture is a Windows capability; on macOS and
+      // Linux there is no system audio to offer at all (see the handler
+      // below), so the row is not drawn rather than drawn and inert.
+      supported: process.platform === "win32",
+      // Leaving individual applications out needs the native helper. Without
+      // it the only honest choice is all of the sound or none of it.
+      perApp: isSystemAudioExclusionSupported(),
+      enabled: getSystemAudioSettings().enabled,
+    },
+  };
+
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (id: string | null) => {
+    const finish = (choice: ResolvedChoice | null) => {
       if (settled) return;
       settled = true;
       ipcMain.removeHandler(IPC.pickerList);
+      ipcMain.removeHandler(IPC.pickerAudioApps);
       ipcMain.removeAllListeners(IPC.pickerChoose);
       if (!picker.isDestroyed()) picker.close();
-      resolve(sources.find((s) => s.id === id) ?? null);
+      const id = choice?.id ?? null;
+      resolve({
+        source: sources.find((s) => s.id === id) ?? null,
+        audio: choice?.audio ?? null,
+      });
     };
 
-    ipcMain.handle(IPC.pickerList, () => payload);
-    ipcMain.on(IPC.pickerChoose, (_event, id: unknown) => {
-      finish(typeof id === "string" ? id : null);
+    ipcMain.handle(IPC.pickerList, () => data);
+    ipcMain.handle(IPC.pickerAudioApps, () => audioAppRows());
+    ipcMain.on(IPC.pickerChoose, (_event, choice: unknown) => {
+      finish(readPickerChoice(choice));
     });
     // Closing the window with the OS chrome is a cancellation like any other.
     picker.on("closed", () => finish(null));
@@ -243,11 +294,116 @@ async function pickSource(parent: BrowserWindow | null): Promise<DesktopCapturer
   });
 }
 
+// The rows of the picker's "do not share sound from these apps" panel: the
+// applications that are open right now, and nothing else. A program that is
+// closed is not something anyone is deciding about, and listing one — because
+// it was muted at some point in the past — turns a list of things on screen
+// into a list of settings, which is not what this control is.
+//
+// Two sources, because "open" has two honest readings and the union of them
+// is what a person means: the windows on the desktop, and anything holding an
+// audio stream. The second catches what the first misses — a music player
+// minimised to the tray still has sound to mute.
+async function audioAppRows(): Promise<PickerAudioApp[]> {
+  const muted = new Set(getSystemAudioSettings().mutedApps);
+  // GoLive is listed first and always. Its row is the explanation for the
+  // whole panel — the share does not carry the room's own voices back into
+  // it — so a list that silently omitted it would read as if it might.
+  const rows = new Map<string, PickerAudioApp>();
+  rows.set(ownAppKey(), {
+    key: ownAppKey(),
+    // Spelled out rather than app.getName(), which answers "sharescreen"
+    // from a checkout — productName only reaches package.json in a packaged
+    // build, and a row nobody recognises would defeat the point of listing
+    // ourselves at all.
+    name: "GoLive",
+    icon: await fileIcon(process.execPath),
+    muted: true,
+    locked: true,
+  });
+
+  const [open, audible] = await Promise.all([listOpenApps(), listAudioApps()]);
+  for (const entry of [...open, ...audible]) {
+    if (rows.has(entry.key) || entry.self) continue;
+    rows.set(entry.key, {
+      key: entry.key,
+      name: entry.name,
+      icon: await fileIcon(entry.path),
+      muted: muted.has(entry.key),
+      locked: false,
+    });
+  }
+
+  // GoLive first because it explains the panel; the rest alphabetically,
+  // which is the only order a person can predict — the enumeration's own is
+  // window z-order, and a list that reshuffled itself between openings would
+  // be one nobody could find anything in twice.
+  return [...rows.values()].sort((a, b) => {
+    if (a.locked !== b.locked) return a.locked ? -1 : 1;
+    return a.name.localeCompare(b.name, "pt-BR");
+  });
+}
+
+async function fileIcon(exePath: string): Promise<string | null> {
+  try {
+    const icon = await app.getFileIcon(exePath, { size: "small" });
+    return icon.isEmpty() ? null : icon.toDataURL();
+  } catch {
+    // A path that no longer exists, or one this process cannot read. The row
+    // is still worth showing without its icon.
+    return null;
+  }
+}
+
+// The picker window is a local file of ours, so this is not a trust boundary
+// in the way the website's bridge is — but the shape is checked all the same,
+// because what comes back is written straight to disk and used to pick which
+// processes get recorded.
+function readPickerChoice(value: unknown): ResolvedChoice | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const id = typeof record.id === "string" ? record.id : null;
+  const audio = record.audio as PickerChoice["audio"] | undefined;
+  if (!audio || typeof audio !== "object") return { id, audio: null };
+  return {
+    id,
+    audio: { enabled: audio.enabled !== false, mutedApps: mergeMutedApps(audio) },
+  };
+}
+
+// The panel edits the applications it could show, and only those. Everything
+// else the user had muted is carried over untouched — see PickerChoice's
+// `listed`. An absent `muted` means the panel was never opened at all, which
+// changes nothing.
+//
+// Resolved here so that everything downstream deals in a value rather than in
+// "the user did not say", which is a distinction only this one boundary has.
+function mergeMutedApps(audio: NonNullable<PickerChoice["audio"]>): string[] {
+  const saved = getSystemAudioSettings().mutedApps;
+  if (!Array.isArray(audio.muted)) return saved;
+  const listed = new Set(normalizeMutedApps(audio.listed ?? []));
+  const kept = saved.filter((key) => !listed.has(key));
+  return [...new Set([...kept, ...normalizeMutedApps(audio.muted)])];
+}
+
 function installDisplayMediaHandler() {
   session.defaultSession.setDisplayMediaRequestHandler(
     (request, callback) => {
       void (async () => {
-        const source = await pickSource(mainWindow);
+        const { source, audio } = await pickSource(mainWindow);
+        // Saved only on a confirmed share. Dismissing the picker calls the
+        // whole thing off, and a setting the user changed on their way to
+        // cancelling was never applied to anything.
+        //
+        // applySystemAudioSettings is what makes a change take effect on
+        // *this* share rather than the next one: the renderer starts the
+        // capture before calling getDisplayMedia — that is how the shell
+        // knows to withhold its own loopback track — so by the time these
+        // controls are touched the helpers are already running. See
+        // systemAudio.ts.
+        if (source && audio) {
+          applySystemAudioSettings(saveSystemAudioSettings(audio));
+        }
         if (!source) {
           // An empty result surfaces in the renderer as the same
           // NotAllowedError a browser raises when the picker is dismissed,
@@ -272,10 +428,23 @@ function installDisplayMediaHandler() {
           // track here as well would put the room's own audio back into the
           // share — the exact echo the helper exists to remove. So a running
           // capture means video only, and the audio arrives as PCM instead.
+          // The settings check is the picker's checkbox, and it matters in
+          // one specific case: system audio was switched *off* when the share
+          // started, so the renderer asked getDisplayMedia for audio the
+          // ordinary way, and it is only off that nothing here would decline
+          // to give it some.
+          //
+          // The mirror image — switched on during this picker, with no
+          // capture running because it was off when the renderer asked — does
+          // get Electron's loopback track, echo and all. That is the same
+          // audio every machine without the helper gets, it is unmistakably
+          // what the user just asked for, and the next share picks up the
+          // helper properly.
           audio:
             request.audioRequested &&
             process.platform === "win32" &&
-            !isSystemAudioCapturing()
+            !isSystemAudioCapturing() &&
+            getSystemAudioSettings().enabled
               ? "loopback"
               : undefined,
         });

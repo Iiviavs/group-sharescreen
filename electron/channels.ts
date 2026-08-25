@@ -35,9 +35,20 @@ export const IPC = {
    */
   updateCheck: "golive:update:check",
 
-  /** picker -> main: the sources to show. */
+  /** picker -> main: the sources to show, and the state of the audio switch. */
   pickerList: "golive:picker:list",
-  /** picker -> main: the user's choice (a source id, or null to cancel). */
+  /**
+   * picker -> main: the applications that currently have sound, for the
+   * per-app mute panel.
+   *
+   * Separate from pickerList, and asked for only when that panel is opened,
+   * because it is not free: it enumerates the machine's audio sessions and
+   * reads an icon out of every executable it finds. Paying that on every
+   * picker open would delay the window everyone sees for a panel almost
+   * nobody opens.
+   */
+  pickerAudioApps: "golive:picker:audio-apps",
+  /** picker -> main: the user's choice (see PickerChoice), or null to cancel. */
   pickerChoose: "golive:picker:choose",
 
   /**
@@ -101,4 +112,82 @@ export interface PickerSource {
   kind: "screen" | "window";
   /** App icon, when the OS provides one (windows only). */
   appIcon: string | null;
+}
+
+/** One row of the picker's "do not share sound from these apps" panel. */
+export interface PickerAudioApp {
+  /** Lower-cased executable file name — what the mute list is written in. */
+  key: string;
+  /** What the vendor calls it ("Discord"), or the file name as a fallback. */
+  name: string;
+  /** PNG data URL of the executable's icon, when one could be read. */
+  icon: string | null;
+  /** Whether its sound is currently left out of a share. */
+  muted: boolean;
+  /**
+   * GoLive itself: shown muted and not switchable. Its exclusion is what
+   * stops the room from hearing its own voices come back through the share,
+   * so it is a fact about how the capture works rather than a preference —
+   * and a switch that pretended otherwise would be one that breaks the call.
+   */
+  locked: boolean;
+}
+
+/** Everything the picker window needs to draw itself. */
+export interface PickerData {
+  sources: PickerSource[];
+  audio: {
+    /**
+     * Whether a share on this machine can carry system audio at all. False
+     * on macOS and Linux, where Electron has no loopback capture and there
+     * is no equivalent without a virtual audio device — the whole audio row
+     * is hidden rather than shown as a switch that does nothing.
+     */
+    supported: boolean;
+    /**
+     * Whether individual applications can be left out. Needs the native
+     * helper; without it the only choice on offer is all of the sound or
+     * none of it, so the gear is hidden and the checkbox stays.
+     */
+    perApp: boolean;
+    /** The "Compartilhar som da tela" checkbox. */
+    enabled: boolean;
+  };
+}
+
+/** What the picker sends back when the user confirms. */
+export interface PickerChoice {
+  /** The chosen source id, or null for a cancellation. */
+  id: string | null;
+  /**
+   * The audio settings as they stood on confirm. Absent on a cancellation:
+   * dismissing the picker calls the whole share off, including any change
+   * made to these while it was open.
+   */
+  audio?: {
+    enabled: boolean;
+    /**
+     * Lower-cased executable file names. Never includes GoLive's own, whose
+     * exclusion is not a setting.
+     *
+     * Absent when the user never opened the settings panel, which is not the
+     * same as an empty list and must not be read as one: the panel is where
+     * the picker *learns* what is muted, so before it has been opened the
+     * window genuinely does not know, and main keeps what it had saved.
+     * Sending [] instead would un-mute everything for everybody who shares
+     * without opening the panel — which is almost everybody.
+     */
+    muted?: string[];
+    /**
+     * Every application the panel actually showed — which is only the ones
+     * open at the time.
+     *
+     * Sent alongside `muted` because the panel is a view of part of the
+     * setting, not all of it: an application that was muted and has since
+     * been closed is not on screen to stay ticked, and replacing the saved
+     * list with what the panel could see would silently forget it. main
+     * changes only the keys named here.
+     */
+    listed?: string[];
+  };
 }

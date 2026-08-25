@@ -19,10 +19,32 @@
 //
 // What it does
 // ------------
-// Captures the system audio mix *excluding* one process tree, using the
-// WASAPI process-loopback activation path (AUDIOCLIENT_ACTIVATION_PARAMS
-// with PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE), and writes the
-// result to stdout as raw PCM.
+// Captures system audio through the WASAPI process-loopback activation path
+// (AUDIOCLIENT_ACTIVATION_PARAMS) and writes the result to stdout as raw PCM,
+// in one of two shapes:
+//
+//   --exclude-pid <pid>   everything the machine is playing *except* that
+//                         process tree (PROCESS_LOOPBACK_MODE_EXCLUDE_*)
+//   --include-pid <pid>   only that process tree (..._INCLUDE_*)
+//
+// plus two modes that capture nothing at all and only report:
+//
+//   --list-sessions       the processes that currently hold an audio stream
+//   --list-windows        the applications a person would say are open
+//
+// EXCLUDE is the mode this program was written for. INCLUDE and the listings
+// exist because the exclusion cannot be widened: the activation parameters
+// carry exactly one TargetProcessId, so "everything except GoLive *and*
+// Discord" — which is what the picker's per-app mute list asks for — has to
+// be assembled from the other direction. The shell lists the sessions, runs
+// one INCLUDE capture per application the user did not mute, and mixes them
+// (see electron/systemAudio.ts).
+//
+// The two listings answer deliberately different questions. --list-windows is
+// what the picker shows, because a person mutes "Discord", an application
+// they have open, and has no idea which processes hold an audio stream.
+// --list-sessions is what the capture acts on, because a stream is the only
+// thing there is to leave out. They meet at the executable name.
 //
 // That exclusion is the entire point. GoLive plays every remote
 // participant's voice and every remote screen share through its own audio
@@ -61,9 +83,21 @@
 #include <mmdeviceapi.h>
 #include <audioclient.h>
 #include <audioclientactivationparams.h>
+// Session enumeration, for --list-sessions. IAudioSessionManager2 is the only
+// way to ask "which processes currently hold an audio stream", and that list
+// is what the picker's per-app mute list is built from.
+#include <audiopolicy.h>
 #include <avrt.h>
 #include <mmreg.h>
 #include <objbase.h>
+// GetFileVersionInfo/VerQueryValue, for an executable's FileDescription --
+// "Discord" rather than "Discord.exe". windows.h drags winver.h in already
+// unless WIN32_LEAN_AND_MEAN is defined; named here so this keeps compiling
+// if that ever changes.
+#include <winver.h>
+// DwmGetWindowAttribute, for --list-windows: the only way to tell a suspended
+// Store application's window apart from one somebody actually has open.
+#include <dwmapi.h>
 
 #include <fcntl.h>
 #include <io.h>
@@ -75,11 +109,13 @@
 #include <stdlib.h>
 #include <wchar.h>
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
 #include <new>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -205,15 +241,26 @@ class ActivationHandler : public IActivateAudioInterfaceCompletionHandler,
   std::atomic<ULONG> refs_{1};
 };
 
-static HRESULT ActivateExcludingProcessTree(DWORD pid, IAudioClient** out) {
+static HRESULT ActivateProcessLoopback(DWORD pid, bool include,
+                                      IAudioClient** out) {
   AUDIOCLIENT_ACTIVATION_PARAMS params = {};
   params.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
   params.ProcessLoopbackParams.TargetProcessId = pid;
-  // The whole reason this program exists. INCLUDE would capture only GoLive;
-  // EXCLUDE captures everything *but* GoLive, which is what a screen share
-  // carrying system audio should contain.
+  // EXCLUDE is the mode this program was written for: everything the machine
+  // is playing *except* GoLive, which is what a screen share carrying system
+  // audio should contain.
+  //
+  // INCLUDE captures one process tree and nothing else. It is here for a
+  // limitation of the API rather than for its own sake:
+  // AUDIOCLIENT_ACTIVATION_PARAMS carries a single TargetProcessId, so
+  // "everything except GoLive *and* Discord" cannot be asked for at all. The
+  // shell builds that set instead by running one INCLUDE capture per
+  // application it does want and mixing them (see electron/systemAudio.ts) --
+  // which is why the setting the user sees is a list of apps to leave out,
+  // while what crosses this boundary is one pid to take in.
   params.ProcessLoopbackParams.ProcessLoopbackMode =
-      PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE;
+      include ? PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE
+              : PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE;
 
   PROPVARIANT activate_params = {};
   activate_params.vt = VT_BLOB;
@@ -237,6 +284,247 @@ static HRESULT ActivateExcludingProcessTree(DWORD pid, IAudioClient** out) {
   // the object alive until it is done with it, which is the whole point.
   handler->Release();
   return hr;
+}
+
+// ---------------------------------------------------------------------------
+// Session listing
+// ---------------------------------------------------------------------------
+//
+// --list-sessions answers one question: which applications currently have an
+// audio stream open on the default output device. That is the list the
+// picker's "do not share sound from these apps" panel is built from, and it
+// is also how the shell knows which process trees to run INCLUDE captures
+// against once something in it is muted.
+//
+// Audio sessions rather than "every running process", on purpose. A process
+// with no audio session cannot make a sound, so listing it would offer the
+// user a switch that does nothing; conversely an application holds its
+// session for as long as it keeps an audio client open, not only while it
+// happens to be playing something, so this is not a list that flickers.
+
+// stdout is in binary mode (see wmain), so the encoding is stated here rather
+// than left to the CRT: UTF-8, which is what Node reads on the other end. An
+// application name is whatever the vendor put in its version resource, and
+// that includes scripts the console codepage cannot represent.
+static void WriteUtf8(const wchar_t* text) {
+  const int bytes =
+      WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
+  if (bytes <= 1) return;  // empty, or unconvertible
+  std::vector<char> buffer(static_cast<size_t>(bytes));
+  WideCharToMultiByte(CP_UTF8, 0, text, -1, buffer.data(), bytes, nullptr,
+                      nullptr);
+  // -1 drops the terminating NUL: this is a stream, not a C string.
+  fwrite(buffer.data(), 1, static_cast<size_t>(bytes) - 1, stdout);
+}
+
+// The output is one tab-separated record per line, so a name carrying a tab
+// or a newline would silently produce a second, malformed record. A vendor's
+// version resource is not a trusted source of well-formed text.
+static void SanitizeField(std::wstring* value) {
+  for (size_t i = 0; i < value->size(); i++) {
+    if ((*value)[i] < L' ') (*value)[i] = L' ';
+  }
+}
+
+static bool ProcessPath(DWORD pid, std::wstring* out) {
+  // LIMITED_INFORMATION rather than QUERY_INFORMATION: it is the right the
+  // API documents for exactly this call, and it is obtainable for processes
+  // running at a higher integrity level, where the wider right is refused.
+  // Without that distinction every elevated application would be missing from
+  // the list with nothing to say why.
+  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+  if (!process) return false;
+  wchar_t buffer[MAX_PATH * 4];
+  DWORD length = static_cast<DWORD>(sizeof(buffer) / sizeof(buffer[0]));
+  const bool ok = QueryFullProcessImageNameW(process, 0, buffer, &length) != 0;
+  CloseHandle(process);
+  if (!ok) return false;
+  out->assign(buffer, length);
+  return true;
+}
+
+// "Discord", "Google Chrome", "Spotify" — the name a person knows the program
+// by, which lives in its version resource and nowhere else. Optional: plenty
+// of executables ship without one, and the caller falls back to the file name.
+static bool FileDescription(const wchar_t* path, std::wstring* out) {
+  DWORD ignored = 0;
+  const DWORD size = GetFileVersionInfoSizeW(path, &ignored);
+  if (size == 0) return false;
+  std::vector<BYTE> block(size);
+  if (!GetFileVersionInfoW(path, 0, size, block.data())) return false;
+
+  struct LangCodePage {
+    WORD language;
+    WORD code_page;
+  };
+  LangCodePage* translations = nullptr;
+  UINT bytes = 0;
+  if (!VerQueryValueW(block.data(), L"\\VarFileInfo\\Translation",
+                      reinterpret_cast<void**>(&translations), &bytes) ||
+      !translations || bytes < sizeof(LangCodePage)) {
+    return false;
+  }
+  // A resource may carry several translations, and there is no way from here
+  // to know which one a given machine would prefer. The first that actually
+  // has a description is a better answer than none.
+  const size_t count = bytes / sizeof(LangCodePage);
+  for (size_t i = 0; i < count; i++) {
+    wchar_t key[64];
+    swprintf(key, 64, L"\\StringFileInfo\\%04x%04x\\FileDescription",
+             translations[i].language, translations[i].code_page);
+    wchar_t* value = nullptr;
+    UINT length = 0;
+    if (VerQueryValueW(block.data(), key, reinterpret_cast<void**>(&value),
+                       &length) &&
+        value && length > 0 && value[0] != L'\0') {
+      // length counts characters *including* the terminator, and a malformed
+      // resource may not have one — so the bound is honoured rather than
+      // trusted.
+      out->assign(value, wcsnlen(value, length));
+      return true;
+    }
+  }
+  return false;
+}
+
+// One record of a listing: "<pid>\t<name>\t<full path>", UTF-8, newline
+// terminated. Shared by both listings so the caller has one format to parse.
+static void PrintProcessRow(DWORD pid) {
+  std::wstring path;
+  // A process that ended between the enumeration and this call, or one this
+  // token cannot open at all. Both are ordinary; skip it.
+  if (!ProcessPath(pid, &path)) return;
+  std::wstring name;
+  if (!FileDescription(path.c_str(), &name) || name.empty()) {
+    const size_t slash = path.find_last_of(L'\\');
+    name = slash == std::wstring::npos ? path : path.substr(slash + 1);
+  }
+  SanitizeField(&name);
+  SanitizeField(&path);
+
+  wchar_t prefix[32];
+  swprintf(prefix, 32, L"%lu\t", pid);
+  WriteUtf8(prefix);
+  WriteUtf8(name.c_str());
+  WriteUtf8(L"\t");
+  WriteUtf8(path.c_str());
+  WriteUtf8(L"\n");
+}
+
+// Every process holding a render session. Exits EXIT_UNSUPPORTED when there
+// is no output device to enumerate at all, which the shell treats the way it
+// treats an empty list.
+static int ListRenderSessions() {
+  IMMDeviceEnumerator* enumerator = nullptr;
+  HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
+                                CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
+                                reinterpret_cast<void**>(&enumerator));
+  if (FAILED(hr)) return EXIT_UNSUPPORTED;
+
+  IMMDevice* device = nullptr;
+  hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+  enumerator->Release();
+  if (FAILED(hr)) {
+    fwprintf(stderr, L"no default render endpoint: 0x%08lX\n", hr);
+    return EXIT_UNSUPPORTED;
+  }
+
+  IAudioSessionManager2* manager = nullptr;
+  hr = device->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
+                        reinterpret_cast<void**>(&manager));
+  device->Release();
+  if (FAILED(hr)) return EXIT_UNSUPPORTED;
+
+  IAudioSessionEnumerator* sessions = nullptr;
+  hr = manager->GetSessionEnumerator(&sessions);
+  manager->Release();
+  if (FAILED(hr)) return EXIT_UNSUPPORTED;
+
+  int count = 0;
+  if (FAILED(sessions->GetCount(&count))) count = 0;
+  for (int i = 0; i < count; i++) {
+    IAudioSessionControl* control = nullptr;
+    if (FAILED(sessions->GetSession(i, &control)) || !control) continue;
+    IAudioSessionControl2* control2 = nullptr;
+    hr = control->QueryInterface(__uuidof(IAudioSessionControl2),
+                                 reinterpret_cast<void**>(&control2));
+    control->Release();
+    if (FAILED(hr) || !control2) continue;
+
+    DWORD pid = 0;
+    // The system-sounds session has no process behind it: nothing to name in
+    // a list of applications, and nothing to run a capture against.
+    const bool usable = control2->IsSystemSoundsSession() != S_OK &&
+                        SUCCEEDED(control2->GetProcessId(&pid)) && pid != 0;
+    control2->Release();
+    if (!usable) continue;
+    PrintProcessRow(pid);
+  }
+  sessions->Release();
+  fflush(stdout);
+  return EXIT_OK;
+}
+
+// ---------------------------------------------------------------------------
+// Window listing
+// ---------------------------------------------------------------------------
+//
+// --list-windows answers "which applications are open", the way a person
+// means it: the things that would show up if they pressed alt-tab. That is
+// the list the picker offers for muting, and it is deliberately not the same
+// question as --list-sessions above — a person picks Discord out of a list of
+// programs they have open, not out of a list of audio streams they cannot
+// see. The two meet at the executable name.
+
+// The filter that turns "every HWND on the desktop" into "every application
+// someone would say is open". Each of these removes a specific kind of
+// non-window that would otherwise be listed as a program.
+static bool IsAppWindow(HWND window) {
+  if (!IsWindowVisible(window)) return false;
+  // An owned window is a dialog, a palette or a tooltip belonging to an
+  // application that is already in the list on its own account.
+  if (GetWindow(window, GW_OWNER) != nullptr) return false;
+  // No title is the signature of the invisible message-only and helper
+  // windows that most frameworks create; there would be nothing to name.
+  if (GetWindowTextLengthW(window) == 0) return false;
+  if (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) return false;
+  // Store applications leave a real, visible, titled window behind when they
+  // are suspended — the shell hides it by "cloaking" rather than by making it
+  // invisible, so without this check a machine lists half a dozen programs
+  // nobody has opened. This is the same attribute the alt-tab switcher reads.
+  BOOL cloaked = FALSE;
+  if (SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked,
+                                      sizeof(cloaked))) &&
+      cloaked) {
+    return false;
+  }
+  return true;
+}
+
+static BOOL CALLBACK CollectWindow(HWND window, LPARAM param) {
+  if (IsAppWindow(window)) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(window, &pid);
+    if (pid != 0) reinterpret_cast<std::vector<DWORD>*>(param)->push_back(pid);
+  }
+  return TRUE;  // keep enumerating
+}
+
+static int ListOpenWindows() {
+  std::vector<DWORD> pids;
+  EnumWindows(CollectWindow, reinterpret_cast<LPARAM>(&pids));
+  // One application is routinely several windows, and the caller groups by
+  // executable anyway — but de-duplicating the pids here keeps the output
+  // proportional to the number of programs rather than to the number of
+  // windows they happen to have open.
+  std::vector<DWORD> seen;
+  for (size_t i = 0; i < pids.size(); i++) {
+    if (std::find(seen.begin(), seen.end(), pids[i]) != seen.end()) continue;
+    seen.push_back(pids[i]);
+    PrintProcessRow(pids[i]);
+  }
+  fflush(stdout);
+  return EXIT_OK;
 }
 
 // ---------------------------------------------------------------------------
@@ -377,26 +665,55 @@ static void WatchStdin(HANDLE quit) {
 }
 
 int wmain(int argc, wchar_t** argv) {
-  DWORD exclude_pid = 0;
+  DWORD target_pid = 0;
+  bool include = false;
+  bool list_sessions = false;
+  bool list_windows = false;
   for (int i = 1; i < argc; i++) {
-    if (wcscmp(argv[i], L"--exclude-pid") == 0 && i + 1 < argc) {
-      exclude_pid = static_cast<DWORD>(_wtoi64(argv[++i]));
+    if (wcscmp(argv[i], L"--list-sessions") == 0) {
+      list_sessions = true;
+    } else if (wcscmp(argv[i], L"--list-windows") == 0) {
+      list_windows = true;
+    } else if (wcscmp(argv[i], L"--exclude-pid") == 0 && i + 1 < argc) {
+      target_pid = static_cast<DWORD>(_wtoi64(argv[++i]));
+      include = false;
+    } else if (wcscmp(argv[i], L"--include-pid") == 0 && i + 1 < argc) {
+      target_pid = static_cast<DWORD>(_wtoi64(argv[++i]));
+      include = true;
     }
-  }
-  if (exclude_pid == 0) {
-    fwprintf(stderr, L"usage: golive-audiocap --exclude-pid <pid>\n");
-    return EXIT_BAD_ARGS;
   }
 
   // Raw PCM down a pipe: without this the CRT would helpfully turn every
-  // 0x0A byte in the audio into 0x0D 0x0A and corrupt the stream.
+  // 0x0A byte in the audio into 0x0D 0x0A and corrupt the stream. Set for
+  // --list-sessions too, which writes its own UTF-8 rather than letting the
+  // CRT pick an encoding and a line ending for it.
   _setmode(_fileno(stdout), _O_BINARY);
+
+  // No COM: EnumWindows and the version resources are plain Win32.
+  if (list_windows) return ListOpenWindows();
+
+  if (list_sessions) {
+    HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (FAILED(com)) return EXIT_UNSUPPORTED;
+    const int code = ListRenderSessions();
+    CoUninitialize();
+    return code;
+  }
+
+  if (target_pid == 0) {
+    fwprintf(stderr,
+             L"usage: golive-audiocap --exclude-pid <pid>\n"
+             L"       golive-audiocap --include-pid <pid>\n"
+             L"       golive-audiocap --list-sessions\n"
+             L"       golive-audiocap --list-windows\n");
+    return EXIT_BAD_ARGS;
+  }
 
   HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   if (FAILED(hr)) return EXIT_UNSUPPORTED;
 
   IAudioClient* client = nullptr;
-  hr = ActivateExcludingProcessTree(exclude_pid, &client);
+  hr = ActivateProcessLoopback(target_pid, include, &client);
   if (FAILED(hr)) {
     // The expected failure on Windows 10, where this activation type does
     // not exist. Reported on stderr so the shell's log says why rather than

@@ -22,6 +22,29 @@ covers its children. That matters more than it looks: Chromium does not render
 audio in the renderer, it renders it in the audio service — a child utility
 process — so excluding the renderer alone would exclude nothing at all.
 
+## Leaving more than one app out
+
+The picker lets a person tick applications whose sound should stay out of the
+share — a voice call happening next to the shared screen is the usual reason.
+Windows cannot be asked for that directly: `AUDIOCLIENT_ACTIVATION_PARAMS`
+carries exactly **one** `TargetProcessId`, so "everything except GoLive *and*
+Discord" is not a request this API has a shape for.
+
+So it is assembled from the other side. `--list-sessions` reports which
+processes currently hold an audio stream, the shell drops the muted ones, and
+what is left gets one `--include-pid` capture each, mixed back together in
+`electron/systemAudio.ts`. A scan every few seconds catches applications that
+start playing mid-share.
+
+The list the picker *shows* comes from `--list-windows` instead: a person
+mutes a program they have open, not an audio stream they cannot see. The two
+listings meet at the executable name.
+
+That path costs a helper process per audible application and cannot react to a
+new one instantly, which is why it is not the default: with nothing muted — or
+nothing muted that is actually running — the single `--exclude-pid` capture
+above is still what runs, unchanged.
+
 ## What that trades away
 
 Everything GoLive plays is excluded, not just the participants: the join and
@@ -119,12 +142,37 @@ from the process running the call. See the header comment in
 ## Interface
 
 ```
-golive-audiocap.exe --exclude-pid <pid>
+golive-audiocap.exe --exclude-pid <pid>    everything except that process tree
+golive-audiocap.exe --include-pid <pid>    only that process tree
 
   stdout   raw PCM, 48 kHz, stereo, interleaved little-endian signed 16-bit
   stderr   "READY" once capturing; otherwise diagnostics (an activation HRESULT)
   stdin    closing it is the shutdown signal
   exit 3   process loopback unavailable or refused — caller should fall back
+
+golive-audiocap.exe --list-sessions        processes holding an audio stream
+golive-audiocap.exe --list-windows         applications a person has open
+
+  stdout   "<pid>\t<display name>\t<full path to the exe>", one per line, UTF-8
+  exit 3   --list-sessions only: no default output device to enumerate
+
+  The name comes from the executable's FileDescription version resource
+  ("Discord"), falling back to its file name.
+
+  --list-sessions is what the *capture* acts on: a stream is the only thing
+  there is to leave out of a mix, and a process without one cannot make a
+  sound. An application holds its session for as long as it keeps an audio
+  client open, not only while something is playing, so this is not a list that
+  flickers. The system-sounds session, which has no process behind it, is left
+  out.
+
+  --list-windows is what the *picker shows*: visible, titled, unowned,
+  non-cloaked top-level windows — the alt-tab list — reduced to one row per
+  process. Somebody mutes "Discord", a program they have open, and has no idea
+  which processes are holding audio streams. The two listings meet at the
+  executable name, which is what the mute list is written in.
+
+No mode is the default; without one of the four the tool exits 2.
 ```
 
 The format is fixed rather than negotiated because process loopback is not
@@ -138,7 +186,9 @@ mirrored here and in `public/worklets/system-audio.js`.
 | Where                             | What it does                                              |
 | --------------------------------- | --------------------------------------------------------- |
 | `src/audiocap.cpp`                | This. WASAPI process loopback → stdout                     |
-| `electron/systemAudio.ts`         | Spawns it, batches stdout into 20 ms chunks, forwards them |
+| `electron/systemAudio.ts`         | Spawns it, mixes the sources, forwards 20 ms chunks         |
+| `electron/audioSettings.ts`       | The picker's audio switch and mute list, on disk            |
+| `electron/picker.html`            | Where a person turns the sound off, or mutes an app         |
 | `electron/main.ts`                | Withholds Electron's loopback track while it runs          |
 | `electron/preload.ts`             | `window.golive.systemAudio`, exposed only where supported  |
 | `lib/desktopSystemAudio.ts`       | PCM → `MediaStreamTrack`                                   |

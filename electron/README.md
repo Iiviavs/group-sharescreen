@@ -18,7 +18,12 @@ Four things, and everything in `main.ts` exists for one of them:
 1. **A screen picker.** Electron does not implement `getDisplayMedia`'s own
    chooser. Without `setDisplayMediaRequestHandler` the app's single most
    important feature simply fails. The OS picker is preferred where it exists
-   (`useSystemPicker`); `picker.html` is the fallback everywhere else.
+   (`useSystemPicker`); `picker.html` is the fallback everywhere else. It is
+   also where the share's sound is decided: a "Compartilhar som da tela"
+   switch, and behind its gear the applications currently open, any of which
+   can be ticked to keep its sound out of the stream. Nothing starts out
+   ticked except GoLive itself, which is always muted and cannot be
+   un-muted — see `audioSettings.ts`.
 2. **A working OAuth flow.** Providers refuse to authenticate inside an
    embedded browser — Google rejects it outright as `disallowed_useragent` —
    so login leaves for the real browser and comes back through a custom
@@ -77,7 +82,8 @@ website and `main.ts`, rather than being a regex copied into two files.
 | `picker-preload.ts` | The picker window's bridge — separate, and deliberately narrower |
 | `picker.html`       | Fallback screen/window chooser                                   |
 | `channels.ts`       | IPC channel names, shared so a rename cannot desync the sides    |
-| `systemAudio.ts`    | Runs the capture helper, streams its PCM to the renderer         |
+| `systemAudio.ts`    | Runs the capture helpers, mixes them, streams PCM to the renderer|
+| `audioSettings.ts`  | The picker's "share screen sound" switch and per-app mute list   |
 | `native/`           | The WASAPI capture helper — prebuilt and committed; own README   |
 | `build.mjs`         | esbuild bundling — see the note below                            |
 | `build/icon.png`    | 512×512 source icon; electron-builder derives `.ico`/`.icns`     |
@@ -88,9 +94,10 @@ electron-builder needs to generate the platform formats. Replace
 committed.
 
 `picker-preload.ts` is separate from `preload.ts` for a reason: the source
-list contains the **title of every open window** on the machine, and the
-website loaded in the main window has no business seeing them before a choice
-is made.
+list contains the **title of every open window** on the machine, and the audio
+panel behind it names **every program currently making a sound**. The website
+loaded in the main window has no business seeing either — the source list
+before a choice is made, and the application list at all.
 
 ## Scripts
 

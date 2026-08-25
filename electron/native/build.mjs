@@ -90,7 +90,10 @@ if (!force && upToDate) {
 // with no diagnostic anywhere.
 //
 // mmdevapi.lib is where ActivateAudioInterfaceAsync lives; avrt.lib is
-// AvSetMmThreadCharacteristics.
+// AvSetMmThreadCharacteristics; version.lib is GetFileVersionInfo, which the
+// listings use to report "Discord" rather than "Discord.exe"; dwmapi.lib is
+// DwmGetWindowAttribute, which tells a suspended Store app's leftover window
+// apart from one somebody actually has open.
 const compile = [
   "cl",
   "/nologo",
@@ -108,6 +111,9 @@ const compile = [
   "ole32.lib",
   "mmdevapi.lib",
   "avrt.lib",
+  "version.lib",
+  "dwmapi.lib",
+  "user32.lib",
   "/SUBSYSTEM:CONSOLE",
 ].join(" ");
 
