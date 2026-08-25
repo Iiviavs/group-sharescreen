@@ -24,6 +24,15 @@ publish:
   provider: github
   owner: Nem-Tudo
   repo: group-sharescreen
+  # electron-builder's own default, stated explicitly because it is load
+  # bearing and invisible otherwise: uploads land in a *draft* release, and a
+  # draft is not returned by GitHub's `releases/latest` API. So neither the
+  # updater nor the site's /download route sees a build until someone presses
+  # "Publish release" on GitHub. That press is the deliberate go-live moment —
+  # the three platforms finish at different times, and shipping half a release
+  # to everyone while the Mac build is still running would be worse than
+  # waiting.
+  releaseType: draft
 
 # Only the shell ships. The UI is the deployed site (see electron/main.ts's
 # opening comment), so none of .next/, app/, lib/ or the Next dependency tree
@@ -87,6 +96,13 @@ mac:
     # architecture server-side. Shipping one file that runs on both trades
     # download size for never handing someone an app that won't open.
     - target: dmg
+      arch: [universal]
+    # Not redundant with the dmg above, and not optional: Squirrel.Mac
+    # updates from a zip, and electron-updater's MacUpdater looks for one
+    # while explicitly skipping dmg and pkg. Ship only the dmg and macOS
+    # auto-update finds no file to apply — silently. The dmg is what a
+    # person downloads; this is what the updater consumes.
+    - target: zip
       arch: [universal]
   hardenedRuntime: true
   gatekeeperAssess: false

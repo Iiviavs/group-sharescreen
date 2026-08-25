@@ -1,0 +1,73 @@
+# Builds and publishes the desktop app for all three platforms.
+#
+# This exists for a reason that has nothing to do with convenience: a macOS
+# build can only be produced on macOS. Building the .dmg from a Windows
+# machine is not slow or awkward, it is impossible — so without CI the Mac
+# version could never ship at all. Linux is the same story to a lesser
+# degree, and Windows is here so all three come from one place and one
+# version number.
+#
+# Triggered by a version tag, which is what makes releasing a deliberate act
+# rather than something an ordinary commit can do by accident.
+
+name: Release desktop app
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Lets a release be re-run from the Actions tab without inventing a tag,
+  # for the case where one platform's build failed and the others are fine.
+  workflow_dispatch:
+
+jobs:
+  release:
+    strategy:
+      # Deliberately not fail-fast: if the Mac build breaks, the Windows and
+      # Linux artifacts are still worth having in the draft rather than being
+      # cancelled halfway through.
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            args: --mac
+          - os: windows-latest
+            args: --win
+          - os: ubuntu-latest
+            args: --linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # The full install, Electron binary included — unlike the Dockerfile,
+      # this is the one place that genuinely needs it.
+      - run: npm ci
+
+      # esbuild bundles the shell's three entrypoints; electron-builder only
+      # packages what this produces.
+      - run: npm run electron:build
+
+      - name: Type-check the shell
+        run: npm run electron:typecheck
+
+      - name: Build and publish
+        env:
+          # Provided automatically by Actions — no secret to configure for
+          # publishing to this repo's own releases.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signing, when configured. electron-builder skips signing when
+          # these are absent, so the workflow works unsigned from day one and
+          # starts signing the moment the secrets exist — no edit here.
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npx electron-builder ${{ matrix.args }} --publish always

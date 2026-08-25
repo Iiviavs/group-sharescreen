@@ -133,24 +133,43 @@ mid-call and nobody is left behind.
 Auto-update is inert in development (`app.isPackaged` is false), so
 `electron:dev` never touches the network for it.
 
+**Updates are differential, not whole-installer.** electron-builder ships a
+`.blockmap` next to each build; the updater compares it against the installed
+version and fetches only the changed blocks, falling back to a full download
+when the old blockmap is missing or the diff is too large. This is also why
+the macOS target builds a `zip` alongside the `dmg` — the dmg is what a
+person downloads, the zip is what Squirrel.Mac can actually apply.
+
+**A launch does not update before it runs.** Opening the app starts the
+version already installed; the check happens shortly after, and the new
+version takes effect on restart. The one case where a launch is already
+current is when the previous session downloaded an update and quit — that is
+`autoInstallOnAppQuit` doing its job.
+
 > **macOS needs signing for this to work at all.** Squirrel.Mac refuses to
 > apply an update to an unsigned bundle — silently. Windows and Linux update
 > fine unsigned.
 
 ## Releasing
 
-`electron-builder.yml` publishes to GitHub Releases on
-`Nem-Tudo/group-sharescreen`, and the site's `/download` route reads that
-release to redirect visitors to the right installer — so cutting a release is
-all it takes for the download link to point at the new build.
+A commit does **not** release anything. Releasing is a tag, and the work
+happens in CI:
 
 ```bash
-npm version patch                 # or minor/major — this is what users see
-GH_TOKEN=<token> npm run electron:dist -- --publish always
+npm version patch     # bumps package.json, commits, and creates a v… tag
+git push --follow-tags
 ```
 
-Without `GH_TOKEN` the build runs normally and simply skips the upload, which
-is what `electron:dist` on its own does.
+That tag triggers `.github/workflows/release-desktop.yml`, which builds on
+macOS, Windows and Linux in parallel and uploads to a **draft** GitHub
+release. Nothing is live yet — press **Publish release** on GitHub when all
+three finish, and only then do `/download` and the updater start seeing it.
+
+CI is not a nicety here: a macOS build can only be produced on macOS, so
+without it the Mac version could never ship from a Windows machine at all.
+
+To build locally without releasing — `npm run electron:dist` — you get
+installers in `electron/release/` and no upload (there is no `GH_TOKEN`).
 
 The macOS target is a **universal** binary on purpose: browsers on Apple
 Silicon still report "Intel Mac OS X", so `/download` cannot tell the
