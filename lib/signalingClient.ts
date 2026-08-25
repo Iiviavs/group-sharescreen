@@ -8,6 +8,7 @@ import type { Supporter } from "./supporter";
 import { getAccountToken } from "./accountApi";
 import { getTurnstileToken } from "./turnstile";
 import { getBrowserFingerprint } from "./fingerprint";
+import { currentAnnouncementDevice } from "./announcement";
 
 // `role: "moderator"` marks a moderator silently watching for moderation
 // (see server/signaling.ts's "admin-join") — present in the peer list so
@@ -438,6 +439,7 @@ class SignalingClient {
           clientId: getClientId(),
           token: this.desiredToken,
           fingerprint: getBrowserFingerprint(),
+          device: currentAnnouncementDevice(),
         });
       }
     };
@@ -548,6 +550,7 @@ class SignalingClient {
             clientId: getClientId(),
             token: guestToken,
             fingerprint: getBrowserFingerprint(),
+            device: currentAnnouncementDevice(),
           });
         }
         // A fresh registration (initial connect, or reconnect) counts as a
@@ -862,6 +865,11 @@ class SignalingClient {
         // See lib/fingerprint.ts — a moderation handle that outlives a new
         // guest identity or a fresh account, sent on every register.
         fingerprint: getBrowserFingerprint(),
+        // Browser vs desktop app, PC vs phone — the same value announcement
+        // targeting uses. The server pairs it with the User-Agent to sort
+        // this connection into a /metrics platform bucket; see the API's
+        // server/clientPlatform.ts for why neither side can do it alone.
+        device: currentAnnouncementDevice(),
       });
     }
   }
