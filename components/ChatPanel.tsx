@@ -253,9 +253,8 @@ export function ChatPanel({
             return (
               <div
                 key={m.id}
-                className={`-mx-1.5 rounded-md px-1.5 py-1 text-sm ${
-                  isMention ? "bg-yellow-200 dark:bg-blue-500/25" : ""
-                }`}
+                className={`-mx-1.5 rounded-md px-1.5 py-1 text-sm ${isMention ? "bg-yellow-200 dark:bg-blue-500/25" : ""
+                  }`}
               >
                 <div className="flex items-baseline gap-1.5">
                   <DisplayUserName
@@ -296,24 +295,28 @@ export function ChatPanel({
           onSubmit={handleSubmit}
           className="flex gap-2 border-t border-zinc-200 p-2 dark:border-zinc-800"
         >
-          {onSendGif && (
-            <Popover
-              open={pickerOpen}
-              onClose={() => setPickerOpen(false)}
-              placement="top-start"
-              content={<GifPicker onSelect={handleGifSelect} />}
-              tooltip="Adicionar GIF"
-            >
+          <Popover
+            open={pickerOpen}
+            onClose={() => setPickerOpen(false)}
+            placement="top-start"
+            content={<GifPicker onSelect={handleGifSelect} />}
+            tooltip={onSendGif ? "Adicionar GIF" : "Utilize uma conta para enviar GIFs"}
+          >
+            <span className="inline-flex shrink-0">
               <button
                 type="button"
+                disabled={!onSendGif}
                 onClick={() => setPickerOpen((open) => !open)}
                 aria-label="Adicionar GIF"
-                className="shrink-0 rounded-md border border-zinc-300 px-2.5 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                className={`inline-flex shrink-0 items-center justify-center rounded-md border px-2.5 py-1.5 text-xs font-semibold transition ${onSendGif
+                    ? "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    : "cursor-not-allowed border-zinc-200 text-zinc-400 dark:border-zinc-800 dark:text-zinc-600"
+                  }`}
               >
                 GIF
               </button>
-            </Popover>
-          )}
+            </span>
+          </Popover>
           <textarea
             ref={textareaRef}
             value={input}
