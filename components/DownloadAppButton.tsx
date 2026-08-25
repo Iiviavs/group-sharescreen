@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { FaApple, FaLinux, FaWindows } from "react-icons/fa";
 import { isDesktopApp } from "@/lib/desktop";
 import { detectDownloadPlatform, type DownloadPlatform } from "@/lib/downloadTargets";
+import { trackDownloadClick, type DownloadSource } from "@/lib/analytics";
 import { Tooltip } from "./Tooltip";
 
 // Offers the desktop build, labelled for the machine the visitor is on.
@@ -23,7 +24,15 @@ const LABEL: Record<DownloadPlatform, { text: string; Icon: typeof FaWindows }> 
   linux: { text: "Baixar para Linux", Icon: FaLinux },
 };
 
-export function DownloadAppButton({ className = "" }: { className?: string }) {
+export function DownloadAppButton({
+  source,
+  className = "",
+}: {
+  // Required, not defaulted: every surface that offers the download has to
+  // say which one it is, or the metric silently merges them.
+  source: DownloadSource;
+  className?: string;
+}) {
   // navigator does not exist during the server render, so the platform is
   // resolved after mount. Deferred by a tick rather than set synchronously
   // in the effect body — the cascading-render pattern React 19 warns about,
@@ -50,6 +59,7 @@ export function DownloadAppButton({ className = "" }: { className?: string }) {
     <Tooltip content="Remova o eco, obtenha melhor desempenho e mais.">
       <a
         href="/download"
+        onClick={() => trackDownloadClick(source, platform)}
         className={`inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 px-3.5 py-2 text-sm font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-900 ${className}`}
       >
         <Icon className="h-4 w-4 shrink-0" />

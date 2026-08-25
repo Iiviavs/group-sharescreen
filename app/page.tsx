@@ -350,7 +350,7 @@ export default function Home() {
           <span className="h-2 w-2 rounded-full bg-emerald-500" />
           {peopleOnline} {peopleOnline === 1 ? "pessoa" : "pessoas"} em salas agora
         </span>
-        <DownloadAppButton />
+        <DownloadAppButton source="home" />
       </div>
       )}
       {false && <>

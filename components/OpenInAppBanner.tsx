@@ -76,7 +76,7 @@ export function OpenInAppBanner({ handle }: { handle: string }) {
         Tem o aplicativo do GoLive? Abra esta sala nele.
       </span>
       <span className="ml-auto flex items-center gap-2">
-        <DownloadAppButton/>
+        <DownloadAppButton source="room-banner" />
         <button
           type="button"
           onClick={() => {

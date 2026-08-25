@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { trackEvent } from "@/lib/analytics";
+import { trackEvent, trackDownloadClick } from "@/lib/analytics";
 import { DownloadIcon, ShareIcon } from "@/components/icons";
 import { Tooltip } from "@/components/Tooltip";
 import { isDesktopApp } from "@/lib/desktop";
@@ -174,7 +174,7 @@ export function InstallAppButton() {
         <a
           href="/download"
           onClick={() => {
-            trackEvent("download_app_clicked", { platform: downloadPlatform });
+            trackDownloadClick("install-prompt", downloadPlatform);
             dismiss();
           }}
           title={LABEL[downloadPlatform]}
