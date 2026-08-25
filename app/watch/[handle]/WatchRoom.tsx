@@ -1047,7 +1047,7 @@ export function WatchRoom({ handle }: { handle: string }) {
         <p className="text-lg font-medium text-zinc-900 dark:text-zinc-100">
           {state.bannedReason
             ? `Você foi banido do site: ${state.bannedReason}`
-            : "Você foi temporariamente banido do site pelo AntiSpam. Faz o L"}
+            : "Você foi temporariamente banido do site pelo AntiSpam. Duração: 1h. Faz o L"}
         </p>
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
           Se você acredita que isso é um engano, abra um ticket em <a
