@@ -22,6 +22,7 @@ import {
   SHARE_BITRATE_OPTIONS,
 } from "@/lib/useRoomMedia";
 import { trackEvent } from "@/lib/analytics";
+import { copyText } from "@/lib/clipboard";
 import {
   toRoomHandle,
   isPrivateRoomHandle,
@@ -811,15 +812,17 @@ export function WatchRoom({ handle }: { handle: string }) {
   }
 
   async function handleCopyLink() {
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      trackEvent("room_link_copied");
-      setLinkCopied(true);
-      setTimeout(() => setLinkCopied(false), 2000);
-    } catch {
-      // Clipboard permission denied or unavailable — nothing sensible to do
-      // beyond leaving the button unconfirmed.
+    // copyText, not navigator.clipboard directly: the desktop shell denies
+    // the clipboard permission on builds already installed out there, and
+    // the fallback inside copyText is what keeps this button working for
+    // them. See lib/clipboard.ts.
+    if (!(await copyText(window.location.href))) {
+      // Nothing sensible to do beyond leaving the button unconfirmed.
+      return;
     }
+    trackEvent("room_link_copied");
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
   }
 
   // A stored guest name, or an account token still being resolved (see

@@ -350,8 +350,23 @@ function safeProtocol(url: string): string {
 // Camera, microphone and screen capture are the app's reason to exist and
 // are granted; everything else a web page can ask for is refused outright
 // rather than left to a default that may change between Electron versions.
+//
+// clipboard-sanitized-write is in that list for a less obvious reason: a
+// browser grants navigator.clipboard.writeText() off the user gesture alone
+// and never asks, so nothing on the site looks like it needs a permission —
+// but Electron routes it here instead, and denying it made "Compartilhar
+// sala" fail silently. Writing plain text the user just asked us to copy is
+// not a capability worth withholding. ("sanitized" is Chromium's name for
+// the text-only write; clipboard-read, which lets a page *read* what the
+// user copied elsewhere, is deliberately not here.)
 function installPermissionHandlers() {
-  const allowed = new Set(["media", "display-capture", "audioCapture", "videoCapture"]);
+  const allowed = new Set([
+    "media",
+    "display-capture",
+    "audioCapture",
+    "videoCapture",
+    "clipboard-sanitized-write",
+  ]);
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
     const fromApp = webContents?.getURL().startsWith(APP_ORIGIN) ?? false;
     callback(fromApp && allowed.has(permission));
