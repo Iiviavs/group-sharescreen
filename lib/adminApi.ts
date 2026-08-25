@@ -423,6 +423,18 @@ export async function setAntiSpamEnabled(enabled: boolean): Promise<boolean> {
 // Supporters list shown in the "Apoiar projeto" hover card (see
 // components/SupportersTooltip.tsx) — same whole-list-replace shape as
 // banned words, no per-item id.
+// Tells every connected app to check GitHub for a new release right now,
+// instead of on its own six-hourly schedule (see server/signaling.ts's POST
+// /admin/desktop-update). Resolves with the number of *connections* that
+// were notified — not desktop apps, which the server cannot count, since the
+// shell and a browser tab are the same website on the same socket.
+export async function launchDesktopUpdate(): Promise<number> {
+  const data = await adminFetch<{ notified: number }>("/admin/desktop-update", {
+    method: "POST",
+  });
+  return data.notified;
+}
+
 export async function fetchAdminSupporters(): Promise<Supporter[]> {
   const data = await adminFetch<{ supporters: Supporter[] }>("/admin/supporters");
   return data.supporters;

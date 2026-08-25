@@ -141,6 +141,13 @@ export type SignalingState = {
   // empty via a live edit rather than just never having set it).
   supporters: Supporter[];
   supportersSeq: number;
+  // Bumped by the admin panel's "lançar atualização" broadcast (see
+  // server/signaling.ts's POST /admin/desktop-update). A counter rather than
+  // a flag because the message carries nothing and has no lasting state —
+  // the *event* is the whole payload, and a boolean would have no honest
+  // value to go back to after it fired. Only UpdateAppButton reads it, and
+  // only inside the desktop shell; everywhere else it just counts.
+  desktopUpdateSeq: number;
   // Set when the server rejected our last chat message for containing a
   // banned word (see server/signaling.ts's "chat-blocked") — cleared as
   // soon as another send is attempted, so it's a one-shot warning rather
@@ -207,6 +214,7 @@ const initialState: SignalingState = {
   partnerSeq: 0,
   supporters: [],
   supportersSeq: 0,
+  desktopUpdateSeq: 0,
   chatBlockedMessage: null,
   typingPeerIds: [],
 };
@@ -778,6 +786,9 @@ class SignalingClient {
           supporters: Array.isArray(msg.supporters) ? (msg.supporters as Supporter[]) : [],
           supportersSeq: this.state.supportersSeq + 1,
         });
+        break;
+      case "desktop-update-check":
+        this.setState({ desktopUpdateSeq: this.state.desktopUpdateSeq + 1 });
         break;
       case "chat-blocked":
         this.setState({ chatBlockedMessage: (msg.message as string) ?? "Mensagem bloqueada." });

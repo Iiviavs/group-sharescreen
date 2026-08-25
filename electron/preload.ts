@@ -65,4 +65,8 @@ contextBridge.exposeInMainWorld("golive", {
   installUpdate(): void {
     ipcRenderer.send(IPC.updateInstall);
   },
+
+  checkForUpdate(): void {
+    ipcRenderer.send(IPC.updateCheck);
+  },
 });

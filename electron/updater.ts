@@ -35,12 +35,41 @@ const CHECK_INTERVAL_MS = 6 * 60 * 60_000;
 // after any given page exists. See IPC.updatePending.
 let pendingVersion: string | null = null;
 
+// Timestamp of the last check, so an on-demand one can be throttled. The
+// scheduled polls don't need this — they are hours apart — but the
+// admin-triggered path is driven by a remote page that reloads on every
+// navigation, and a run of reloads right after a broadcast would otherwise
+// mean a run of GitHub requests from the same machine.
+let lastCheckAt = 0;
+const MIN_CHECK_GAP_MS = 60_000;
+
+function check() {
+  lastCheckAt = Date.now();
+  autoUpdater.checkForUpdates().catch(() => {
+    // Offline, GitHub unreachable, a release without the right manifest —
+    // all invisible on purpose. A failed check is not something the user
+    // did or can fix, and the app works perfectly without one.
+  });
+}
+
 export function initAutoUpdater() {
   // Registered before the isPackaged bail-out below so the renderer's query
   // always gets a real answer. In dev that answer is null forever, which is
   // the truth — there is no packaged app to update — and is far better than
   // an invoke that rejects on a channel nobody handles.
   ipcMain.handle(IPC.updatePending, () => pendingVersion);
+  ipcMain.on(IPC.updateCheck, () => {
+    // Ignored outright in dev for the same reason initAutoUpdater bails
+    // below: there is no packaged app to update, so a check would only log
+    // an error. Nothing downstream cares — a nudge that finds nothing and a
+    // nudge that never ran look identical from the page's side.
+    if (!app.isPackaged) return;
+    // Already downloaded: the button is showing (or is about to be), and
+    // checking again would find the same release and re-download it.
+    if (pendingVersion) return;
+    if (Date.now() - lastCheckAt < MIN_CHECK_GAP_MS) return;
+    check();
+  });
   ipcMain.on(IPC.updateInstall, () => {
     if (!pendingVersion) return;
     // isSilent=true, isForceRunAfter=true — reinstall without a wizard and
@@ -80,17 +109,10 @@ export function initAutoUpdater() {
   });
 
   autoUpdater.on("error", () => {
-    // Offline, GitHub unreachable, a release without the right manifest — all
-    // of it is invisible to the user on purpose. A failed update check is not
-    // something they did or can fix, and the app works perfectly without one.
+    // Same silence as the rejected promise in check() above — electron-
+    // updater reports the same conditions through both, and an unhandled
+    // "error" event would crash the process.
   });
-
-  const check = () => {
-    autoUpdater.checkForUpdates().catch(() => {
-      // Same reasoning as the error handler; checkForUpdates rejects on the
-      // same conditions and an unhandled rejection here would be noise.
-    });
-  };
 
   setTimeout(check, FIRST_CHECK_DELAY_MS);
   setInterval(check, CHECK_INTERVAL_MS);

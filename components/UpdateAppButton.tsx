@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { DownloadIcon } from "@/components/icons";
 import { Tooltip } from "@/components/Tooltip";
 import { getDesktopBridge } from "@/lib/desktop";
+import { useSignaling } from "@/lib/useSignaling";
+import { signalingClient } from "@/lib/signalingClient";
 import { trackEvent } from "@/lib/analytics";
 
 // "A new version is ready — press when you feel like it."
@@ -21,10 +23,19 @@ import { trackEvent } from "@/lib/analytics";
 export function UpdateAppButton() {
   const [version, setVersion] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
+  // The admin panel's "lançar atualização" broadcast, counted (see
+  // signalingClient's desktopUpdateSeq).
+  const { desktopUpdateSeq } = useSignaling();
 
   useEffect(() => {
     const bridge = getDesktopBridge();
     if (!bridge) return;
+
+    // The socket is what carries the admin broadcast below, and AnnouncementBanner
+    // already opens one on every page — but this component must not depend on
+    // that staying true. connect() is a documented no-op when one is already
+    // open or on its way.
+    signalingClient.connect();
 
     // Asked *and* subscribed, because either one alone loses the update
     // half the time: the download usually finishes while some other page is
@@ -47,6 +58,18 @@ export function UpdateAppButton() {
       unsubscribe?.();
     };
   }, []);
+
+  // An admin published a release and pressed the button. All that does is
+  // move this machine's next check forward to now — the shell still has to
+  // find a real release and finish downloading it before anything appears,
+  // and on a machine already running the newest version nothing ever will.
+  useEffect(() => {
+    // Zero is the initial value, not a broadcast: without this the check
+    // would fire once on every page load, which is exactly the six-hourly
+    // schedule's job and not this effect's.
+    if (desktopUpdateSeq === 0) return;
+    getDesktopBridge()?.checkForUpdate?.();
+  }, [desktopUpdateSeq]);
 
   if (!version) return null;
 

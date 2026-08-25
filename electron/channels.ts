@@ -28,6 +28,12 @@ export const IPC = {
   updatePending: "golive:update:pending",
   /** renderer -> main: quit and apply the downloaded update now. */
   updateInstall: "golive:update:install",
+  /**
+   * renderer -> main: check GitHub for a release right now, instead of
+   * waiting for the next scheduled poll. Sent when the site relays the
+   * admin panel's "lançar atualização" broadcast.
+   */
+  updateCheck: "golive:update:check",
 
   /** picker -> main: the sources to show. */
   pickerList: "golive:picker:list",

@@ -73,6 +73,12 @@ export interface DesktopBridge {
   onUpdateReady?(callback: (version: string) => void): () => void;
   /** Quits and applies the downloaded update immediately. */
   installUpdate?(): void;
+  /**
+   * Asks the shell to check for a release right now rather than on its own
+   * six-hourly schedule. Fire-and-forget: the answer, if there is one,
+   * arrives later through onUpdateReady.
+   */
+  checkForUpdate?(): void;
 }
 
 declare global {
