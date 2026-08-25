@@ -20,6 +20,14 @@ on:
   # for the case where one platform's build failed and the others are fine.
   workflow_dispatch:
 
+# Creating a release is a *write* to the repository, and the default
+# GITHUB_TOKEN is read-only on repos configured with the restricted default.
+# Without this the build succeeds and the upload fails with a 403 — which
+# reads as "electron-builder is broken" rather than "the token cannot do
+# this". Declared at workflow level so every job in the matrix has it.
+permissions:
+  contents: write
+
 jobs:
   release:
     strategy:

@@ -119,7 +119,14 @@ mac:
 linux:
   category: Network
   target:
+    # AppImage only, on purpose. A .deb would be nice for Debian/Ubuntu, but
+    # electron-builder refuses to build one without a maintainer address —
+    # it reads `author.email` from package.json, and there is no sensible
+    # value to invent for that. To add it back: give `author` the object
+    # form ({ name, email }) or set `linux.maintainer` here, then add
+    # `- target: deb` below.
+    #
+    # AppImage is the better default regardless: one file, no package
+    # manager, runs on any distribution.
     - target: AppImage
-      arch: [x64]
-    - target: deb
       arch: [x64]
