@@ -25,7 +25,15 @@ const output = path.join(outdir, "golive-audiocap.exe");
 // Objects go outside bin/ because bin/ holds a *committed* binary, and a
 // directory that is half checked-in artefact and half build litter is one
 // stray `git add .` away from a mess.
-const objdir = path.join(here, ".obj");
+const objdir = path.join(here, "obj");
+// Named explicitly rather than handing /Fo the directory. Pointing /Fo at a
+// directory requires a trailing backslash — without one cl reads the path as
+// the object *file* to write and dies with "Cannot open compiler generated
+// file: ... Permission denied", because that path is a directory. And a
+// trailing backslash is its own trap: immediately before the closing quote
+// the CRT's argument parser reads it as an escaped quote. There is exactly
+// one translation unit here, so naming the file sidesteps both.
+const objfile = path.join(objdir, "audiocap.obj");
 // The source hash the committed binary was built from. Recorded next to it
 // because timestamps cannot answer this question: git does not preserve
 // mtimes, so every file in a fresh clone is stamped at checkout time and
@@ -53,6 +61,10 @@ const force = process.argv.includes("--force");
 // without the helper would be a feature quietly disappearing from an
 // installer, with the symptom (everyone echoing again) reported weeks later.
 const required = process.argv.includes("--required");
+// Prints the cl invocation instead of running it. Worth having: the argument
+// quoting here is the fiddly part (see objfile above), and the alternative
+// way to check it is a push and a CI round trip.
+const dryRun = process.argv.includes("--dry-run");
 
 if (process.platform !== "win32") {
   console.log("[native] not Windows — skipping golive-audiocap");
@@ -69,6 +81,44 @@ const upToDate = existsSync(output) && stampedHash() === hash;
 // recompiling for nothing.
 if (!force && upToDate) {
   console.log("[native] golive-audiocap.exe is up to date");
+  process.exit(0);
+}
+
+// /MT statically links the CRT. That matters for something we ship: with
+// /MD the helper needs the Visual C++ redistributable installed on the
+// user's machine, and its absence shows up as the helper failing to start
+// with no diagnostic anywhere.
+//
+// mmdevapi.lib is where ActivateAudioInterfaceAsync lives; avrt.lib is
+// AvSetMmThreadCharacteristics.
+const compile = [
+  "cl",
+  "/nologo",
+  "/std:c++17",
+  "/EHsc",
+  "/O2",
+  "/MT",
+  "/W3",
+  "/DUNICODE",
+  "/D_UNICODE",
+  `/Fo:${quote(objfile)}`,
+  quote(source),
+  `/Fe:${quote(output)}`,
+  "/link",
+  "ole32.lib",
+  "mmdevapi.lib",
+  "avrt.lib",
+  "/SUBSYSTEM:CONSOLE",
+].join(" ");
+
+function quote(value) {
+  return `"${value}"`;
+}
+
+// Printed before the toolchain is looked for, so the quoting can be checked
+// on a machine that has no MSVC — which is the whole point of having it.
+if (dryRun) {
+  console.log(compile);
   process.exit(0);
 }
 
@@ -131,37 +181,6 @@ if (!devcmd) {
 
 mkdirSync(outdir, { recursive: true });
 mkdirSync(objdir, { recursive: true });
-
-// /MT statically links the CRT. That matters for something we ship: with
-// /MD the helper needs the Visual C++ redistributable installed on the
-// user's machine, and its absence shows up as the helper failing to start
-// with no diagnostic anywhere.
-//
-// mmdevapi.lib is where ActivateAudioInterfaceAsync lives; avrt.lib is
-// AvSetMmThreadCharacteristics.
-const compile = [
-  "cl",
-  "/nologo",
-  "/std:c++17",
-  "/EHsc",
-  "/O2",
-  "/MT",
-  "/W3",
-  "/DUNICODE",
-  "/D_UNICODE",
-  `/Fo:${path.join(objdir, "")}`,
-  quote(source),
-  `/Fe:${quote(output)}`,
-  "/link",
-  "ole32.lib",
-  "mmdevapi.lib",
-  "avrt.lib",
-  "/SUBSYSTEM:CONSOLE",
-].join(" ");
-
-function quote(value) {
-  return `"${value}"`;
-}
 
 // One cmd.exe invocation for both halves: VsDevCmd.bat sets the environment
 // (INCLUDE, LIB, PATH) in the shell it runs in, so a separate spawn for cl

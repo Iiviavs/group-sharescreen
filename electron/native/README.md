@@ -75,6 +75,22 @@ So the only reason to build locally is to change `audiocap.cpp` itself. Edit
 it, push, and CI recompiles and commits the result; the warning you get
 meanwhile tells you the binary predates your edit.
 
+## Your editor will show this file as full of errors
+
+Expected, on any machine without a Windows SDK — which is most of them, and
+all of the macOS and Linux ones. IntelliSense cannot find `audioclient.h` or
+`audioclientactivationparams.h`, so every COM type in the file is unknown and
+the errors cascade into the hundreds. A C/C++ extension configured for MinGW
+or clang adds to it: `__uuidof`, `STDMETHODIMP` and `__declspec(uuid)` are
+MSVC extensions this file uses deliberately.
+
+None of that says anything about whether it compiles. The build runs `cl.exe`
+against the real SDK in CI, and that is the only opinion that counts. There is
+no editor configuration that fixes this without installing the SDK — the
+headers genuinely are not on the machine — so the choice is to install it (see
+below, it is the same install that lets you build locally) or to ignore the
+squiggles.
+
 ## Building it anyway
 
 ```bash

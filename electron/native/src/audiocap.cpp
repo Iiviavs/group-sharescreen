@@ -62,16 +62,24 @@
 #include <audioclient.h>
 #include <audioclientactivationparams.h>
 #include <avrt.h>
+#include <mmreg.h>
 #include <objbase.h>
 
 #include <fcntl.h>
 #include <io.h>
 #include <stdio.h>
+// Named rather than left to windows.h to drag in: _wtoi64 is stdlib's,
+// wcscmp/fwprintf/fputws are wchar's. Both do arrive transitively today, and
+// relying on that is how a build breaks on an SDK update that tidied its own
+// includes — in CI, where the round trip to find out is minutes long.
+#include <stdlib.h>
+#include <wchar.h>
 
 #include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
+#include <new>
 #include <thread>
 #include <vector>
 
@@ -115,9 +123,17 @@ static const size_t kMaxQueuedBytes =
 // ---------------------------------------------------------------------------
 
 // ActivateAudioInterfaceAsync answers through a COM callback rather than
-// returning the interface, so this object exists only to be signalled. It
-// lives on the caller's stack for the duration of the wait, which is why
-// Release() never deletes anything.
+// returning the interface, so this object exists only to be signalled.
+//
+// Heap-allocated and properly reference counted, rather than a local of the
+// function that waits on it. The tempting version — put it on the stack,
+// have Release() do nothing, return once the event is signalled — has a
+// narrow use-after-free in it: ActivateCompleted signals the event and only
+// *then* returns, at which point the API still holds its own reference and
+// will Release it. The waiting thread can wake, return, and unwind that
+// stack frame in between, leaving the API to call Release on memory that no
+// longer exists. Letting the refcount decide when this dies costs one
+// allocation and closes the window.
 class ActivationHandler : public IActivateAudioInterfaceCompletionHandler,
                           public IAgileObject {
  public:
@@ -176,8 +192,11 @@ class ActivationHandler : public IActivateAudioInterfaceCompletionHandler,
   }
 
   STDMETHODIMP_(ULONG) AddRef() override { return ++refs_; }
-  // Deliberately does not delete: this object is stack-allocated by wmain.
-  STDMETHODIMP_(ULONG) Release() override { return --refs_; }
+  STDMETHODIMP_(ULONG) Release() override {
+    const ULONG remaining = --refs_;
+    if (remaining == 0) delete this;
+    return remaining;
+  }
 
  private:
   HANDLE done_ = nullptr;
@@ -198,20 +217,26 @@ static HRESULT ActivateExcludingProcessTree(DWORD pid, IAudioClient** out) {
 
   PROPVARIANT activate_params = {};
   activate_params.vt = VT_BLOB;
-  activate_params.blob.cbSize = sizeof(params);
+  activate_params.blob.cbSize = static_cast<ULONG>(sizeof(params));
   activate_params.blob.pBlobData = reinterpret_cast<BYTE*>(&params);
 
-  ActivationHandler handler;
-  if (!handler.event()) return E_FAIL;
+  ActivationHandler* handler = new (std::nothrow) ActivationHandler();
+  if (!handler) return E_OUTOFMEMORY;
+  if (!handler->event()) {
+    handler->Release();
+    return E_FAIL;
+  }
 
   IActivateAudioInterfaceAsyncOperation* operation = nullptr;
   HRESULT hr = ActivateAudioInterfaceAsync(
       VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, __uuidof(IAudioClient),
-      &activate_params, &handler, &operation);
+      &activate_params, handler, &operation);
   if (operation) operation->Release();
-  if (FAILED(hr)) return hr;
-
-  return handler.Wait(out);
+  if (SUCCEEDED(hr)) hr = handler->Wait(out);
+  // Drops *our* reference only. Any reference the API is still holding keeps
+  // the object alive until it is done with it, which is the whole point.
+  handler->Release();
+  return hr;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +302,7 @@ struct CaptureContext {
   HANDLE buffer_ready = nullptr;
   HANDLE quit = nullptr;
   PcmSink* sink = nullptr;
-  WORD block_align = kChannels * (kBitsPerSample / 8);
+  WORD block_align = static_cast<WORD>(kChannels * (kBitsPerSample / 8));
 };
 
 static void CaptureLoop(CaptureContext* ctx) {
@@ -386,7 +411,8 @@ int wmain(int argc, wchar_t** argv) {
   format.nChannels = kChannels;
   format.nSamplesPerSec = kSampleRate;
   format.wBitsPerSample = kBitsPerSample;
-  format.nBlockAlign = format.nChannels * format.wBitsPerSample / 8;
+  format.nBlockAlign =
+      static_cast<WORD>(format.nChannels * format.wBitsPerSample / 8);
   format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
   format.cbSize = 0;
 

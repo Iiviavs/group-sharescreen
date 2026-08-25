@@ -51,6 +51,6 @@ next-env.d.ts
 # stale binary is detectable rather than silent.
 #
 # Only the compiler's intermediates are ignored.
-/electron/native/.obj
+/electron/native/obj
 /electron/native/bin/*.obj
 /electron/native/bin/*.pdb
