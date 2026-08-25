@@ -767,6 +767,59 @@ export function WatchRoom({ handle }: { handle: string }) {
     previousNameRef.current = state.name;
   }, [state.name, renaming]);
 
+
+  const [chatWidth, setChatWidth] = useState(() => {
+    if (typeof window === "undefined") return 288;
+
+    const saved = localStorage.getItem("chat-panel-width");
+    const width = saved ? Number(saved) : 288;
+
+    return Number.isFinite(width)
+      ? Math.min(Math.max(width, 240), 1000)
+      : 288;
+  });
+  const isResizingChatRef = useRef(false);
+
+  useEffect(() => {
+    localStorage.setItem("chat-panel-width", String(chatWidth));
+  }, [chatWidth]);
+
+  useEffect(() => {
+    function handleMouseMove(e: MouseEvent) {
+      if (!isResizingChatRef.current) return;
+
+      // O lado direito do layout permanece parado.
+      // O mouse controla diretamente a posição da borda esquerda.
+      const rightEdge = window.innerWidth - 16; // padding direito do container
+      const newWidth = rightEdge - e.clientX;
+
+      setChatWidth(Math.min(Math.max(newWidth, 240), 1000));
+    }
+
+    function handleMouseUp() {
+      if (!isResizingChatRef.current) return;
+
+      isResizingChatRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
+
+  function startChatResize(e: React.MouseEvent) {
+    e.preventDefault();
+    isResizingChatRef.current = true;
+    document.body.style.cursor = "ew-resize";
+    document.body.style.userSelect = "none";
+  }
+
   function toggleSoundEffects() {
     const next = !soundEffectsOn;
     setSoundEffectsOn(next);
@@ -2301,7 +2354,18 @@ export function WatchRoom({ handle }: { handle: string }) {
             else in here, so chatSection's flex-1 (see its heightClassName)
             has the whole column to fill. */}
         {isWideLayout && (
-          <aside className="flex h-full w-72 shrink-0 flex-col overflow-hidden">
+          <aside
+            className="relative flex h-full shrink-0 flex-col overflow-hidden"
+            style={{ width: `${chatWidth}px` }}
+          >
+            <div
+              onMouseDown={startChatResize}
+              className="group absolute inset-y-0 left-0 z-30 w-2 cursor-ew-resize"
+              title="Arraste para redimensionar o chat"
+            >
+              <div className="absolute inset-y-0 left-0 w-1 bg-zinc-300 opacity-0 transition-opacity group-hover:opacity-100 dark:bg-zinc-700" />
+            </div>
+
             {chatSection}
           </aside>
         )}
