@@ -66,16 +66,53 @@ jobs:
         run: npm run electron:typecheck
 
       - name: Build and publish
+        # bash on all three runners (Windows included, via Git Bash) so the
+        # one conditional below does not need a per-OS variant.
+        shell: bash
         env:
           # Provided automatically by Actions — no secret to configure for
           # publishing to this repo's own releases.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Signing, when configured. electron-builder skips signing when
-          # these are absent, so the workflow works unsigned from day one and
-          # starts signing the moment the secrets exist — no edit here.
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          # Read under neutral names and only promoted to the ones
+          # electron-builder looks at when they actually hold something —
+          # see the conditional below for why that matters.
+          # Separate per platform on purpose: macOS and Windows need
+          # *different* certificates, and electron-builder reads them from
+          # different variables (CSC_LINK for mac, WIN_CSC_LINK for Windows,
+          # which falls back to CSC_LINK). One shared secret would hand the
+          # Apple certificate to the Windows signer.
+          MAC_CERT_BASE64: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          WIN_CERT_BASE64: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CERT_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          # Notarization. electron-builder picks these up on its own and
+          # skips with a warning when they are absent, so nothing here needs
+          # a switch — but note it throws if only *some* are set, which is a
+          # good error rather than a silently unnotarized build.
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npx electron-builder ${{ matrix.args }} --publish always
+        run: |
+          # A missing secret in Actions is an empty string, not an absent
+          # variable — so `CSC_LINK: ${{ secrets.CSC_LINK }}` sets CSC_LINK=""
+          # rather than leaving it unset. electron-builder then treats that
+          # empty string as a certificate *path*: path.resolve(cwd, "")
+          # resolves to the repo root, which exists but is a directory, and
+          # the build dies with "<repo root> not a file". Windows and Linux
+          # survive it (they take a different signing path), macOS does not.
+          #
+          # So the certificate variables are only exported when they carry a
+          # value, and macOS signing is explicitly switched off otherwise —
+          # without that, electron-builder still goes looking for an identity
+          # in the (empty) CI keychain.
+          if [ -n "$MAC_CERT_BASE64" ]; then
+            export CSC_LINK="$MAC_CERT_BASE64"
+            export CSC_KEY_PASSWORD="$MAC_CERT_PASSWORD"
+          else
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          if [ -n "$WIN_CERT_BASE64" ]; then
+            export WIN_CSC_LINK="$WIN_CERT_BASE64"
+            export WIN_CSC_KEY_PASSWORD="$WIN_CERT_PASSWORD"
+          fi
+          npx electron-builder ${{ matrix.args }} --publish always
