@@ -22,7 +22,8 @@
 
 import { signalingClient } from "./signalingClient";
 import { iceConfigFor } from "./iceConfig";
-import { PeerQualityRegistry } from "./peerQualityController";
+import { PeerQualityRegistry, type DegradationMode } from "./peerQualityController";
+import { applyVideoCodecPreferences } from "./videoCodecPreferences";
 import { tierSpec, type QualityTier } from "./videoQuality";
 
 // On by default — but the planner (see useMeshTopology's
@@ -63,6 +64,13 @@ export class RelayLink {
   private stallTimer: ReturnType<typeof setInterval> | null = null;
   private lastFrames = 0;
   private lastFrameAt = 0;
+  // The origin's own "O que você está compartilhando" pick — carried over
+  // from theirs rather than defaulting here (see setChildren), because a
+  // relay's re-encode is the same content, being handed to the same kind of
+  // viewer, and deserves the same treatment. Left unset before the first
+  // relay-assign arrives, but that assignment is also what triggers the
+  // first openChild, so no child is ever built against the wrong value.
+  private degradation: DegradationMode = "text";
 
   constructor(
     /** Who originally produced this stream — not who handed it to us. */
@@ -75,8 +83,18 @@ export class RelayLink {
     private onSourceLost: () => void
   ) {}
 
-  /** Reconciles our children against a fresh assignment from the root. */
-  setChildren(assignment: RelayChild[]) {
+  /**
+   * Reconciles our children against a fresh assignment from the root, and
+   * updates what content this actually is — see the `degradation` field.
+   * Applied to every already-open child's live sender immediately (a
+   * setParameters call, same as any other tier/ceiling change — see
+   * PeerQualityController.setDegradation); a *new* codec preference only
+   * ever takes effect on a fresh transceiver, so it only reaches children
+   * opened after this call, exactly like the root's own openSendPC.
+   */
+  setChildren(assignment: RelayChild[], degradation: DegradationMode) {
+    this.degradation = degradation;
+    this.quality.setDegradation(degradation);
     const wanted = new Map(assignment.map((c) => [c.id, c.tier]));
     for (const id of [...this.children.keys()]) {
       if (!wanted.has(id)) this.closeChild(id);
@@ -102,6 +120,16 @@ export class RelayLink {
     for (const track of this.stream.getTracks()) {
       const sender = pc.addTrack(track, this.stream);
       if (track.kind === "video") {
+        // Both of these used to be skipped entirely on the relay path — a
+        // relayed viewer's picture was encoded with the browser's untuned
+        // defaults regardless of what the broadcaster actually picked,
+        // which is a plausible source of "losing FPS" complaints on its
+        // own: exactly the deepest, most cascade-dependent viewers got the
+        // least-informed encode of anyone in the room.
+        track.contentHint = this.degradation === "text" ? "text" : "motion";
+        const transceivers = pc.getTransceivers();
+        const transceiver = transceivers.find((t) => t.sender === sender);
+        if (transceiver) applyVideoCodecPreferences(transceiver, this.degradation);
         const height = track.getSettings().height ?? tierSpec(tier).height;
         this.quality.add(peerId, pc, sender, tier, height);
       }

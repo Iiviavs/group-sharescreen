@@ -243,9 +243,18 @@ function QualityControls({
               </button>
             ))}
           </div>
-          {shareProfile === "text" && shareFps > 60 && (
+          {/* Was `shareFps > 60`, which only ever fired for the account-only
+              120fps option — the far more common 60fps pick (see
+              SHARE_FPS_OPTIONS) triggered nothing, silently leaving anyone
+              who bumped fps without also switching profile to sit through
+              exactly the slideshow degradationPreference's own comment
+              warns about (see peerQualityController.ts). setShareProfile
+              clamps fps back to 30 when switching *into* "text" for the
+              same reason — this is the mirror case, raising fps while
+              already there, and needs the same threshold. */}
+          {shareProfile === "text" && shareFps > 30 && (
             <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">
-              Acima de 60fps, escolha &quot;Vídeo / jogo&quot; — no modo texto o
+              Acima de 30fps, escolha &quot;Vídeo / jogo&quot; — no modo texto o
               navegador descarta quadros para manter a nitidez.
             </p>
           )}

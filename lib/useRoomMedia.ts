@@ -29,6 +29,7 @@ import { PeerQualityRegistry, type DegradationMode } from "./peerQualityControll
 import { qualityNegotiator } from "./qualityNegotiation";
 import { useMeshCapacity, useMeshTopology, type PeerCapacity } from "./useMeshTopology";
 import { RelayManager, RELAY_ENABLED, type RelayChild } from "./relayLink";
+import { applyVideoCodecPreferences } from "./videoCodecPreferences";
 import { setPreferredAudioSink } from "./audioContext";
 
 type Channel = "screen" | "camera" | "mic";
@@ -73,6 +74,11 @@ type SignalData = {
   // tile rather than whoever happened to relay it.
   originId?: string;
   children?: RelayChild[];
+  // Present only on "relay-assign" — the origin's own content-type pick
+  // (see QualityPreset.degradation), so the relay re-encodes with the same
+  // codec/degradationPreference choice the origin made instead of always
+  // falling back to RelayLink's own "text" default.
+  degradation?: DegradationMode;
 };
 
 // Mesh P2P means whoever shares their screen uploads one full encode per
@@ -198,35 +204,6 @@ export const SHARE_BITRATE_OPTIONS: { value: ShareBitrate; label: string; accoun
   { value: "maximo", label: "Bitrate máximo (~16 Mbps)", accountOnly: true },
 ];
 
-// Codec preference. VP9 first for text-heavy screen content (its screen
-// content mode is what keeps small text legible at low bitrate), but AV1 is
-// preferred for motion because it holds up far better at 60fps for the same
-// bits. H264 outranks VP8 in both because it is the one with broad hardware
-// encode support, which matters enormously here: a relay or a busy
-// broadcaster encoding several streams at once lives or dies on whether the
-// GPU can take that work off the main thread.
-//
-// Note the deliberate ordering difference from the previous version, which
-// always put VP9 first regardless of content.
-function applyVideoCodecPreferences(transceiver: RTCRtpTransceiver, mode: DegradationMode) {
-  if (typeof RTCRtpSender.getCapabilities !== "function") return;
-  const capabilities = RTCRtpSender.getCapabilities("video");
-  if (!capabilities?.codecs) return;
-  const order =
-    mode === "text"
-      ? ["video/VP9", "video/AV1", "video/H264", "video/VP8"]
-      : ["video/AV1", "video/H264", "video/VP9", "video/VP8"];
-  const sorted = [...capabilities.codecs].sort((a, b) => {
-    const ia = order.indexOf(a.mimeType);
-    const ib = order.indexOf(b.mimeType);
-    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
-  });
-  try {
-    transceiver.setCodecPreferences(sorted);
-  } catch {
-    // Ignored - some older browser versions reject the call entirely.
-  }
-}
 // How far apart (in ms) openSendPCsStaggered spaces out opening sendPCs to
 // many peers at once. 150ms means a 50-person room's burst spreads across
 // ~7.5s instead of landing in a single instant, so it no longer clusters
@@ -746,6 +723,10 @@ function useBroadcastChannel(
           kind: "relay-assign",
           originId: signalingClient.state.selfId ?? undefined,
           children,
+          // Without this the relay had no way to know whether it was
+          // re-encoding a game or a slide deck, and defaulted to "text"
+          // regardless — see RelayLink.setChildren.
+          degradation: degradationModeRef.current,
         });
       }
 
@@ -1066,6 +1047,12 @@ function useBroadcastChannel(
           const origin = data.originId ?? from;
           const source = relaySources.current.get(origin);
           if (!source || !data.children) return;
+          // "text" if the sender predates this field (an older tab still
+          // open through a deploy) — the same default RelayLink itself
+          // starts with, so a missing field changes nothing about today's
+          // behavior; it just stops silently overriding a broadcaster who
+          // did send one.
+          const degradation: DegradationMode = data.degradation === "motion" ? "motion" : "text";
           const link = relays.current.ensure(origin, source.stream, source.pc, forceRelayIceRef.current, () => {
             // Our own source died. Tell the broadcaster so it can re-plan
             // rather than keep routing people through a dead branch.
@@ -1078,7 +1065,7 @@ function useBroadcastChannel(
               eligibleRelay: false,
             });
           });
-          link.setChildren(data.children);
+          link.setChildren(data.children, degradation);
           return;
         }
         if (data.kind === "capacity") {
