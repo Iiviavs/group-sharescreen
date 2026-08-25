@@ -6,6 +6,13 @@ directories:
   output: electron/release
   buildResources: electron/build
 
+# No spaces in installer filenames. electron-builder's default puts them in
+# ("GoLive Setup 0.1.0.exe") while writing the *hyphenated* name into
+# latest.yml, and GitHub rewrites spaces again on upload — three spellings of
+# one file, across the two manifests the updater and /download depend on.
+# Naming them explicitly makes all of it the same string.
+artifactName: ${productName}-${version}.${ext}
+
 # Where `electron-builder --publish always` uploads the installers, and what
 # the site's /download route reads to find the newest ones. GitHub Releases
 # is also what an auto-updater would consume later, so pointing at it now
@@ -61,6 +68,9 @@ win:
     signingHashAlgorithms: [sha256]
 
 nsis:
+  # "Setup" in the name so it reads as an installer rather than the app
+  # itself once it is sitting in someone's Downloads folder.
+  artifactName: ${productName}-Setup-${version}.${ext}
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true

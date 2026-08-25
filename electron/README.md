@@ -110,6 +110,33 @@ production dependency regardless, so the `!node_modules/**/*` line in
 Next, React, sharp and their native binaries — 278 MB measured, versus 57 KB
 for the shell.
 
+## Updates — two halves, only one of which needs an installer
+
+**The website updates itself.** Every screen, all the WebRTC, the whole
+mesh/cascade implementation is loaded live from the deploy, so shipping a
+front-end change reaches users on their next launch with nothing to install.
+That is the wrapper architecture paying off, not a feature anyone had to
+build.
+
+The one caveat: a window left open for days keeps running the JavaScript it
+loaded on launch, exactly like a browser tab nobody reloaded. `Ctrl/Cmd+R`
+fixes it. Reloading automatically is deliberately *not* done — it would drop
+a call in progress, which is a far worse outcome than slightly stale code.
+
+**The shell needs an installer**, and that is what `updater.ts` handles:
+`main.ts`, the preloads and the picker ship inside the executable. It polls
+the same GitHub release the `/download` route reads, downloads in the
+background, and then asks. Saying "Depois" is a real answer — the update
+applies on the next ordinary quit either way, so nobody gets interrupted
+mid-call and nobody is left behind.
+
+Auto-update is inert in development (`app.isPackaged` is false), so
+`electron:dev` never touches the network for it.
+
+> **macOS needs signing for this to work at all.** Squirrel.Mac refuses to
+> apply an update to an unsigned bundle — silently. Windows and Linux update
+> fine unsigned.
+
 ## Releasing
 
 `electron-builder.yml` publishes to GitHub Releases on

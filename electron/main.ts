@@ -39,6 +39,7 @@ import { IPC, VERSION_ARG, type PickerSource } from "./channels";
 // no React, no imports, nothing that touches `window` at load time — so it
 // bundles into the main process without dragging the app in with it.
 import { desktopOAuthNonce } from "../lib/desktop";
+import { initAutoUpdater } from "./updater";
 
 // Where the UI comes from. Overridable so `npm run electron:dev` can point at
 // a local `next dev` without a rebuild.
@@ -380,6 +381,9 @@ if (!gotLock) {
     });
 
     createWindow();
+    // Keeps the shell current. The website updates itself by being loaded
+    // fresh; this is for the code that ships inside the executable.
+    initAutoUpdater(() => mainWindow);
 
     // A launch *from* a deep link on Windows/Linux arrives in this
     // process's own argv rather than through "second-instance".
