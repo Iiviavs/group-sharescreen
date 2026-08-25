@@ -1,0 +1,104 @@
+# Builds the WASAPI capture helper and commits it back to the repo.
+#
+# Why a binary is committed at all
+# --------------------------------
+# `electron/native/src/audiocap.cpp` needs MSVC and a Windows SDK to compile.
+# Requiring that of everyone who clones the repo would mean a several-GB
+# install before `npm run electron:dev` works — on macOS and Linux it is not
+# even possible, and those checkouts still have to be able to *package* a
+# Windows build.
+#
+# So the compiler lives here instead. This job has MSVC (windows-latest ships
+# Visual Studio 2022 with the C++ workload), builds the helper whenever its
+# source changes, and commits the result. Everyone else gets a current binary
+# from `git clone` and never needs a toolchain.
+#
+# What keeps that honest is `bin/golive-audiocap.exe.sha256`: the hash of the
+# .cpp the .exe was built from, committed beside it. `build.mjs` compares it
+# against the source on every build, so a stale binary is something anyone can
+# detect locally — and says so — rather than something that silently ships.
+#
+# Releases do not depend on this. `release-desktop.yml` recompiles the helper
+# from source with --force on its own Windows runner, so what ships to users is
+# built from the tagged source rather than taken on trust from git — and it
+# would still produce a correct installer if this job had never run.
+
+name: Build audio capture helper
+
+on:
+  push:
+    branches: [main]
+    # Only the things that change the binary. The commit this job makes
+    # touches `bin/` alone, so it cannot re-trigger itself.
+    paths:
+      - "electron/native/src/**"
+      - "electron/native/build.mjs"
+      - ".github/workflows/build-audiocap.yml"
+  workflow_dispatch:
+
+# The commit at the end is a write to the repository, and the default token
+# is read-only on repos configured that way. Without this the build succeeds
+# and the push fails with a 403.
+permissions:
+  contents: write
+
+# A second push while this is running would race the first to `git push`.
+# Cancelling the older one is right: only the newest source matters, and the
+# binary it produces supersedes whatever the earlier run was building.
+concurrency:
+  group: build-audiocap
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # No `npm ci`: build.mjs imports nothing outside Node's standard
+      # library, and installing Electron and the whole Next tree to run one
+      # script that shells out to cl.exe would be minutes spent on nothing.
+      - name: Compile golive-audiocap
+        run: node electron/native/build.mjs --force --required
+
+      # Proof it is a real executable rather than an empty file a silent
+      # failure left behind — `cl` returning 0 is not by itself that proof,
+      # and a broken binary committed here would reach every clone.
+      - name: Smoke-test the binary
+        shell: bash
+        run: |
+          set -e
+          exe=electron/native/bin/golive-audiocap.exe
+          test -s "$exe"
+          # No --exclude-pid, so it must reject the arguments and exit 2
+          # (EXIT_BAD_ARGS) rather than crash or hang. `set -e` would kill the
+          # step on a non-zero exit, hence the guard.
+          code=0
+          "./$exe" </dev/null >/dev/null 2>&1 || code=$?
+          echo "exit code without arguments: $code"
+          test "$code" = "2"
+
+      - name: Commit the rebuilt helper
+        shell: bash
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- electron/native/bin/golive-audiocap.exe electron/native/bin/golive-audiocap.exe.sha256
+          # A rebuild that produced an identical binary is the normal outcome
+          # of touching build.mjs or this workflow, and has nothing to commit.
+          if git diff --staged --quiet; then
+            echo "helper unchanged — nothing to commit"
+            exit 0
+          fi
+          git commit -m "build: recompile golive-audiocap from $(git rev-parse --short HEAD) [skip ci]"
+          # Rebase rather than force: an unrelated commit may have landed on
+          # main while this was compiling, and this job's own change is
+          # confined to two files that nothing else writes.
+          git pull --rebase origin main
+          git push origin HEAD:main

@@ -79,6 +79,38 @@ export interface DesktopBridge {
    * arrives later through onUpdateReady.
    */
   checkForUpdate?(): void;
+
+  /**
+   * System audio capture with GoLive's own output excluded — the thing that
+   * stops a screen share from carrying the room's voices back to the room.
+   * See lib/desktopSystemAudio.ts, which is the only thing that should touch
+   * this, and electron/systemAudio.ts for what is on the other end.
+   *
+   * Absent on any machine that cannot do it, which is most of them: every
+   * browser, macOS and Linux, Windows 10 (the process-loopback API needs
+   * build 20348, which consumer Windows 10 never reached), and every desktop
+   * build from before this existed. Its absence *is* the feature check.
+   */
+  systemAudio?: {
+    /** The PCM format `onData` delivers. Interleaved little-endian. */
+    readonly format: { sampleRate: number; channels: number; bitsPerSample: number };
+    /**
+     * Starts the capture. Resolves false when the helper could not be
+     * started, which the caller must treat as "ask getDisplayMedia for audio
+     * the ordinary way" rather than as an error.
+     *
+     * Has to be called before getDisplayMedia: the shell reads "a capture is
+     * running" as "do not also attach my own loopback track to this share".
+     */
+    start(): Promise<boolean>;
+    /** Stops the capture. Safe when nothing is running. */
+    stop(): void;
+    /**
+     * Subscribes to the PCM. `onEnded` fires if the capture stops on its own
+     * (a device invalidated, or the helper crashed). Returns an unsubscribe.
+     */
+    onData(onChunk: (chunk: Uint8Array) => void, onEnded: () => void): () => void;
+  };
 }
 
 declare global {

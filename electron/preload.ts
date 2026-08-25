@@ -10,7 +10,7 @@
 // website's side of this contract is typed.
 
 import { contextBridge, ipcRenderer } from "electron";
-import { IPC, VERSION_ARG } from "./channels";
+import { IPC, SYSTEM_AUDIO_ARG, SYSTEM_AUDIO_FORMAT, VERSION_ARG } from "./channels";
 
 // A sandboxed preload cannot reach `app.getVersion()` — it has no main-process
 // APIs at all — and `process.env` set in main is not propagated here either.
@@ -69,4 +69,54 @@ contextBridge.exposeInMainWorld("golive", {
   checkForUpdate(): void {
     ipcRenderer.send(IPC.updateCheck);
   },
+
+  // Undefined on every machine that cannot do this — anything but Windows
+  // 11, and any build shipped without the helper binary. That absence is
+  // the website's feature check (see lib/desktopSystemAudio.ts): a bridge
+  // that always existed and merely returned false would make the site pay
+  // an IPC round trip before every share just to find out.
+  systemAudio: hasSystemAudioExclusion()
+    ? {
+        format: { ...SYSTEM_AUDIO_FORMAT },
+
+        start(): Promise<boolean> {
+          return ipcRenderer.invoke(IPC.systemAudioStart);
+        },
+
+        stop(): void {
+          ipcRenderer.send(IPC.systemAudioStop);
+        },
+
+        // One subscription carries both the audio and the end of it, because
+        // they are the same thing to the caller: a share that has to keep
+        // running either way, with or without sound.
+        onData(onChunk: unknown, onEnded: unknown): () => void {
+          if (typeof onChunk !== "function") return () => {};
+          const data = (_event: unknown, chunk: unknown) => {
+            // Electron delivers a Buffer as a Uint8Array here. Checked
+            // rather than assumed: this callback is the one place raw bytes
+            // from another process reach the page, and passing something
+            // unexpected to the worklet would fail deep inside the audio
+            // graph instead of here.
+            if (chunk instanceof Uint8Array) (onChunk as (c: Uint8Array) => void)(chunk);
+          };
+          const ended = () => {
+            if (typeof onEnded === "function") (onEnded as () => void)();
+          };
+          ipcRenderer.on(IPC.systemAudioData, data);
+          ipcRenderer.on(IPC.systemAudioEnded, ended);
+          return () => {
+            ipcRenderer.off(IPC.systemAudioData, data);
+            ipcRenderer.off(IPC.systemAudioEnded, ended);
+          };
+        },
+      }
+    : undefined,
 });
+
+// Whether main flagged this machine as capable, through the same argv
+// channel readVersion above uses — a sandboxed preload has no other way to
+// ask. See SYSTEM_AUDIO_ARG in channels.ts.
+function hasSystemAudioExclusion(): boolean {
+  return process.argv.includes(SYSTEM_AUDIO_ARG);
+}

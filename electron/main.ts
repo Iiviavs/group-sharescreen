@@ -31,7 +31,7 @@ import {
   type DesktopCapturerSource,
 } from "electron";
 import path from "node:path";
-import { IPC, VERSION_ARG, type PickerSource } from "./channels";
+import { IPC, SYSTEM_AUDIO_ARG, VERSION_ARG, type PickerSource } from "./channels";
 // The website's own definition of the marker path, imported rather than
 // re-implemented: both sides have to agree on the exact nonce format or a
 // perfectly good login is silently dropped, and a regex copied into two
@@ -40,6 +40,12 @@ import { IPC, VERSION_ARG, type PickerSource } from "./channels";
 // bundles into the main process without dragging the app in with it.
 import { desktopOAuthNonce } from "../lib/desktop";
 import { initAutoUpdater } from "./updater";
+import {
+  isSystemAudioCapturing,
+  isSystemAudioExclusionSupported,
+  startSystemAudioCapture,
+  stopSystemAudioCapture,
+} from "./systemAudio";
 
 // Where the UI comes from. Overridable so `npm run electron:dev` can point at
 // a local `next dev` without a rebuild.
@@ -259,8 +265,19 @@ function installDisplayMediaHandler() {
           // just the audio. Returning video alone instead degrades exactly
           // the way Firefox does, which the web app already handles (see
           // the NotReadableError retry in useRoomMedia's capture).
+          //
+          // isSystemAudioCapturing() is the other half of that: the site
+          // starts our own capture (systemAudio.ts) before calling
+          // getDisplayMedia, and when it did, attaching Electron's loopback
+          // track here as well would put the room's own audio back into the
+          // share — the exact echo the helper exists to remove. So a running
+          // capture means video only, and the audio arrives as PCM instead.
           audio:
-            request.audioRequested && process.platform === "win32" ? "loopback" : undefined,
+            request.audioRequested &&
+            process.platform === "win32" &&
+            !isSystemAudioCapturing()
+              ? "loopback"
+              : undefined,
         });
       })();
     },
@@ -306,7 +323,14 @@ function createWindow(initialUrl: string = APP_URL) {
       nodeIntegration: false,
       sandbox: true,
       // The only channel a sandboxed preload has for a value from here.
-      additionalArguments: [`${VERSION_ARG}${app.getVersion()}`],
+      // The audio flag rides along for the same reason the version does: the
+      // preload has to decide whether to expose the systemAudio bridge at
+      // all, and "is this Windows 11 with the helper present" is a question
+      // only the main process can answer.
+      additionalArguments: [
+        `${VERSION_ARG}${app.getVersion()}`,
+        ...(isSystemAudioExclusionSupported() ? [SYSTEM_AUDIO_ARG] : []),
+      ],
       // Screen sharing is the entire point of the app and needs no gesture
       // ceremony; media playback (a shared video source) does.
       autoplayPolicy: "document-user-activation-required",
@@ -427,6 +451,18 @@ if (!gotLock) {
       return shell.openExternal(url);
     });
 
+    // Checked against our own origin like every other capability: the
+    // renderer is remote content, and starting an OS-level audio capture is
+    // not something an arbitrary page that ended up in this window should be
+    // able to do. (Nothing else *can* be in this window — will-navigate
+    // sends other origins to the browser — but the handler must not depend
+    // on that being true forever.)
+    ipcMain.handle(IPC.systemAudioStart, (event) => {
+      if (!event.sender.getURL().startsWith(APP_ORIGIN)) return false;
+      return startSystemAudioCapture(event.sender);
+    });
+    ipcMain.on(IPC.systemAudioStop, () => stopSystemAudioCapture());
+
     // A launch *from* a deep link on Windows/Linux arrives in this process's
     // own argv rather than through "second-instance". Read before the window
     // is created, not after: handling it afterwards would load the home page
@@ -449,6 +485,12 @@ if (!gotLock) {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
   });
+
+  // The helper is a child process holding an open audio client. Its own
+  // stdin watchdog would end it once our pipes close, but doing it here
+  // means it stops while WASAPI can still be shut down cleanly, rather than
+  // during the process teardown that follows.
+  app.on("will-quit", () => stopSystemAudioCapture());
 
   // macOS convention is that closing the window does not quit the app.
   app.on("window-all-closed", () => {

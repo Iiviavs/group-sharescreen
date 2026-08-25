@@ -39,11 +39,57 @@ export const IPC = {
   pickerList: "golive:picker:list",
   /** picker -> main: the user's choice (a source id, or null to cancel). */
   pickerChoose: "golive:picker:choose",
+
+  /**
+   * renderer -> main: begin capturing system audio with GoLive's own output
+   * left out of it (see electron/systemAudio.ts). Answers whether it
+   * actually started — false means the renderer should ask getDisplayMedia
+   * for audio the ordinary way instead.
+   *
+   * Deliberately called *before* getDisplayMedia rather than after: a
+   * capture already running is exactly how the display-media handler knows
+   * not to attach Electron's own loopback track to the same share.
+   */
+  systemAudioStart: "golive:system-audio:start",
+  /** renderer -> main: stop the capture started above. */
+  systemAudioStop: "golive:system-audio:stop",
+  /** main -> renderer: one chunk of PCM, in SYSTEM_AUDIO_FORMAT. */
+  systemAudioData: "golive:system-audio:data",
+  /**
+   * main -> renderer: the helper exited on its own (a device was
+   * invalidated, or it crashed). No more chunks are coming.
+   */
+  systemAudioEnded: "golive:system-audio:ended",
+} as const;
+
+/**
+ * The wire format of the PCM on `systemAudioData`, shared so the native
+ * helper, the shell and the web app's AudioWorklet cannot drift apart on it.
+ * Interleaved little-endian signed 16-bit — which is what a Buffer from the
+ * helper already is, and one multiply away from what Web Audio wants.
+ *
+ * Fixed rather than negotiated because process loopback is not tied to an
+ * audio endpoint: the capture asks the audio engine for this format and gets
+ * it, instead of having to accept whatever a device's mix format happens to
+ * be.
+ */
+export const SYSTEM_AUDIO_FORMAT = {
+  sampleRate: 48000,
+  channels: 2,
+  bitsPerSample: 16,
 } as const;
 
 // Prefix of the argv entry main.ts injects via `additionalArguments` to hand
 // the app version to the sandboxed preload — see preload.ts's readVersion.
 export const VERSION_ARG = "--golive-version=";
+
+// Present in the same argv when this machine can capture system audio with
+// GoLive's own output excluded (Windows 11 or later, helper binary present —
+// see systemAudio.ts's isSystemAudioExclusionSupported). The preload uses it
+// to decide whether to expose the `systemAudio` half of the bridge at all,
+// so the website's feature check is "does this function exist" rather than a
+// round trip it would have to make before every share.
+export const SYSTEM_AUDIO_ARG = "--golive-system-audio-exclusion";
 
 /** What the picker window renders for each capturable surface. */
 export interface PickerSource {

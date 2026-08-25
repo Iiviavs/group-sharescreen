@@ -13,7 +13,7 @@ working, and a shipped app that never falls behind the website.
 
 ## What the shell actually adds
 
-Three things, and everything in `main.ts` exists for one of them:
+Four things, and everything in `main.ts` exists for one of them:
 
 1. **A screen picker.** Electron does not implement `getDisplayMedia`'s own
    chooser. Without `setDisplayMediaRequestHandler` the app's single most
@@ -23,7 +23,12 @@ Three things, and everything in `main.ts` exists for one of them:
    embedded browser — Google rejects it outright as `disallowed_useragent` —
    so login leaves for the real browser and comes back through a custom
    protocol. See below.
-3. **The security posture remote content requires.** No Node in the renderer,
+3. **System audio without the echo.** A screen share carrying system audio
+   captures GoLive too — every participant's voice, and the audio of any
+   share being watched — and sends it back to the room, so everyone hears
+   themselves a beat late. `native/golive-audiocap.exe` captures the mix with
+   our own process tree excluded instead. Windows only; see below.
+4. **The security posture remote content requires.** No Node in the renderer,
    no navigating away from our own origin, no in-app windows for third-party
    links.
 
@@ -72,6 +77,8 @@ website and `main.ts`, rather than being a regex copied into two files.
 | `picker-preload.ts` | The picker window's bridge — separate, and deliberately narrower |
 | `picker.html`       | Fallback screen/window chooser                                   |
 | `channels.ts`       | IPC channel names, shared so a rename cannot desync the sides    |
+| `systemAudio.ts`    | Runs the capture helper, streams its PCM to the renderer         |
+| `native/`           | The WASAPI capture helper — prebuilt and committed; own README   |
 | `build.mjs`         | esbuild bundling — see the note below                            |
 | `build/icon.png`    | 512×512 source icon; electron-builder derives `.ico`/`.icns`     |
 
@@ -91,6 +98,7 @@ is made.
 npm run electron:dev        # build + run against http://localhost:3000
 npm run electron:start      # build + run against production
 npm run electron:typecheck  # tsc over the shell (esbuild does not type-check)
+npm run electron:native     # just the WASAPI helper (electron:build runs it too)
 npm run electron:pack       # unpacked build, for a quick look
 npm run electron:dist       # real installers
 ```
@@ -183,6 +191,43 @@ architectures apart and one file that runs on both is the only honest answer.
 - **Auto-update** is not wired. It needs a publish target and hosting, so it
   is a deployment decision rather than something to guess at here.
 
+## System audio, and why the room does not hear itself
+
+A share with system audio captures *everything* the machine plays, GoLive
+included — the participants' voices and the audio of whatever share is being
+watched. Sent back out, that is an echo of the whole room.
+
+Windows can capture the mix minus one process tree, and `native/` is a small
+executable that does exactly that, excluding Electron's main process (which
+covers Chromium's audio service, where all of the app's audio is actually
+rendered). Its PCM comes back over IPC and `lib/desktopSystemAudio.ts` turns
+it into an ordinary `MediaStreamTrack`. `native/README.md` has the details.
+
+**The helper is committed as a prebuilt binary**, at
+`native/bin/golive-audiocap.exe`, rebuilt and committed by CI whenever its
+source changes. Nobody needs MSVC and a Windows SDK to clone, run or package
+this app — which matters most on macOS and Linux, where installing them is
+not an option and a Windows build still has to be packageable. A `.sha256`
+beside it records which `audiocap.cpp` it came from, so a stale binary is
+reported instead of silently used.
+
+Three things about the handoff are worth knowing before touching it:
+
+- **The site starts the capture before calling `getDisplayMedia`.** A capture
+  already running is precisely how `setDisplayMediaRequestHandler` knows to
+  withhold Electron's own loopback track from that request — attaching both
+  would put the echo right back.
+- **The bridge is absent, not false, where this cannot work.** The preload
+  exposes `window.golive.systemAudio` only when main says the machine is
+  capable, so the website's check is "does this exist". That keeps both
+  version-skew directions working: an old site in a new shell never arms it
+  and gets ordinary loopback, and a new site in an old shell finds nothing to
+  arm.
+- **Everything GoLive plays is excluded, not just the voices** — the chimes,
+  an embedded YouTube tile. There is no process-level distinction to make,
+  and it is the right outcome anyway: everyone in the room already hears
+  those locally.
+
 ## Known platform limits
 
 - **System audio** is Windows-only. Electron's loopback capture has no
@@ -190,6 +235,16 @@ architectures apart and one file that runs on both is the only honest answer.
   it anyway fails the *whole* capture rather than just the audio — so the
   handler requests video alone there. The web app already degrades that way
   for Firefox, so nothing extra was needed on its side.
+- **Excluding GoLive from that capture is decided at runtime, not by
+  version.** Microsoft documents process loopback as needing build 20348,
+  which looks like "Windows 11 only" — but that is Server 2022's build, and
+  the API is reported working on Windows 10 22H2, where only
+  `GetMixFormat`/`IsFormatSupported` fail. The helper calls neither, so the
+  shell asks the machine instead of a build number: it waits for the helper
+  to report `READY` and falls back to Electron's loopback if it does not.
+  Resist adding a version check here — guessing high silently disables the
+  feature on machines that support it. macOS and Linux have no system audio
+  to exclude in the first place.
 - **macOS screen recording** requires the user to grant permission in System
   Settings the first time, and the app must be restarted afterwards. That is
   the OS's behaviour, not something the shell can smooth over.

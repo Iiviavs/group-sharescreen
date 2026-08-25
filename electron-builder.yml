@@ -71,6 +71,26 @@ win:
   target:
     - target: nsis
       arch: [x64]
+  # The WASAPI capture helper that lets a screen share carry system audio
+  # *without* the room's own voices in it — see electron/systemAudio.ts.
+  #
+  # extraResources rather than files, and that is not a style choice: `files`
+  # puts everything inside app.asar, and an executable cannot be launched
+  # from inside an asar archive — the OS sees one file, not a directory it
+  # can spawn from. This copies it into resources/ as a real file, which is
+  # where systemAudio.ts's helperPath() looks when app.isPackaged.
+  #
+  # A directory plus a filter rather than naming the file directly: a machine
+  # without the C++ toolchain skips the compile (see electron/native/build.mjs)
+  # and produces no binary, and electron-builder complains about a source path
+  # that does not exist while copying an empty directory happily. That build
+  # then falls back to Electron's own loopback capture. The directory itself
+  # is committed with a .gitkeep for exactly this reason.
+  extraResources:
+    - from: electron/native/bin
+      to: .
+      filter:
+        - golive-audiocap.exe
   # Unsigned builds trip SmartScreen. Set CSC_LINK/CSC_KEY_PASSWORD in CI to
   # sign; electron-builder picks them up without further config here.
   signtoolOptions:

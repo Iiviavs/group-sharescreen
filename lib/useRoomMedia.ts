@@ -31,6 +31,7 @@ import { useMeshCapacity, useMeshTopology, type PeerCapacity } from "./useMeshTo
 import { RelayManager, RELAY_ENABLED, type RelayChild } from "./relayLink";
 import { applyVideoCodecPreferences } from "./videoCodecPreferences";
 import { setPreferredAudioSink } from "./audioContext";
+import { startExcludedSystemAudio } from "./desktopSystemAudio";
 
 type Channel = "screen" | "camera" | "mic";
 type ShareSource = "display" | "camera";
@@ -1456,7 +1457,7 @@ export function useRoomMedia(room: string) {
   const screen = useBroadcastChannel(
     "screen",
     room,
-    (source) => {
+    async (source) => {
       // Capture at the full picked resolution regardless of room size. The
       // per-viewer tiers downscale each *sender* independently (see
       // peerQualityController), so capturing small would only put a hard
@@ -1487,8 +1488,23 @@ export function useRoomMedia(room: string) {
         noiseSuppression: false,
         autoGainControl: false,
       };
-      return navigator.mediaDevices
-        .getDisplayMedia({ video: videoConstraints, audio: audioConstraints })
+      // In the desktop app on Windows 11, the system audio comes from
+      // somewhere else entirely: a native helper capturing the mix with
+      // GoLive's own process tree excluded, so the share does not carry the
+      // room's voices — or the audio of a share being watched — back to the
+      // room. See lib/desktopSystemAudio.ts.
+      //
+      // Started before getDisplayMedia and not after, because a capture
+      // already running is how the shell knows to withhold its own loopback
+      // track from this request. Null everywhere else (every browser, macOS,
+      // Linux, Windows 10), and the line below then asks for system audio
+      // the way it always did.
+      const excluded = await startExcludedSystemAudio();
+      const capture = navigator.mediaDevices
+        .getDisplayMedia({
+          video: videoConstraints,
+          audio: excluded ? false : audioConstraints,
+        })
         .catch((err) => {
           // Requesting system audio can fail for reasons that have nothing
           // to do with the user's choice in the picker: no default loopback
@@ -1514,6 +1530,26 @@ export function useRoomMedia(room: string) {
           }
           throw err;
         });
+
+      if (!excluded) return capture;
+
+      // The picker is still open at this point, and it is the one place the
+      // share can still be called off. A cancelled picker rejects here, and
+      // the helper started above would otherwise keep an OS audio capture
+      // running with nothing at the other end of it.
+      let stream: MediaStream;
+      try {
+        stream = await capture;
+      } catch (err) {
+        excluded.stop();
+        throw err;
+      }
+      // From here on the track is an ordinary member of the stream: the
+      // share's teardown stops every track it finds without caring where
+      // they came from, and this one's stop() takes the helper with it (see
+      // desktopSystemAudio.ts).
+      stream.addTrack(excluded.track);
+      return stream;
     },
     () => hasDisplayCapture() || hasCameraCapture(),
     "Seu navegador não suporta compartilhamento de tela nem câmera.",

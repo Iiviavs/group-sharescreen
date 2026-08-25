@@ -62,6 +62,25 @@ jobs:
       # packages what this produces.
       - run: npm run electron:build
 
+      # The helper is what keeps a screen share from carrying the room's own
+      # voices back into it (electron/systemAudio.ts).
+      #
+      # --force even though a current binary is committed to the repo: what
+      # ships to users should be built from the tagged source on this runner,
+      # not taken on trust from git. It costs seconds, and it means the
+      # installer's binary provably corresponds to the tag rather than to
+      # whatever was committed to bin/ at some point.
+      #
+      # --required because the script otherwise warns and carries on when
+      # MSVC is missing, which is right for a developer machine and wrong
+      # here: the installer would go out without the feature and nothing
+      # would say so until users reported the echo coming back. windows-latest
+      # ships Visual Studio 2022 with the C++ workload, so this is a guard
+      # rather than something expected to trip.
+      - name: Build the native audio helper from source
+        if: runner.os == 'Windows'
+        run: node electron/native/build.mjs --force --required
+
       - name: Type-check the shell
         run: npm run electron:typecheck
 

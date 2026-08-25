@@ -43,3 +43,14 @@ next-env.d.ts
 # electron desktop shell build output
 /electron/dist
 /electron/release
+# The WASAPI capture helper is deliberately NOT ignored: bin/golive-audiocap.exe
+# and its .sha256 are committed, built by .github/workflows/build-audiocap.yml.
+# That is what lets a clone run and package the app without MSVC and a Windows
+# SDK installed — impossible on macOS and Linux, and a multi-GB install on
+# Windows. The .sha256 records which audiocap.cpp the .exe was built from, so a
+# stale binary is detectable rather than silent.
+#
+# Only the compiler's intermediates are ignored.
+/electron/native/.obj
+/electron/native/bin/*.obj
+/electron/native/bin/*.pdb
