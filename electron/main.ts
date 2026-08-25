@@ -390,6 +390,12 @@ function installPermissionHandlers() {
     "audioCapture",
     "videoCapture",
     "clipboard-sanitized-write",
+    // Same story as clipboard-sanitized-write: a browser lets
+    // Element.requestFullscreen() through on the user gesture alone and
+    // never asks, so nothing on the site looks like it needs permission —
+    // but Electron routes it here, and denying it made the tiles'
+    // "Tela cheia" button do nothing in the app while working on the web.
+    "fullscreen",
   ]);
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
     const fromApp = webContents?.getURL().startsWith(APP_ORIGIN) ?? false;
