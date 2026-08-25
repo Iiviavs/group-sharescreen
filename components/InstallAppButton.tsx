@@ -154,7 +154,7 @@ export function InstallAppButton() {
         </p>
         {downloadPlatform ? (
           <p className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
-            Compartilhamento de tela nativo e abre links de sala direto no app.
+            Remova o eco de transmissões, obtenha melhor desempenho e mais.
           </p>
         ) : showIosHint ? (
           <p className="mt-0.5 flex flex-wrap items-center gap-1 text-xs text-zinc-600 dark:text-zinc-400">
