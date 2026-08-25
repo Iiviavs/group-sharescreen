@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { trackEvent } from "@/lib/analytics";
 import { DownloadIcon, ShareIcon } from "@/components/icons";
 import { Tooltip } from "@/components/Tooltip";
+import { isDesktopApp } from "@/lib/desktop";
+import { detectDownloadPlatform, type DownloadPlatform } from "@/lib/downloadTargets";
 
 // Fired by Chromium browsers (Chrome/Edge on Android, desktop Chrome) when
 // the page meets PWA installability criteria (manifest + icons + served
@@ -31,16 +33,34 @@ function isIos(): boolean {
   return /iphone|ipad|ipod/i.test(navigator.userAgent);
 }
 
-// Small floating, dismissible control for "install GoLive as an app" — a
+const LABEL: Record<DownloadPlatform, string> = {
+  win: "Baixar para Windows",
+  mac: "Baixar para macOS",
+  linux: "Baixar para Linux",
+};
+
+// Small floating, dismissible control for "get GoLive as an app" — a
 // deliberate explicit affordance rather than relying on visitors to notice
-// the browser's own (easy to miss) install icon. Android/Chrome gets a real
-// one-tap install via beforeinstallprompt; iOS Safari has no such API, so it
-// gets instructions for the manual "Share > Add to Home Screen" flow
-// instead. Once installed (running standalone) or dismissed, it stays gone
-// (localStorage) — this is a one-time nudge, not a recurring nag.
+// the browser's own (easy to miss) install icon.
+//
+// What it offers depends on what actually exists for that machine:
+//
+//   desktop — the real Electron build (see electron/), which is strictly
+//             better than a PWA here: a native screen picker, a working
+//             OAuth handoff, and room links that open in the app.
+//   Android — a PWA install via beforeinstallprompt, because there is no
+//             native mobile build and there is not going to be one.
+//   iOS     — the same PWA, but Safari has no install API, so it gets
+//             instructions for the manual "Share > Add to Home Screen".
+//
+// Once installed (running standalone), already inside the desktop app, or
+// dismissed, it stays gone — this is a one-time nudge, not a recurring nag.
 export function InstallAppButton() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [showIosHint, setShowIosHint] = useState(false);
+  // Non-null on desktop, and it is what switches this whole control from
+  // "install the PWA" to "download the app".
+  const [downloadPlatform, setDownloadPlatform] = useState<DownloadPlatform | null>(null);
   // Starts hidden — both branches below only ever reveal it from an effect
   // (after checking localStorage/standalone/platform), so there's no
   // server/client render mismatch and no flash of a control that's about to
@@ -49,10 +69,30 @@ export function InstallAppButton() {
 
   useEffect(() => {
     if (isStandalone()) return;
+    // Inside the Electron build already — offering to install it would be
+    // offering something the person is looking at.
+    if (isDesktopApp()) return;
     try {
       if (window.localStorage.getItem(DISMISSED_STORAGE_KEY) === "true") return;
     } catch {
       // ignored - localStorage may be unavailable (private mode, quota, etc.)
+    }
+
+    // Desktop: point at the real app rather than the PWA. Checked before the
+    // PWA branches because desktop Chrome fires beforeinstallprompt too, and
+    // whichever ran first would win — the native build is the better answer
+    // on those machines, so it is the one that gets asked first.
+    //
+    // Same detection the /download route uses, so this can never advertise a
+    // platform that route would then refuse to serve.
+    const platform = detectDownloadPlatform(navigator.userAgent);
+    if (platform) {
+      // Deferred a tick for the same reason the iOS branch below is.
+      const id = setTimeout(() => {
+        setDownloadPlatform(platform);
+        setVisible(true);
+      }, 0);
+      return () => clearTimeout(id);
     }
 
     if (isIos()) {
@@ -109,8 +149,14 @@ export function InstallAppButton() {
         <DownloadIcon className="h-5 w-5" />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold text-zinc-950 dark:text-zinc-50">Instalar o GoLive</p>
-        {showIosHint ? (
+        <p className="text-sm font-semibold text-zinc-950 dark:text-zinc-50">
+          {downloadPlatform ? "Baixar o app do GoLive" : "Instalar o GoLive"}
+        </p>
+        {downloadPlatform ? (
+          <p className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+            Compartilhamento de tela nativo e abre links de sala direto no app.
+          </p>
+        ) : showIosHint ? (
           <p className="mt-0.5 flex flex-wrap items-center gap-1 text-xs text-zinc-600 dark:text-zinc-400">
             Toque em
             <ShareIcon className="h-3.5 w-3.5 shrink-0" />
@@ -120,14 +166,32 @@ export function InstallAppButton() {
           <p className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">Acesso rápido, direto da tela inicial.</p>
         )}
       </div>
-      {!showIosHint && (
-        <button
-          type="button"
-          onClick={handleInstallClick}
+      {downloadPlatform ? (
+        // A plain anchor, not next/link: /download is a route handler that
+        // answers with a redirect to a file, so there is no page to prefetch
+        // or transition to. Dismissed on click — the offer has been taken,
+        // and leaving it floating over the page afterwards is just clutter.
+        <a
+          href="/download"
+          onClick={() => {
+            trackEvent("download_app_clicked", { platform: downloadPlatform });
+            dismiss();
+          }}
+          title={LABEL[downloadPlatform]}
           className="shrink-0 rounded-lg bg-zinc-950 px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90 dark:bg-zinc-50 dark:text-zinc-950"
         >
-          Instalar
-        </button>
+          Baixar
+        </a>
+      ) : (
+        !showIosHint && (
+          <button
+            type="button"
+            onClick={handleInstallClick}
+            className="shrink-0 rounded-lg bg-zinc-950 px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90 dark:bg-zinc-50 dark:text-zinc-950"
+          >
+            Instalar
+          </button>
+        )
       )}
       <Tooltip content="Fechar">
         <button

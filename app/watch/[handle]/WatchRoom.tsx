@@ -45,11 +45,16 @@ import {
   setStoredTransmissionVolume,
   getStoredGuestAccountBannerDismissed,
   setStoredGuestAccountBannerDismissed,
+  getStoredOpenRoomsInApp,
+  setStoredOpenRoomsInApp,
+  setStoredOpenInAppDismissed,
 } from "@/lib/mediaPreferences";
 import { VideoTile, StoppedPeerTile, ResumingPeerTile } from "@/components/VideoTile";
 import { RemoteAudio } from "@/components/RemoteAudio";
 import { ParticipantRow } from "@/components/ParticipantRow";
 import { ChatPanel } from "@/components/ChatPanel";
+import { OpenInAppBanner } from "@/components/OpenInAppBanner";
+import { isDesktopApp } from "@/lib/desktop";
 import { PartnerCard } from "@/components/PartnerCard";
 import { SupportersTooltipContent } from "@/components/SupportersTooltip";
 import { DisplayUserName } from "@/components/DisplayUserName";
@@ -80,7 +85,7 @@ import {
 } from "@/components/icons";
 import { Tooltip, Popover } from "@/components/Tooltip";
 import { useMediaQuery, SM_BREAKPOINT_QUERY, LG_BREAKPOINT_QUERY } from "@/lib/useMediaQuery";
-import { MdHome, MdOutlineOndemandVideo } from "react-icons/md";
+import { MdHome, MdOutlineOndemandVideo, MdOutlineDesktopWindows } from "react-icons/md";
 import { BsGearFill, BsCoin } from "react-icons/bs";
 import { BetaMark } from "@/components/BetaMark";
 
@@ -640,6 +645,12 @@ export function WatchRoom({ handle }: { handle: string }) {
   // Opened from the guest banner below — reuses the same CreateAccountForm
   // as the pre-join gate, just in a modal since this fires mid-session.
   const [showCreateAccountModal, setShowCreateAccountModal] = useState(false);
+  // "Sempre abrir salas no aplicativo" — the same preference the
+  // OpenInAppBanner sets, surfaced here so it can be turned back off. Read
+  // through the mounted gate below rather than a lazy initializer, because
+  // whether we are *inside* the app is a client-only fact and rendering the
+  // row differently on the server would hydrate into a mismatch.
+  const [openRoomsInApp, setOpenRoomsInApp] = useState(false);
   const [micsMuted, setMicsMuted] = useState(() => getStoredMicsMuted());
   const [soundEffectsOn, setSoundEffectsOn] = useState(() => getSoundEffectsEnabled());
   const [mutedPeerIds, setMutedPeerIds] = useState<Set<string>>(new Set());
@@ -721,9 +732,27 @@ export function WatchRoom({ handle }: { handle: string }) {
   // would otherwise flash the "choose a name" form for a logged-in account.
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
-    const id = setTimeout(() => setMounted(true), 0);
+    const id = setTimeout(() => {
+      setMounted(true);
+      // Read here rather than from a lazy initializer: localStorage does not
+      // exist during the server render, and this is already the one deferred
+      // point where client-only facts become safe to look at.
+      setOpenRoomsInApp(getStoredOpenRoomsInApp());
+    }, 0);
     return () => clearTimeout(id);
   }, []);
+
+  function toggleOpenRoomsInApp() {
+    setOpenRoomsInApp((prev) => {
+      const next = !prev;
+      setStoredOpenRoomsInApp(next);
+      // Turning it on from here also clears any earlier "agora não", so the
+      // two controls cannot end up disagreeing about what was decided.
+      if (next) setStoredOpenInAppDismissed(false);
+      trackEvent(next ? "open_rooms_in_app_on" : "open_rooms_in_app_off");
+      return next;
+    });
+  }
 
   // Closes the rename popover once the name actually changes — covers both
   // success (server confirmed the new name) and a plain reconnect, without
@@ -1371,6 +1400,19 @@ export function WatchRoom({ handle }: { handle: string }) {
         activeIcon={<EyeIcon className="h-4 w-4" />}
         inactiveIcon={<EyeOffIcon className="h-4 w-4" />}
       />
+      {/* Only outside the desktop app: inside it, "always open in the app"
+          is a preference about something already true. Gated on `mounted`
+          too, since isDesktopApp() reads a client-only global. */}
+      {mounted && !isDesktopApp() && (
+        <MenuToggleRow
+          label="Sempre abrir salas no aplicativo"
+          active={openRoomsInApp}
+          onToggle={toggleOpenRoomsInApp}
+          hint="Abre links de sala no aplicativo do GoLive em vez do navegador. Precisa do aplicativo instalado."
+          activeIcon={<MdOutlineDesktopWindows className="h-4 w-4" />}
+          inactiveIcon={<MdOutlineDesktopWindows className="h-4 w-4 opacity-50" />}
+        />
+      )}
       <MenuToggleRow
         label="Impedir conexões diretas"
         active={forceRelayIce}
@@ -1711,6 +1753,10 @@ export function WatchRoom({ handle }: { handle: string }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-zinc-50 dark:bg-black">
+      {/* Above the header so it reads as a property of the page rather than
+          of the room's controls. Renders nothing inside the app itself, and
+          nothing for anyone who has already answered. */}
+      <OpenInAppBanner handle={handle} />
       <header className="border-b border-black/10 px-3 py-2.5 dark:border-white/10 sm:px-4 sm:py-3">
         {/* One row for everything, wrapping instead of splitting: the room's
             identity on the left, and every control on the right — the

@@ -101,9 +101,31 @@ function startOAuth(startUrl: string, nonce: string): Promise<string | null> {
   });
 }
 
-// Handles a `golive://oauth#<fragment>` deep link. The fragment is exactly
-// what the site's callback page received, forwarded verbatim, so the
-// renderer parses it with the same parser the browser path uses.
+// Points the window at a room and brings the app forward.
+function openRoom(handle: string) {
+  const url = `${APP_URL}/watch/${encodeURIComponent(handle)}`;
+  // Handed to createWindow as the *initial* URL rather than loaded after the
+  // fact: a cold start from a protocol link (Windows/Linux deliver those in
+  // argv, before any window exists) would otherwise load the home page and
+  // then immediately navigate away from it.
+  if (!mainWindow) {
+    createWindow(url);
+    return;
+  }
+  void mainWindow.loadURL(url);
+  focusMainWindow();
+}
+
+function focusMainWindow() {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+}
+
+// Everything the OS hands us on the `golive://` scheme. Two routes today:
+// `oauth`, whose fragment is exactly what the site's callback page received
+// (forwarded verbatim, so the renderer parses it with the same parser the
+// browser path uses), and `watch`, a room link handed over from a browser.
 function handleDeepLink(rawUrl: string) {
   let parsed: URL;
   try {
@@ -117,6 +139,22 @@ function handleDeepLink(rawUrl: string) {
   // custom schemes are parsed as authority-based here. Accepting either
   // keeps this working regardless of how the OS hands the string over.
   const route = parsed.host || parsed.pathname.replace(/^\/+/, "");
+
+  // A room link handed over from the browser: golive://watch/<handle>.
+  // This is what makes "open in the app" possible at all — a website cannot
+  // detect whether an app is installed (browsers deliberately prevent it),
+  // so the site offers the handoff and the OS decides whether anything
+  // answers it.
+  if (route === "watch") {
+    const handle = decodeURIComponent(parsed.pathname.replace(/^\/+/, "")).trim();
+    // Validated rather than trusted. Anything can invoke a protocol URL, so
+    // without this a crafted link could push the window to an arbitrary path
+    // on our origin — mirrors the site's own HANDLE_RE.
+    if (!/^[a-zA-Z0-9_-]{1,32}$/.test(handle)) return;
+    openRoom(handle);
+    return;
+  }
+
   if (route !== "oauth") return;
 
   const fragment = parsed.hash;
@@ -126,10 +164,7 @@ function handleDeepLink(rawUrl: string) {
   settleLogin(nonce, fragment);
 
   // The user's attention is in the browser at this point; bring them back.
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
-  }
+  focusMainWindow();
 }
 
 // ---------------------------------------------------------------------------
@@ -250,7 +285,7 @@ function installDisplayMediaHandler() {
 // works both from source and from inside app.asar.
 const WINDOW_ICON = path.join(__dirname, "..", "build", "icon.png");
 
-function createWindow() {
+function createWindow(initialUrl: string = APP_URL) {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -301,7 +336,7 @@ function createWindow() {
     if (/^https?:$/.test(safeProtocol(url))) void shell.openExternal(url);
   });
 
-  void mainWindow.loadURL(APP_URL);
+  void mainWindow.loadURL(initialUrl);
 }
 
 function safeProtocol(url: string): string {
@@ -341,10 +376,7 @@ if (!gotLock) {
   app.on("second-instance", (_event, argv) => {
     const deepLink = argv.find((arg) => arg.startsWith(`${PROTOCOL}://`));
     if (deepLink) handleDeepLink(deepLink);
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
+    focusMainWindow();
   });
 
   // macOS delivers protocol activations as an event instead, and can do so
@@ -380,15 +412,23 @@ if (!gotLock) {
       return shell.openExternal(url);
     });
 
-    createWindow();
+    // A launch *from* a deep link on Windows/Linux arrives in this process's
+    // own argv rather than through "second-instance". Read before the window
+    // is created, not after: handling it afterwards would load the home page
+    // and then immediately navigate away from it, which on a cold start is a
+    // visible flash of the wrong page plus a wasted round trip.
+    const initialLink = process.argv.find((arg) => arg.startsWith(`${PROTOCOL}://`));
+    if (initialLink) {
+      handleDeepLink(initialLink);
+    }
+    // Still needed when the link was not a room one (an OAuth callback that
+    // launched the app, or no link at all) — openRoom creates the window
+    // itself, so this must not make a second one.
+    if (!mainWindow) createWindow();
+
     // Keeps the shell current. The website updates itself by being loaded
     // fresh; this is for the code that ships inside the executable.
     initAutoUpdater(() => mainWindow);
-
-    // A launch *from* a deep link on Windows/Linux arrives in this
-    // process's own argv rather than through "second-instance".
-    const initialLink = process.argv.find((arg) => arg.startsWith(`${PROTOCOL}://`));
-    if (initialLink) handleDeepLink(initialLink);
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

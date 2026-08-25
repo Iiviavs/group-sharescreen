@@ -25,6 +25,7 @@ import { CompleteOAuthSignupForm } from "@/components/CompleteOAuthSignupForm";
 import { AccountConnections } from "@/components/AccountConnections";
 import type { OAuthResult } from "@/lib/oauthApi";
 import { GlobeIcon } from "@/components/icons";
+import { DownloadAppButton } from "@/components/DownloadAppButton";
 import { MdLock } from "react-icons/md";
 
 // Mirrors server/signaling.ts's HANDLE_RE — must match exactly, or a name
@@ -51,11 +52,10 @@ const labelClass = "text-sm font-medium text-zinc-700 dark:text-zinc-300";
 // button rather than a subtle border, because which one is active decides
 // what the rest of the form asks for.
 function roomTabClass(selected: boolean): string {
-  return `flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${
-    selected
+  return `flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${selected
       ? "border-zinc-950 bg-zinc-950 text-white dark:border-zinc-50 dark:bg-zinc-50 dark:text-zinc-950"
       : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-  }`;
+    }`;
 }
 
 // Pre-registration identity choice — "landing" is the two-button choice
@@ -345,11 +345,13 @@ export default function Home() {
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 bg-zinc-50 px-4 py-16 dark:bg-black">
-      {peopleOnline !== null && (
+      {peopleOnline !== null && (<div className="inline-flex gap-2">
         <span className="flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3.5 py-1.5 text-xs font-medium text-zinc-600 shadow-sm dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
           <span className="h-2 w-2 rounded-full bg-emerald-500" />
           {peopleOnline} {peopleOnline === 1 ? "pessoa" : "pessoas"} em salas agora
         </span>
+        <DownloadAppButton />
+      </div>
       )}
       {false && <>
 
@@ -368,13 +370,18 @@ export default function Home() {
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
           Compartilhe sua tela com quem estiver na mesma sala, sem cadastro.
         </p>
-        <Link
-          href="/rooms"
-          className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 px-3.5 py-2 text-sm font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
-        >
-          <GlobeIcon className="h-4 w-4" />
-          Ver salas públicas
-        </Link>
+        {/* Wrapped so the two sit side by side and wrap together on a
+            narrow screen — the download button renders nothing at all in
+            the app itself or on mobile, and the row collapses cleanly. */}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Link
+            href="/rooms"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 px-3.5 py-2 text-sm font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
+          >
+            <GlobeIcon className="h-4 w-4" />
+            Ver salas públicas
+          </Link>
+        </div>
 
         {restoring ? (
           <p className="mt-8 text-sm text-zinc-500 dark:text-zinc-400">Reconectando...</p>
@@ -447,10 +454,10 @@ export default function Home() {
                 Criar uma conta
               </button>
             </form>
-          {/* Outside the <form> above, since the username step this can
+            {/* Outside the <form> above, since the username step this can
               lead to is a form of its own. Renders nothing when no provider
               is configured. */}
-          <OAuthButtons onSuccess={resetIdentityForm} onTicket={setOAuthTicket} />
+            <OAuthButtons onSuccess={resetIdentityForm} onTicket={setOAuthTicket} />
           </div>
         ) : !registered ? (
           <>
@@ -693,20 +700,20 @@ export default function Home() {
                     ? "Verificando..."
                     : "Entrar na sala"
                   : // Public: entering and creating are the same click, so
-                    // the label is the only thing that tells someone which
-                    // of the two they're about to do. "Criar sala" is the
-                    // resting state and only a confirmed hit flips it —
-                    // typing a name nobody has used is the common case, and
-                    // promising "Entrar" before the lookup lands would walk
-                    // that back a moment later on most names.
-                    publicRoomExists === true
+                  // the label is the only thing that tells someone which
+                  // of the two they're about to do. "Criar sala" is the
+                  // resting state and only a confirmed hit flips it —
+                  // typing a name nobody has used is the common case, and
+                  // promising "Entrar" before the lookup lands would walk
+                  // that back a moment later on most names.
+                  publicRoomExists === true
                     ? "Entrar na sala"
                     : "Criar sala"}
             </button>
           </form>
         )}
-
-        <p className="mt-6 text-center text-xs text-zinc-400 dark:text-zinc-600">
+      </main>
+        <p className="mt-2 text-center text-xs text-zinc-400 dark:text-zinc-600">
           Desenvolvido por{" "}
           <span className="font-medium text-zinc-500 dark:text-zinc-400">@NemTudo</span> (
           <a
@@ -725,7 +732,6 @@ export default function Home() {
             Termos de uso
           </Link>
         </p>
-      </main>
     </div>
   );
 }

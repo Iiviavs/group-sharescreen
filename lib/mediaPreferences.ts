@@ -8,6 +8,9 @@ const MICS_MUTED_KEY = "sharescreen:micsMuted";
 const FORCE_RELAY_ICE_KEY = "sharescreen:forceRelayIce";
 const GUEST_ACCOUNT_BANNER_DISMISSED_KEY = "sharescreen:guestAccountBannerDismissed";
 const AUTO_JOIN_KEY = "sharescreen:autoJoin";
+// "Sempre abrir salas no aplicativo" — see components/OpenInAppBanner.
+const OPEN_IN_APP_KEY = "sharescreen:openRoomsInApp";
+const OPEN_IN_APP_DISMISSED_KEY = "sharescreen:openInAppDismissed";
 const MIC_DEVICE_ID_KEY = "sharescreen:micDeviceId";
 const SPEAKER_DEVICE_ID_KEY = "sharescreen:speakerDeviceId";
 
@@ -130,6 +133,29 @@ export function getStoredGuestAccountBannerDismissed(): boolean {
 }
 export function setStoredGuestAccountBannerDismissed(value: boolean) {
   setStoredBoolean(GUEST_ACCOUNT_BANNER_DISMISSED_KEY, value);
+}
+
+// Whether this browser should hand room links straight to the desktop app.
+// Off by default and only ever turned on by an explicit click: a website
+// cannot tell whether an app is installed (browsers deliberately prevent
+// it), so an automatic attempt on a machine without it would pop a useless
+// "no application found" dialog on every visit.
+export function getStoredOpenRoomsInApp(): boolean {
+  return getStoredBoolean(OPEN_IN_APP_KEY, false);
+}
+export function setStoredOpenRoomsInApp(value: boolean) {
+  setStoredBoolean(OPEN_IN_APP_KEY, value);
+}
+
+// Whether the offer to open in the app has been waved away. Separate from
+// the preference above so "no thanks" is remembered without being confused
+// with "not configured yet" — otherwise the banner would return on every
+// room, forever.
+export function getStoredOpenInAppDismissed(): boolean {
+  return getStoredBoolean(OPEN_IN_APP_DISMISSED_KEY, false);
+}
+export function setStoredOpenInAppDismissed(value: boolean) {
+  setStoredBoolean(OPEN_IN_APP_DISMISSED_KEY, value);
 }
 
 // "Entrar em transmissões automaticamente" — on by default. Off means a
