@@ -56,9 +56,9 @@ export function initAutoUpdater(getWindow: () => BrowserWindow | null) {
       defaultId: 0,
       cancelId: 1,
       title: "Atualização disponível",
-      message: `A versão ${info.version} do GoLive está pronta.`,
+      message: `A versão ${info.version} do GoLive foi lançada!`,
       detail:
-        "Ela será instalada automaticamente quando você fechar o aplicativo — ou reinicie agora para usar já.",
+        "Ela será instalada automaticamente quando você fechar o aplicativo - ou reinicie agora para usar já.",
     };
     const { response } = window
       ? await dialog.showMessageBox(window, options)
