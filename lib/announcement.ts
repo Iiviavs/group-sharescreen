@@ -3,6 +3,8 @@
 // so both sides agree on the shape and the color→CSS mapping never drifts
 // between the admin's preview and what real visitors actually see.
 
+import { isDesktopApp } from "./desktop";
+
 export type AnnouncementColor = "green" | "red" | "blue";
 export type AnnouncementButtonAction = "open-new-tab" | "open-same-tab" | "reload";
 // Mirrors server/signaling.ts's AnnouncementVisibility: "online-only" only
@@ -11,6 +13,34 @@ export type AnnouncementButtonAction = "open-new-tab" | "open-same-tab" | "reloa
 export type AnnouncementVisibility = "online-only" | "all";
 // Mirrors server/signaling.ts's AnnouncementSound.
 export type AnnouncementSound = "always" | "live-only" | "off";
+
+// Which kinds of client a banner is meant for. Mirrors
+// server/signaling.ts's AnnouncementDevice.
+//
+// "mobile-app" has no client that reports it yet — there is no native mobile
+// build. It is defined, selectable and stored anyway so the day one ships,
+// the only change needed is in currentAnnouncementDevice() below. Until
+// then, ticking or unticking it changes nothing for anybody, which is the
+// honest behaviour rather than a hidden one.
+export type AnnouncementDevice =
+  | "desktop-browser"
+  | "desktop-app"
+  | "mobile-browser"
+  | "mobile-app";
+
+export const ANNOUNCEMENT_DEVICES: AnnouncementDevice[] = [
+  "desktop-browser",
+  "desktop-app",
+  "mobile-browser",
+  "mobile-app",
+];
+
+export const ANNOUNCEMENT_DEVICE_LABELS: Record<AnnouncementDevice, string> = {
+  "desktop-browser": "Navegador (PC)",
+  "desktop-app": "App (PC)",
+  "mobile-browser": "Navegador (celular)",
+  "mobile-app": "App (celular)",
+};
 
 export type Announcement = {
   id: string;
@@ -37,6 +67,12 @@ export type Announcement = {
   // getStoredPersistentAnnouncement below) even though the server itself
   // never resends an "online-only" announcement to a new connection.
   persistent: boolean;
+  // Which device kinds this banner is for. Optional, and absence means
+  // *every* device rather than none: announcements created before this
+  // field existed are still sitting in Redis/on disk without it, and the
+  // deployed site also has to keep working against an API that predates it.
+  // Read through announcementTargetsDevice() below, never directly.
+  devices?: AnnouncementDevice[];
 };
 
 export const ANNOUNCEMENT_COLOR_PRESETS: Record<
@@ -125,4 +161,52 @@ export function clearStoredPersistentAnnouncement() {
   } catch {
     // ignored - localStorage may be unavailable (private mode, quota, etc.)
   }
+}
+
+// True for a phone or tablet. UA-first rather than a viewport width, because
+// this has to answer "what kind of machine is this" and not "how wide is the
+// window" — a half-width browser on a desktop is still a desktop.
+function isMobileDevice(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  if (/android|iphone|ipod|ipad|windows phone/i.test(ua)) return true;
+  // iPadOS 13+ deliberately reports a desktop Safari user agent, matching
+  // nothing above. The touch-point count is what still separates it from a
+  // real Mac — a trackpad reports 0.
+  return /Macintosh/.test(ua) && navigator.maxTouchPoints > 1;
+}
+
+/**
+ * Which of the four buckets this client falls into.
+ *
+ * The one place to change when a native mobile app exists: it would expose
+ * its own bridge the way the desktop shell does (see lib/desktop.ts), and
+ * the mobile branch below would ask for it instead of always answering
+ * "mobile-browser".
+ *
+ * Note that an installed PWA is deliberately *not* "mobile-app": it is the
+ * same website in a chrome-less window, indistinguishable to everything else
+ * in this codebase, and calling it an app here would mean "App (celular)"
+ * silently targeting people who never installed anything of the sort.
+ */
+export function currentAnnouncementDevice(): AnnouncementDevice {
+  if (isMobileDevice()) return "mobile-browser";
+  return isDesktopApp() ? "desktop-app" : "desktop-browser";
+}
+
+/**
+ * Whether `announcement` is meant for this client.
+ *
+ * Treats a missing or empty list as "everyone" — see the `devices` field's
+ * doc comment. Empty specifically matters because it is what an older API
+ * hands back, and hiding every banner from every device would be a far worse
+ * failure than showing one too widely.
+ */
+export function announcementTargetsDevice(
+  announcement: Pick<Announcement, "devices">,
+  device: AnnouncementDevice = currentAnnouncementDevice()
+): boolean {
+  const devices = announcement.devices;
+  if (!Array.isArray(devices) || devices.length === 0) return true;
+  return devices.includes(device);
 }

@@ -6,13 +6,21 @@ import type {
   Announcement,
   AnnouncementButtonAction,
   AnnouncementColor,
+  AnnouncementDevice,
   AnnouncementSound,
   AnnouncementVisibility,
 } from "./announcement";
 import type { Partner, PartnerClickRewardPlacement } from "./partner";
 import type { Supporter } from "./supporter";
 
-export type { Announcement, AnnouncementButtonAction, AnnouncementColor, AnnouncementSound, AnnouncementVisibility };
+export type {
+  Announcement,
+  AnnouncementButtonAction,
+  AnnouncementColor,
+  AnnouncementDevice,
+  AnnouncementSound,
+  AnnouncementVisibility,
+};
 export type { Partner };
 export type { Supporter };
 
@@ -216,6 +224,9 @@ export type SendAnnouncementInput = {
   visibility: AnnouncementVisibility;
   sound: AnnouncementSound;
   persistent: boolean;
+  // Must hold at least one value — the server rejects an empty list rather
+  // than reading it as "everyone" (see parseAnnouncementDevices).
+  devices: AnnouncementDevice[];
 };
 
 async function postOrPutAnnouncement(

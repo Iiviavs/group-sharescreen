@@ -9,10 +9,12 @@ import {
   type Announcement,
   type AnnouncementButtonAction,
   type AnnouncementColor,
+  type AnnouncementDevice,
   type AnnouncementSound,
   type AnnouncementStats,
   type AnnouncementVisibility,
 } from "@/lib/adminApi";
+import { ANNOUNCEMENT_DEVICES, ANNOUNCEMENT_DEVICE_LABELS } from "@/lib/announcement";
 import { AnnouncementBar } from "@/components/AnnouncementBar";
 
 const ACTION_OPTIONS: { value: AnnouncementButtonAction; label: string }[] = [
@@ -67,6 +69,9 @@ export function AnnouncementPanel() {
   const [visibility, setVisibility] = useState<AnnouncementVisibility>("all");
   const [sound, setSound] = useState<AnnouncementSound>("always");
   const [persistent, setPersistent] = useState(false);
+  // Everything ticked by default: an announcement is site-wide unless
+  // somebody deliberately narrows it.
+  const [devices, setDevices] = useState<AnnouncementDevice[]>(ANNOUNCEMENT_DEVICES);
 
   const [previewing, setPreviewing] = useState(false);
   const [sending, setSending] = useState(false);
@@ -115,6 +120,12 @@ export function AnnouncementPanel() {
 
   const needsUrl = buttonAction !== "reload";
 
+  function toggleDevice(device: AnnouncementDevice) {
+    setDevices((prev) =>
+      prev.includes(device) ? prev.filter((d) => d !== device) : [...prev, device]
+    );
+  }
+
   const previewAnnouncement: Announcement = {
     id: "preview",
     version: 1,
@@ -128,6 +139,7 @@ export function AnnouncementPanel() {
     visibility,
     sound,
     persistent,
+    devices,
   };
 
   function resetForm() {
@@ -143,6 +155,7 @@ export function AnnouncementPanel() {
     setVisibility("all");
     setSound("always");
     setPersistent(false);
+    setDevices(ANNOUNCEMENT_DEVICES);
   }
 
   function startEditing() {
@@ -159,6 +172,10 @@ export function AnnouncementPanel() {
     setVisibility(active.visibility);
     setSound(active.sound);
     setPersistent(active.persistent);
+    // A stored announcement from before this field existed (or from an older
+    // API) has no list — that means every device, so that is what the form
+    // shows rather than an empty, unsubmittable selection.
+    setDevices(active.devices?.length ? active.devices : ANNOUNCEMENT_DEVICES);
     setPreviewing(false);
     setError(null);
   }
@@ -179,6 +196,7 @@ export function AnnouncementPanel() {
         visibility,
         sound,
         persistent,
+        devices,
       };
       const { announcement, stats } =
         mode === "edit" && active
@@ -423,6 +441,36 @@ export function AnnouncementPanel() {
           </p>
         </div>
 
+        <fieldset>
+          <legend className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+            Onde aparece
+          </legend>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {ANNOUNCEMENT_DEVICES.map((device) => (
+              <label
+                key={device}
+                className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400"
+              >
+                <input
+                  type="checkbox"
+                  checked={devices.includes(device)}
+                  onChange={() => toggleDevice(device)}
+                  className="h-4 w-4 rounded border-zinc-300 dark:border-zinc-700"
+                />
+                {ANNOUNCEMENT_DEVICE_LABELS[device]}
+                {device === "mobile-app" && (
+                  <span className="text-xs text-zinc-400 dark:text-zinc-500">(em breve)</span>
+                )}
+              </label>
+            ))}
+          </div>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            {devices.length === 0
+              ? "Selecione pelo menos um — sem nenhum marcado, ninguém veria o aviso."
+              : "O aviso é entregue a todo mundo e cada cliente decide se mostra, então as estatísticas contam só quem realmente viu. O app de celular ainda não existe: marcá-lo não muda nada por enquanto."}
+          </p>
+        </fieldset>
+
         <label className="flex items-start gap-2 text-sm text-zinc-600 dark:text-zinc-400">
           <input
             type="checkbox"
@@ -474,7 +522,10 @@ export function AnnouncementPanel() {
           <button
             type="submit"
             disabled={
-              sending || !text.trim() || (hasButton && (!buttonLabel.trim() || (needsUrl && !buttonUrl.trim())))
+              sending ||
+              !text.trim() ||
+              devices.length === 0 ||
+              (hasButton && (!buttonLabel.trim() || (needsUrl && !buttonUrl.trim())))
             }
             className="rounded-lg bg-zinc-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
           >

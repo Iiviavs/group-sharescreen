@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useSignaling } from "@/lib/useSignaling";
 import { signalingClient } from "@/lib/signalingClient";
 import { AnnouncementBar } from "./AnnouncementBar";
@@ -10,10 +10,23 @@ import {
   getStoredPersistentAnnouncement,
   storePersistentAnnouncement,
   clearStoredPersistentAnnouncement,
+  announcementTargetsDevice,
+  currentAnnouncementDevice,
   type Announcement,
+  type AnnouncementDevice,
 } from "@/lib/announcement";
 import { trackEvent } from "@/lib/analytics";
 import { playWarningSound } from "@/lib/soundEffects";
+
+// Nothing ever notifies: the device a page is running on cannot change
+// without a reload, so the "store" behind useSyncExternalStore below has no
+// updates to publish and only needs to be read once.
+function noopSubscribe() {
+  return () => {};
+}
+function getDeviceServerSnapshot(): AnnouncementDevice | null {
+  return null;
+}
 
 // Site-wide, rendered once in the root layout — not scoped to any room.
 // Three things permanently hide a given announcement id (persisted, so it
@@ -69,8 +82,31 @@ export function AnnouncementBanner() {
   // independent dedup instead of piggybacking on the shown/sound tracker.
   const reportedViewKeys = useRef<Set<string>>(new Set());
 
+  // Null on the server and through hydration, then the real answer — the
+  // same shape as useHasStoredName in lib/useSignaling.ts, and for the same
+  // reason: this depends on `navigator` and on the desktop bridge, neither
+  // of which exists during the server render, so reading it eagerly would
+  // be a hydration mismatch. useSyncExternalStore rather than an effect
+  // because the value never changes for the life of the page — there is
+  // nothing to synchronise, just a client-only constant to read safely.
+  const device = useSyncExternalStore(
+    noopSubscribe,
+    currentAnnouncementDevice,
+    getDeviceServerSnapshot
+  );
+
   const willShow =
-    announcement != null && !hiddenIds.has(announcement.id) && !dismissedIds.has(announcement.id);
+    announcement != null &&
+    !hiddenIds.has(announcement.id) &&
+    !dismissedIds.has(announcement.id) &&
+    // An announcement aimed at other devices is filtered here rather than
+    // server-side on purpose: only the client can tell the Electron shell
+    // from a browser tab, or a phone from a laptop. Nothing downstream runs
+    // for a filtered-out banner — no sound, no "shown" event, and no view
+    // reported to the admin panel's counters, which is what keeps those
+    // numbers meaning "people who actually saw it".
+    device !== null &&
+    announcementTargetsDevice(announcement, device);
 
   // Without this, a brand new visitor who hasn't registered a display name
   // yet (see signalingClient's constructor — it only auto-connects when
