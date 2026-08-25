@@ -17,7 +17,12 @@
     "electron:dev": "npm run electron:build && cross-env GOLIVE_APP_URL=http://localhost:3000 electron .",
     "electron:start": "npm run electron:build && electron .",
     "electron:pack": "npm run electron:build && electron-builder --dir",
-    "electron:dist": "npm run electron:build && electron-builder"
+    "electron:dist": "npm run electron:build && electron-builder",
+    "preversion": "npm run typecheck && npm run electron:typecheck && npm run electron:build && npm test",
+    "postversion": "git push --follow-tags",
+    "release": "npm version patch",
+    "release:minor": "npm version minor",
+    "release:major": "npm version major"
   },
   "dependencies": {
     "@sapphi-red/web-noise-suppressor": "^0.4.0",
