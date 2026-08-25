@@ -111,6 +111,32 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Azure Trusted Signing, which is the *other* way to sign Windows —
+          # and the one that matters, because an ordinary certificate is not
+          # enough for Windows 11's Smart App Control. SAC does not ask "is
+          # this signed", it asks Microsoft's reputation graph "is this
+          # known-good", and an unsigned or freshly-signed installer is
+          # neither: it is blocked and deleted with no prompt at all, which
+          # is what breaks the auto-updater (see electron/updater.ts).
+          # Trusted Signing certificates chain to Microsoft's own roots and
+          # are trusted immediately.
+          #
+          # The first three authenticate to Entra ID and are the names
+          # electron-builder reads directly; the rest name the signing
+          # account and are passed through on the command line below.
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGN_ENDPOINT: ${{ secrets.AZURE_SIGN_ENDPOINT }}
+          AZURE_SIGN_ACCOUNT: ${{ secrets.AZURE_SIGN_ACCOUNT }}
+          AZURE_SIGN_PROFILE: ${{ secrets.AZURE_SIGN_PROFILE }}
+          # The certificate's common name. Stated rather than derived, and
+          # that is not optional here: electron-builder normally reads the CN
+          # out of the certificate *file*, and with Trusted Signing there is
+          # no file to read — the key never leaves Azure. Without it
+          # `latest.yml` ships with no publisherName and electron-updater
+          # quietly stops verifying the signature of what it downloads.
+          AZURE_SIGN_PUBLISHER: ${{ secrets.AZURE_SIGN_PUBLISHER }}
         run: |
           # A missing secret in Actions is an empty string, not an absent
           # variable — so `CSC_LINK: ${{ secrets.CSC_LINK }}` sets CSC_LINK=""
@@ -134,4 +160,26 @@ jobs:
             export WIN_CSC_LINK="$WIN_CERT_BASE64"
             export WIN_CSC_KEY_PASSWORD="$WIN_CERT_PASSWORD"
           fi
-          npx electron-builder ${{ matrix.args }} --publish always
+
+          # Trusted Signing has no environment-variable form for *which*
+          # certificate to use — only the Entra ID credentials are read from
+          # the environment, and the account itself lives under
+          # `win.azureSignOptions` in the config. Passing it on the command
+          # line instead of writing it into electron-builder.yml is what
+          # keeps this switchable: the moment that key exists in the file,
+          # every build without the Azure credentials fails outright, which
+          # would take `npm run electron:dist` on a laptop with it.
+          #
+          # Guarded on the runner as well as the secret because Actions hands
+          # every secret to every job in the matrix, and `-c.win.*` on the
+          # macOS build is at best noise.
+          signing=()
+          if [ "$RUNNER_OS" = "Windows" ] && [ -n "$AZURE_CLIENT_ID" ]; then
+            signing+=(
+              "-c.win.azureSignOptions.endpoint=$AZURE_SIGN_ENDPOINT"
+              "-c.win.azureSignOptions.codeSigningAccountName=$AZURE_SIGN_ACCOUNT"
+              "-c.win.azureSignOptions.certificateProfileName=$AZURE_SIGN_PROFILE"
+              "-c.win.publisherName=$AZURE_SIGN_PUBLISHER"
+            )
+          fi
+          npx electron-builder ${{ matrix.args }} "${signing[@]}" --publish always

@@ -158,6 +158,43 @@ current is when the previous session downloaded an update and quit — that is
 > apply an update to an unsigned bundle — silently. Windows and Linux update
 > fine unsigned.
 
+### When the update never takes — the Windows failure mode
+
+Downloading is the reliable half. Applying is not, and it fails *silently* by
+construction: `quitAndInstall` spawns the NSIS installer detached, considers
+the job done as soon as the process has a pid, and quits. If the installer
+then aborts, nothing anywhere finds out. The report looks like "I press the
+green button, the app restarts, and the button is back."
+
+Three ordinary causes, none of which announce themselves:
+
+- **A per-machine install.** `oneClick: false` plus `perMachine: false` means
+  the assisted installer *offers the choice*, so some people are in
+  `C:\Program Files\GoLive`. electron-updater only elevates when the build
+  declares `perMachine: true`, so the silent installer is spawned unelevated
+  and cannot write there.
+- **An unsigned build meeting Windows 11.** Smart App Control blocks unsigned
+  executables outright and without a prompt. Windows 10 has no equivalent, so
+  the same release updates fine there and never on the other machine.
+- **A locked file.** `resources/golive-audiocap.exe` is a separate process the
+  installer does not know to wait for.
+
+`updater.ts` handles this by *checking its own work*: the attempted version is
+written to `update-install.json` in `userData` before quitting, and the next
+launch compares it with `app.getVersion()`. Not the version we tried to
+install means it did not happen, and the next attempt escalates — silent, then
+the **visible** installer (which can show a UAC prompt and be clicked
+through), then `/download` opened in the browser. A per-machine install skips
+straight to the visible installer, since a silent one there is known to be
+hopeless. Ordinary quits are recorded the same way, because
+`autoInstallOnAppQuit` is silent too and fails identically.
+
+Everything the updater does goes to **`updater.log`** in the same directory —
+`%APPDATA%\GoLive\updater.log` on Windows, `~/Library/Application
+Support/GoLive` on macOS, `~/.config/GoLive` on Linux. That file is the thing
+to ask a user for; there is no console attached to a packaged app, so without
+it electron-updater's own diagnostics go nowhere.
+
 ## Releasing
 
 A commit does **not** release anything. Releasing is a tag, and the work
@@ -185,11 +222,32 @@ architectures apart and one file that runs on both is the only honest answer.
 
 ## Before shipping
 
-- **Signing.** Unsigned builds trip SmartScreen on Windows and Gatekeeper on
-  macOS. Set `CSC_LINK` / `CSC_KEY_PASSWORD` in CI; macOS also needs
-  notarisation (`APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`).
-- **Auto-update** is not wired. It needs a publish target and hosting, so it
-  is a deployment decision rather than something to guess at here.
+- **Windows signing is not cosmetic.** Unsigned builds do not merely "trip
+  SmartScreen" — on Windows 11, Smart App Control **blocks and deletes** them
+  without a prompt, which takes the installer *and* every auto-update with it
+  (see the failure mode above). SAC asks Microsoft's reputation graph, not
+  "is there a signature", so a brand-new OV certificate does not fix it
+  either; it has to accrue reputation first. The two routes that work
+  immediately are **Azure Trusted Signing** (~US$10/month, chains to
+  Microsoft's own roots) and an **EV certificate** (hardware token or cloud
+  HSM, ~US$400/year).
+
+  The release workflow is already wired for Trusted Signing and stays inert
+  until the secrets exist: `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`,
+  `AZURE_CLIENT_SECRET` for Entra ID, then `AZURE_SIGN_ENDPOINT`,
+  `AZURE_SIGN_ACCOUNT`, `AZURE_SIGN_PROFILE` for the certificate profile, and
+  `AZURE_SIGN_PUBLISHER` for the certificate's CN. That last one is not
+  optional: the key never leaves Azure, so electron-builder cannot read the
+  CN out of a file, and without it `latest.yml` ships with no `publisherName`
+  and the updater silently stops verifying what it downloads.
+
+  A user who already hit SAC and switched it off is **permanently** fine —
+  it cannot be re-enabled without reinstalling Windows — so their machine is
+  no longer a test of whether this got fixed.
+- **macOS signing** is a hard requirement rather than a polish item too:
+  Squirrel.Mac refuses to update an unsigned bundle. `MAC_CSC_LINK` /
+  `MAC_CSC_KEY_PASSWORD`, plus notarisation (`APPLE_ID`,
+  `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`).
 
 ## System audio, and why the room does not hear itself
 
