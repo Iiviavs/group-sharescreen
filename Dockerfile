@@ -6,6 +6,13 @@ WORKDIR /app
 # ---- dependencies (cached separately from source) ----
 FROM base AS deps
 COPY package.json package-lock.json ./
+# The desktop shell (see electron/) is built on a developer machine, never
+# here — but `electron` is a devDependency, and `npm ci` installs those
+# because the build stage below needs typescript/tailwind. Electron's
+# postinstall would then download a ~330 MB platform binary that nothing in
+# this image ever runs, and the runtime stage copies node_modules verbatim,
+# so it would ship in the final image too.
+ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 RUN npm ci
 
 # ---- build ----

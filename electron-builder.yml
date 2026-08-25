@@ -1,0 +1,99 @@
+appId: me.nemtudo.golive
+productName: GoLive
+copyright: © NemTudo
+
+directories:
+  output: electron/release
+  buildResources: electron/build
+
+# Where `electron-builder --publish always` uploads the installers, and what
+# the site's /download route reads to find the newest ones. GitHub Releases
+# is also what an auto-updater would consume later, so pointing at it now
+# costs nothing and keeps that door open.
+#
+# Publishing needs GH_TOKEN in the environment; without it electron-builder
+# builds normally and simply skips the upload.
+publish:
+  provider: github
+  owner: Nem-Tudo
+  repo: group-sharescreen
+
+# Only the shell ships. The UI is the deployed site (see electron/main.ts's
+# opening comment), so none of .next/, app/, lib/ or the Next dependency tree
+# belongs in the package.
+#
+# The node_modules exclusion is doing real work and must not be "tidied
+# away": electron-builder bundles every production dependency by default,
+# regardless of what this list says, because `files` filters project files
+# and not the module tree. Without that line the installer ships all of
+# Next, React, sharp and their native binaries — measured at 278 MB, versus
+# well under one for the shell itself — none of which is ever loaded, since
+# esbuild bundles the three entrypoints and `electron` comes from the
+# runtime (see electron/build.mjs).
+files:
+  - electron/dist/**/*
+  - electron/picker.html
+  - package.json
+  - "!node_modules/**/*"
+  # Linux sets the window icon from a file at runtime rather than from the
+  # executable, so it has to be inside the package — see WINDOW_ICON in
+  # electron/main.ts. Windows and macOS read it from the binary instead and
+  # would not need this, but shipping 13 KB everywhere beats a platform
+  # conditional in the file list.
+  - electron/build/icon.png
+
+# The desktop build's whole purpose is a real screen picker and a working
+# OAuth handoff, so the protocol registration below is load-bearing rather
+# than a nicety: without it the login started in the browser has nowhere to
+# come back to.
+protocols:
+  - name: GoLive
+    schemes:
+      - golive
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  # Unsigned builds trip SmartScreen. Set CSC_LINK/CSC_KEY_PASSWORD in CI to
+  # sign; electron-builder picks them up without further config here.
+  signtoolOptions:
+    signingHashAlgorithms: [sha256]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+mac:
+  category: public.app-category.video
+  target:
+    # One universal binary rather than separate arm64/x64 builds, because
+    # /download has to pick without asking and *cannot tell them apart*:
+    # browsers on Apple Silicon still report "Intel Mac OS X" in the user
+    # agent for compatibility, so there is no honest way to detect the
+    # architecture server-side. Shipping one file that runs on both trades
+    # download size for never handing someone an app that won't open.
+    - target: dmg
+      arch: [universal]
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: electron/build/entitlements.mac.plist
+  entitlementsInherit: electron/build/entitlements.mac.plist
+  # macOS refuses camera/mic/screen access outright unless the binary
+  # declares why it wants them — and does so silently, which reads as "the
+  # app is broken" rather than "a permission is missing".
+  extendInfo:
+    NSCameraUsageDescription: O GoLive usa a câmera para você transmitir vídeo na sala.
+    NSMicrophoneUsageDescription: O GoLive usa o microfone para você falar na sala.
+    NSScreenCaptureUsageDescription: O GoLive captura sua tela para compartilhá-la com a sala.
+
+linux:
+  category: Network
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]

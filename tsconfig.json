@@ -30,5 +30,8 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  // `electron/` is a Node/CommonJS program with its own tsconfig — compiling
+  // it under these options (bundler resolution, noEmit, DOM-only libs) would
+  // both fail and produce nothing Electron can require.
+  "exclude": ["node_modules", "electron"]
 }

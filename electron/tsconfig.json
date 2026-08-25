@@ -1,0 +1,27 @@
+{
+  // Type checking only — esbuild does the emit (see build.mjs for why).
+  // That split is also what lets this include ../lib/desktop.ts: with no
+  // rootDir/outDir to satisfy, a source file from outside this folder is
+  // just another file to check.
+  //
+  // Separate from the app's tsconfig on purpose: that one targets the
+  // browser through a bundler (JSX, "bundler" resolution), and none of it
+  // describes a Node process running inside Electron.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    // The emitted format is esbuild's call (CJS — see build.mjs), so what
+    // tsc needs here is simply not to rewrite modules while checking.
+    // "preserve" + "bundler" is that pairing; the legacy node10 resolver is
+    // deprecated for removal in TypeScript 7.
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["node"]
+  },
+  "include": ["main.ts", "preload.ts", "picker-preload.ts", "channels.ts", "../lib/desktop.ts"]
+}

@@ -2,6 +2,7 @@
 
 import { getSignalingHttpBase } from "./roomsApi";
 import { getAccountToken, setAccountToken } from "./accountApi";
+import { createOAuthNonce, desktopOAuthReturnPath, getDesktopBridge } from "./desktop";
 
 // Client half of the social login. The whole OAuth dance happens on the API
 // (see the API's server/oauthRoutes.ts) — this module only opens it, waits
@@ -54,9 +55,20 @@ export async function fetchOAuthProviders(signal?: AbortSignal): Promise<OAuthPr
 // `returnTo` is the page the user is on right now: the API validates its
 // origin against its own allowlist and keeps only the path, so a login
 // started inside a room comes back to that room.
-function buildStartUrl(provider: OAuthProviderId, options: { link?: boolean } = {}): string {
+function buildStartUrl(
+  provider: OAuthProviderId,
+  options: { link?: boolean } = {},
+  // Overrides where the flow comes back to. Only the desktop app passes
+  // this, and only to plant the marker path the callback page recognises
+  // (see lib/desktop.ts) — a browser login keeps returning to the exact
+  // page the user was on.
+  returnToPath?: string
+): string {
   const url = new URL(`${getSignalingHttpBase()}/auth/oauth/${provider}/start`);
-  url.searchParams.set("returnTo", window.location.href);
+  url.searchParams.set(
+    "returnTo",
+    returnToPath ? new URL(returnToPath, window.location.origin).toString() : window.location.href
+  );
   if (options.link) {
     // Only present when connecting a provider to an account that's already
     // logged in — the API verifies this token and links to *that* account
@@ -111,6 +123,8 @@ export function startOAuthLogin(
   provider: OAuthProviderId,
   options: { link?: boolean } = {}
 ): Promise<OAuthResult> {
+  const desktop = getDesktopBridge();
+  if (desktop) return startDesktopOAuthLogin(desktop, provider, options);
   const startUrl = buildStartUrl(provider, options);
   return new Promise((resolve) => {
     const popup = window.open(startUrl, "golive-oauth", POPUP_FEATURES);
@@ -158,6 +172,48 @@ export function startOAuthLogin(
       if (popup.closed) finish({ kind: "error", error: "cancelled", next: "/" });
     }, 500);
   });
+}
+
+// The desktop app's version of the same flow.
+//
+// The shape is deliberately identical from the caller's point of view — same
+// function, same OAuthResult, same token storage — because everything above
+// this layer (OAuthButtons, the signup step, AccountConnections) should not
+// have to know which shell it is running in.
+//
+// What differs is only the transport. There is no popup to postMessage back
+// to: the login happens in the user's real browser, and the result returns
+// through the app's custom protocol as the same URL fragment the callback
+// page would have parsed. So this hands that fragment to the exact same
+// parser and is otherwise the browser path verbatim.
+async function startDesktopOAuthLogin(
+  desktop: NonNullable<ReturnType<typeof getDesktopBridge>>,
+  provider: OAuthProviderId,
+  options: { link?: boolean }
+): Promise<OAuthResult> {
+  const nonce = createOAuthNonce();
+  const startUrl = buildStartUrl(provider, options, desktopOAuthReturnPath(nonce));
+  let fragment: string | null;
+  try {
+    fragment = await desktop.startOAuth(startUrl, nonce);
+  } catch {
+    return { kind: "error", error: "provider_failed", next: "/" };
+  }
+  // Null means cancelled or timed out — the same outcome as closing the
+  // popup in a browser, and reported the same way.
+  if (!fragment) return { kind: "error", error: "cancelled", next: "/" };
+  const result = parseOAuthFragment(fragment) ?? {
+    kind: "error" as const,
+    error: "unknown",
+    next: "/",
+  };
+  // Same reason the popup path stores it here: this is the window that owns
+  // the session, and the callback page (running in a different browser
+  // entirely) has no way to hand it over other than through this fragment.
+  if (result.kind === "token") setAccountToken(result.token);
+  // `next` is the desktop marker path, which is not a real page — send the
+  // caller back to where it already is instead of navigating into it.
+  return { ...result, next: "/" };
 }
 
 // The API only ever sends back an error *code* (the redirect it travels in

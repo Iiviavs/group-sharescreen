@@ -17,6 +17,11 @@ const eslintConfig = defineConfig([
     // worklet — noise that buries every real finding and trains you to
     // ignore the output.
     "public/**",
+    // Build output of the desktop shell (tsc) and its installers
+    // (electron-builder) — generated code, same as .next/ above. The shell's
+    // *sources* in electron/*.ts are still linted.
+    "electron/dist/**",
+    "electron/release/**",
   ]),
 ]);
 

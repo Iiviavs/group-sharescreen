@@ -1,0 +1,398 @@
+// GoLive desktop shell.
+//
+// This is a *shell around the deployed site*, not a second copy of it. The
+// window loads https://golive.nemtudo.me (or whatever GOLIVE_APP_URL says)
+// and the entire UI, all the WebRTC, the whole mesh/cascade implementation
+// come from there unchanged. That is a deliberate choice and worth stating,
+// because the obvious alternative — bundling the Next build inside the app —
+// would buy nothing here: this is a real-time communication app, so it is
+// useless without a network connection anyway, and the site has server-side
+// API routes (/api/giphy, /api/umami) that a static export cannot serve. One
+// deploy, one thing to keep working.
+//
+// What the shell genuinely adds, and what all the code below is for:
+//
+//   1. A screen picker. Electron does not implement getDisplayMedia's own
+//      chooser, so without setDisplayMediaRequestHandler the app's single
+//      most important feature simply fails.
+//   2. A working OAuth flow. Providers refuse to authenticate inside an
+//      embedded browser, so login has to leave the app and come back.
+//   3. The security posture a remote-content window requires: no Node in the
+//      renderer, no navigating away from our own origin, no in-app windows
+//      for third-party links.
+
+import {
+  app,
+  BrowserWindow,
+  desktopCapturer,
+  ipcMain,
+  session,
+  shell,
+  type DesktopCapturerSource,
+} from "electron";
+import path from "node:path";
+import { IPC, VERSION_ARG, type PickerSource } from "./channels";
+// The website's own definition of the marker path, imported rather than
+// re-implemented: both sides have to agree on the exact nonce format or a
+// perfectly good login is silently dropped, and a regex copied into two
+// files is precisely the kind of thing that drifts. The module is pure —
+// no React, no imports, nothing that touches `window` at load time — so it
+// bundles into the main process without dragging the app in with it.
+import { desktopOAuthNonce } from "../lib/desktop";
+
+// Where the UI comes from. Overridable so `npm run electron:dev` can point at
+// a local `next dev` without a rebuild.
+const APP_URL = process.env.GOLIVE_APP_URL || "https://golive.nemtudo.me";
+const APP_ORIGIN = new URL(APP_URL).origin;
+
+// Registered with the OS so the OAuth result can find its way back — see
+// startOAuth below and the web app's lib/desktop.ts.
+const PROTOCOL = "golive";
+
+// A login the user never finishes would otherwise leave a promise pending in
+// the renderer forever. Generous, because the flow legitimately involves
+// typing a password and possibly a 2FA code in another application.
+const OAUTH_TIMEOUT_MS = 5 * 60_000;
+
+let mainWindow: BrowserWindow | null = null;
+
+// ---------------------------------------------------------------------------
+// OAuth
+// ---------------------------------------------------------------------------
+
+// Logins currently waiting on the browser, keyed by the nonce the renderer
+// generated. The nonce is the whole security story here: any application on
+// the machine can register a custom protocol handler and fire a
+// `golive://oauth#token=...` at us, so an unsolicited fragment must not be
+// accepted. Only a nonce we are actively waiting on resolves anything.
+const pendingLogins = new Map<
+  string,
+  { resolve: (fragment: string | null) => void; timer: NodeJS.Timeout }
+>();
+
+function settleLogin(nonce: string, fragment: string | null) {
+  const pending = pendingLogins.get(nonce);
+  if (!pending) return;
+  pendingLogins.delete(nonce);
+  clearTimeout(pending.timer);
+  pending.resolve(fragment);
+}
+
+function startOAuth(startUrl: string, nonce: string): Promise<string | null> {
+  // The URL is built by the renderer, but the renderer is remote content —
+  // so it is checked here rather than trusted. Without this, an XSS on the
+  // site could use the desktop app as a launcher for arbitrary URLs.
+  let parsed: URL;
+  try {
+    parsed = new URL(startUrl);
+  } catch {
+    return Promise.resolve(null);
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve) => {
+    settleLogin(nonce, null);
+    const timer = setTimeout(() => settleLogin(nonce, null), OAUTH_TIMEOUT_MS);
+    pendingLogins.set(nonce, { resolve, timer });
+    void shell.openExternal(startUrl).catch(() => settleLogin(nonce, null));
+  });
+}
+
+// Handles a `golive://oauth#<fragment>` deep link. The fragment is exactly
+// what the site's callback page received, forwarded verbatim, so the
+// renderer parses it with the same parser the browser path uses.
+function handleDeepLink(rawUrl: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return;
+  }
+  if (parsed.protocol !== `${PROTOCOL}:`) return;
+
+  // `new URL("golive://oauth#x")` puts "oauth" in `host`, not `pathname` —
+  // custom schemes are parsed as authority-based here. Accepting either
+  // keeps this working regardless of how the OS hands the string over.
+  const route = parsed.host || parsed.pathname.replace(/^\/+/, "");
+  if (route !== "oauth") return;
+
+  const fragment = parsed.hash;
+  const next = new URLSearchParams(fragment.replace(/^#/, "")).get("next") ?? "";
+  const nonce = desktopOAuthNonce(next);
+  if (!nonce) return;
+  settleLogin(nonce, fragment);
+
+  // The user's attention is in the browser at this point; bring them back.
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Screen picker
+// ---------------------------------------------------------------------------
+
+// Shown only when the OS has no picker of its own (see useSystemPicker
+// below). Its own window rather than something rendered by the site, because
+// the site must never be handed the source list: that list includes the
+// titles of every open window, which is a meaningful amount of information
+// about the user, and remote content has no business seeing it before a
+// choice is made.
+async function pickSource(parent: BrowserWindow | null): Promise<DesktopCapturerSource | null> {
+  const sources = await desktopCapturer.getSources({
+    types: ["screen", "window"],
+    thumbnailSize: { width: 320, height: 200 },
+    fetchWindowIcons: true,
+  });
+  if (sources.length === 0) return null;
+
+  const picker = new BrowserWindow({
+    parent: parent ?? undefined,
+    modal: Boolean(parent),
+    width: 820,
+    height: 600,
+    show: false,
+    resizable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    title: "Escolha o que compartilhar",
+    backgroundColor: "#09090b",
+    webPreferences: {
+      preload: path.join(__dirname, "picker-preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  picker.setMenuBarVisibility(false);
+
+  const payload: PickerSource[] = sources.map((source) => ({
+    id: source.id,
+    name: source.name,
+    thumbnail: source.thumbnail.toDataURL(),
+    kind: source.id.startsWith("screen:") ? "screen" : "window",
+    appIcon: source.appIcon && !source.appIcon.isEmpty() ? source.appIcon.toDataURL() : null,
+  }));
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (id: string | null) => {
+      if (settled) return;
+      settled = true;
+      ipcMain.removeHandler(IPC.pickerList);
+      ipcMain.removeAllListeners(IPC.pickerChoose);
+      if (!picker.isDestroyed()) picker.close();
+      resolve(sources.find((s) => s.id === id) ?? null);
+    };
+
+    ipcMain.handle(IPC.pickerList, () => payload);
+    ipcMain.on(IPC.pickerChoose, (_event, id: unknown) => {
+      finish(typeof id === "string" ? id : null);
+    });
+    // Closing the window with the OS chrome is a cancellation like any other.
+    picker.on("closed", () => finish(null));
+
+    picker.once("ready-to-show", () => picker.show());
+    void picker.loadFile(path.join(__dirname, "..", "picker.html"));
+  });
+}
+
+function installDisplayMediaHandler() {
+  session.defaultSession.setDisplayMediaRequestHandler(
+    (request, callback) => {
+      void (async () => {
+        const source = await pickSource(mainWindow);
+        if (!source) {
+          // An empty result surfaces in the renderer as the same
+          // NotAllowedError a browser raises when the picker is dismissed,
+          // which the web app already treats as a silent cancel rather than
+          // an error worth showing.
+          callback({});
+          return;
+        }
+        callback({
+          video: source,
+          // System audio, and only where it actually exists. Electron's
+          // loopback capture is a Windows capability; on macOS and Linux
+          // there is no equivalent without a virtual audio device, and
+          // asking for one anyway fails the *whole* request rather than
+          // just the audio. Returning video alone instead degrades exactly
+          // the way Firefox does, which the web app already handles (see
+          // the NotReadableError retry in useRoomMedia's capture).
+          audio:
+            request.audioRequested && process.platform === "win32" ? "loopback" : undefined,
+        });
+      })();
+    },
+    // Prefer the OS's own picker where one exists (macOS 15+, and Windows
+    // as support lands): it is the interface the user already knows, it can
+    // offer surfaces we cannot enumerate ourselves, and on macOS it is the
+    // path that carries the system's own capture indicator. Our picker above
+    // is the fallback for everywhere it is unavailable, and Electron only
+    // calls the handler in that case.
+    { useSystemPicker: true }
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Window
+// ---------------------------------------------------------------------------
+
+// Windows and macOS take the window icon from the signed executable/bundle,
+// which electron-builder fills in from electron/build/icon.png. Linux does
+// not: there the icon has to be handed to the window explicitly or it shows
+// the default Electron one in the taskbar. Resolved relative to dist/ so it
+// works both from source and from inside app.asar.
+const WINDOW_ICON = path.join(__dirname, "..", "build", "icon.png");
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1280,
+    height: 820,
+    minWidth: 940,
+    minHeight: 600,
+    show: false,
+    backgroundColor: "#09090b",
+    title: "GoLive",
+    ...(process.platform === "linux" ? { icon: WINDOW_ICON } : {}),
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      // The three settings that make loading remote content survivable. The
+      // renderer runs the live website, so it must have no path to Node:
+      // contextIsolation keeps the preload's own scope out of the page, and
+      // sandbox puts the renderer in the OS sandbox on top of that.
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      // The only channel a sandboxed preload has for a value from here.
+      additionalArguments: [`${VERSION_ARG}${app.getVersion()}`],
+      // Screen sharing is the entire point of the app and needs no gesture
+      // ceremony; media playback (a shared video source) does.
+      autoplayPolicy: "document-user-activation-required",
+    },
+  });
+
+  mainWindow.once("ready-to-show", () => mainWindow?.show());
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
+
+  // Third-party links (Discord, the terms page, a shared YouTube URL) open
+  // in the user's real browser. An in-app window for them would be a
+  // browser without an address bar, which is exactly the shape a phishing
+  // page wants to be shown in.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:$/.test(safeProtocol(url))) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+
+  // Same rule for in-place navigation. Anything that is not our own origin
+  // leaves the app rather than replacing the UI inside it — without this, a
+  // single stray link turns the shell into an uncontrolled browser.
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (new URL(url).origin === APP_ORIGIN) return;
+    event.preventDefault();
+    if (/^https?:$/.test(safeProtocol(url))) void shell.openExternal(url);
+  });
+
+  void mainWindow.loadURL(APP_URL);
+}
+
+function safeProtocol(url: string): string {
+  try {
+    return new URL(url).protocol;
+  } catch {
+    return "";
+  }
+}
+
+// Camera, microphone and screen capture are the app's reason to exist and
+// are granted; everything else a web page can ask for is refused outright
+// rather than left to a default that may change between Electron versions.
+function installPermissionHandlers() {
+  const allowed = new Set(["media", "display-capture", "audioCapture", "videoCapture"]);
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    const fromApp = webContents?.getURL().startsWith(APP_ORIGIN) ?? false;
+    callback(fromApp && allowed.has(permission));
+  });
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, origin) => {
+    return origin.startsWith(APP_ORIGIN) && allowed.has(permission);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
+
+// A second launch must hand its deep link to the running instance rather
+// than starting a rival copy — on Windows and Linux the OS delivers a
+// protocol activation by launching the app again with the URL in argv, so
+// without this an OAuth callback would open a whole new window.
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on("second-instance", (_event, argv) => {
+    const deepLink = argv.find((arg) => arg.startsWith(`${PROTOCOL}://`));
+    if (deepLink) handleDeepLink(deepLink);
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+
+  // macOS delivers protocol activations as an event instead, and can do so
+  // before the app has finished starting.
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    handleDeepLink(url);
+  });
+
+  app.whenReady().then(() => {
+    // In dev the executable is Electron itself, so the OS has to be told
+    // which binary and argv to invoke — otherwise the protocol registers
+    // against `electron.exe` with no script and the callback lands nowhere.
+    if (process.defaultApp && process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(process.argv[1])]);
+    } else {
+      app.setAsDefaultProtocolClient(PROTOCOL);
+    }
+
+    installPermissionHandlers();
+    installDisplayMediaHandler();
+
+    ipcMain.handle(IPC.oauthStart, (_event, startUrl: unknown, nonce: unknown) => {
+      if (typeof startUrl !== "string" || typeof nonce !== "string") return null;
+      if (!/^[a-zA-Z0-9_-]{8,128}$/.test(nonce)) return null;
+      return startOAuth(startUrl, nonce);
+    });
+    ipcMain.on(IPC.oauthCancel, (_event, nonce: unknown) => {
+      if (typeof nonce === "string") settleLogin(nonce, null);
+    });
+    ipcMain.handle(IPC.openExternal, (_event, url: unknown) => {
+      if (typeof url !== "string" || !/^https?:$/.test(safeProtocol(url))) return;
+      return shell.openExternal(url);
+    });
+
+    createWindow();
+
+    // A launch *from* a deep link on Windows/Linux arrives in this
+    // process's own argv rather than through "second-instance".
+    const initialLink = process.argv.find((arg) => arg.startsWith(`${PROTOCOL}://`));
+    if (initialLink) handleDeepLink(initialLink);
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
+
+  // macOS convention is that closing the window does not quit the app.
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") app.quit();
+  });
+}

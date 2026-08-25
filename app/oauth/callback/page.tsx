@@ -9,7 +9,15 @@ import {
   type OAuthMessage,
   type OAuthResult,
 } from "@/lib/oauthApi";
+import { desktopOAuthNonce } from "@/lib/desktop";
 import { CompleteOAuthSignupForm } from "@/components/CompleteOAuthSignupForm";
+
+// Custom protocol the desktop build registers with the OS. Handing the
+// result over this way is what lets the login itself happen in the user's
+// real browser — which is not a stylistic choice: providers refuse to
+// authenticate inside an embedded browser window (Google rejects it
+// outright as `disallowed_useragent`).
+const DESKTOP_PROTOCOL = "golive";
 
 // Where the API sends the browser back at the end of the OAuth dance, with
 // the outcome in the URL fragment (see the API's server/oauthRoutes.ts).
@@ -28,9 +36,13 @@ export default function OAuthCallbackPage() {
   // Only ever true in redirect mode — in popup mode this window is gone
   // before anything is painted.
   const [handledInline, setHandledInline] = useState(false);
+  // Set when this page's only remaining job was to hand the result back to
+  // the desktop app — there is nothing to render but a "you can close this".
+  const [handedToDesktop, setHandedToDesktop] = useState(false);
 
   useEffect(() => {
-    const parsed = parseOAuthFragment(window.location.hash);
+    const rawHash = window.location.hash;
+    const parsed = parseOAuthFragment(rawHash);
     // Strips the token/ticket out of the address bar (and out of the
     // history entry) as soon as it's been read.
     window.history.replaceState(null, "", window.location.pathname);
@@ -40,6 +52,35 @@ export default function OAuthCallbackPage() {
       error: "unknown",
       next: "/",
     };
+
+    // A login that started in the desktop app. `next` carries the marker
+    // path the app planted in `returnTo` (see lib/desktop.ts) — the one
+    // part of that URL the API preserves — so this is how a browser tab
+    // that has no opener still knows where the result belongs.
+    //
+    // The whole fragment is forwarded verbatim rather than re-serialised:
+    // the app parses it with the very same parseOAuthFragment, so anything
+    // reshaped here would be a second format to keep in sync for no gain.
+    if (desktopOAuthNonce(outcome.next)) {
+      // Not an internal Next route, so the router is the wrong tool and the
+      // lint rule's advice does not apply: this is a handoff to another
+      // *application* over a custom OS protocol, which only a real
+      // navigation can trigger.
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.href = `${DESKTOP_PROTOCOL}://oauth${rawHash.startsWith("#") ? rawHash : `#${rawHash}`}`;
+      // Every setState in this effect is covered by this one disable — the
+      // rule reports once per effect, and this is the first one to run.
+      //
+      // The rule's usual advice (derive it during render) can't apply here:
+      // the result lives in window.location.hash, which doesn't exist during
+      // the server render, so reading it in a state initializer would either
+      // throw or hydrate into a mismatch. Reading it after mount and setting
+      // state once is the only correct order — and it happens exactly once,
+      // so there's no cascade to speak of.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setHandedToDesktop(true);
+      return;
+    }
 
     const opener = window.opener as Window | null;
     if (opener && !opener.closed) {
@@ -51,13 +92,9 @@ export default function OAuthCallbackPage() {
       return;
     }
 
-    // The rule's usual advice (derive it during render) can't apply here:
-    // the result lives in window.location.hash, which doesn't exist during
-    // the server render, so reading it in a state initializer would either
-    // throw or hydrate into a mismatch. Reading it after mount and setting
-    // state once is the only correct order — and it happens exactly once,
-    // so there's no cascade to speak of.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // Set after mount rather than derived during render — see the
+    // set-state-in-effect note on the desktop branch above, which covers
+    // this call too.
     setResult(outcome);
     setHandledInline(true);
     if (outcome.kind === "token") {
@@ -67,6 +104,21 @@ export default function OAuthCallbackPage() {
       router.replace(outcome.next);
     }
   }, [router]);
+
+  if (handedToDesktop) {
+    return (
+      <main className="flex flex-1 items-center justify-center px-4 py-16">
+        <div className="w-full max-w-md rounded-2xl border border-black/10 bg-white p-8 text-center shadow-sm dark:border-white/10 dark:bg-zinc-950">
+          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+            Login concluído
+          </p>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            Volte para o aplicativo do GoLive — você já pode fechar esta aba.
+          </p>
+        </div>
+      </main>
+    );
+  }
 
   if (!handledInline || !result) {
     return (
