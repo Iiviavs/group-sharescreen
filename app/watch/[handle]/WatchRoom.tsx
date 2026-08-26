@@ -20,6 +20,7 @@ import {
   SHARE_RESOLUTION_OPTIONS,
   SHARE_FPS_OPTIONS,
   SHARE_BITRATE_OPTIONS,
+  SHARE_AUDIO_MODE_OPTIONS,
 } from "@/lib/useRoomMedia";
 import { trackEvent } from "@/lib/analytics";
 import { copyText } from "@/lib/clipboard";
@@ -184,6 +185,8 @@ function QualityControls({
   setShareResolution,
   shareBitrate,
   setShareBitrate,
+  shareAudioMode,
+  setShareAudioMode,
   hasAccount,
   isSharing,
   meshCapacity,
@@ -200,6 +203,8 @@ function QualityControls({
   | "setShareResolution"
   | "shareBitrate"
   | "setShareBitrate"
+  | "shareAudioMode"
+  | "setShareAudioMode"
   | "isSharing"
   | "meshCapacity"
   | "meshTopology"
@@ -333,6 +338,30 @@ function QualityControls({
           </select>
         </div>
 
+        <div>
+          <label
+            htmlFor="share-audio-mode"
+            className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400"
+          >
+            Modo de áudio da tela
+          </label>
+          <select
+            id="share-audio-mode"
+            value={shareAudioMode}
+            onChange={(e) => setShareAudioMode(e.target.value as typeof shareAudioMode)}
+            className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-950 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+          >
+            {SHARE_AUDIO_MODE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+            {SHARE_AUDIO_MODE_OPTIONS.find((o) => o.value === shareAudioMode)?.description}
+          </p>
+        </div>
+
         {/* Live measurements, shown only while actually transmitting. This is
             what the quality decisions are made from — surfacing it turns "the
             room is laggy" into something diagnosable instead of a guess. */}
@@ -418,6 +447,8 @@ function ShareControls({
     | "setShareResolution"
     | "shareBitrate"
     | "setShareBitrate"
+    | "shareAudioMode"
+    | "setShareAudioMode"
     | "isSharing"
     | "meshCapacity"
     | "meshTopology"
@@ -607,6 +638,8 @@ export function WatchRoom({ handle }: { handle: string }) {
     setShareFps,
     shareBitrate,
     setShareBitrate,
+    shareAudioMode,
+    setShareAudioMode,
     smartQualityEnabled,
     shareProfile,
     setShareProfile,
@@ -727,7 +760,6 @@ export function WatchRoom({ handle }: { handle: string }) {
     }
   }
   const previousNameRef = useRef(state.name);
-
   // Same hydration-flash guard as page.tsx: useAccountToken()/
   // useHasStoredName() briefly report empty/false on the very first client
   // paint before correcting to the real localStorage-backed value, which
@@ -1371,6 +1403,8 @@ export function WatchRoom({ handle }: { handle: string }) {
     setShareResolution,
     shareBitrate,
     setShareBitrate,
+    shareAudioMode,
+    setShareAudioMode,
     hasAccount: Boolean(state.account),
     isSharing,
     meshCapacity,
