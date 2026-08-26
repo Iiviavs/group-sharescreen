@@ -23,6 +23,8 @@ import {
   logoutAccount,
 } from "./accountApi";
 import { signalingClient, getStoredName } from "./signalingClient";
+import { useGuestToken, getStoredGuestToken } from "./guestToken";
+import { fetchGuestPoints } from "./guestPoints";
 
 type AuthContextValue = {
   // The logged-in account, or null once resolved to "no account" (guest, no
@@ -48,8 +50,16 @@ type AuthContextValue = {
   // (with the API's message) when it would leave the account with no way in.
   unlinkProvider: (provider: string) => Promise<void>;
   logout: () => void;
-  // Re-resolves the current token against /auth/me — e.g. after an action
-  // that changes the account server-side (rename, flags) outside this tab.
+  // The current identity's points, whichever kind of identity that is: the
+  // account's own when signed in, this browser's guest total otherwise (see
+  // lib/guestPoints.ts). Readers get one number and don't have to care —
+  // which matters because both kinds can now earn them (see lib/partner.ts).
+  // Reads 0 for a visitor who hasn't chosen a name yet, since there is no
+  // identity holding any.
+  points: number;
+  // Re-resolves the current identity — /auth/me for an account, /guest/points
+  // for a guest — e.g. after an action that changes it server-side (a rename,
+  // a claimed reward) or outside this tab.
   refresh: () => Promise<void>;
 };
 
@@ -57,7 +67,23 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const accountToken = useAccountToken();
+  const guestToken = useGuestToken();
   const [account, setAccount] = useState<Account | null>(null);
+  // Guest points, tagged with the identity they were fetched for. Only ever
+  // meaningful while signed out — an account's points come from /auth/me with
+  // the rest of it. Kept here rather than in whatever component shows it so a
+  // claim made in one place updates the readout in another, exactly as it
+  // already does for an account.
+  //
+  // Tagged rather than stored bare because the guest token *is* the identity
+  // holding them: a total fetched under a previous token belongs to a
+  // different person, so pairing the two makes "whose number is this" a
+  // derivation instead of something the effect below has to remember to
+  // clear. Same pattern as resolvedToken/resolvedAccount above.
+  const [guestPointsEntry, setGuestPointsEntry] = useState<{
+    token: string;
+    points: number;
+  } | null>(null);
   // Travels with `account` — same source (/auth/me), same lifetime, so it's
   // set and cleared everywhere that one is.
   const [connections, setConnections] = useState<AccountConnections | null>(null);
@@ -89,6 +115,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [accountToken, resolvedToken]);
 
   const refresh = useCallback(async () => {
+    // A guest has no /auth/me to re-resolve; its points are the only thing
+    // about it the server holds. Handled here rather than at the call sites
+    // so everything that already refreshes after a reward (PartnerCard,
+    // PartnerRewardModal) keeps working untouched now that guests earn too.
+    if (!getAccountToken()) {
+      const token = getStoredGuestToken();
+      if (!token) return;
+      const points = await fetchGuestPoints();
+      if (points !== null) setGuestPointsEntry({ token, points });
+      return;
+    }
     const me = await fetchMe();
     setAccount(me?.account ?? null);
     setConnections(me?.connections ?? null);
@@ -159,6 +196,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const resolvedAccount = accountToken && resolvedToken === accountToken ? account : null;
   const loading = Boolean(accountToken) && resolvedToken !== accountToken;
 
+  // Guest points follow the guest token, because that token *is* the guest
+  // identity holding them (see lib/guestPoints.ts). Re-running when it
+  // changes is therefore not a refresh but a change of person — which the
+  // derivation below handles by reading 0 for any token this hasn't answered
+  // for yet, so the previous guest's total never shows through while the new
+  // one is in flight. Skipped entirely while signed in: an account's points
+  // come from /auth/me, and a stale guest number must never surface under it.
+  useEffect(() => {
+    if (accountToken || !guestToken) return;
+    let cancelled = false;
+    void fetchGuestPoints().then((points) => {
+      if (!cancelled && points !== null) setGuestPointsEntry({ token: guestToken, points });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [accountToken, guestToken]);
+
+  const guestPoints =
+    !accountToken && guestToken && guestPointsEntry?.token === guestToken
+      ? guestPointsEntry.points
+      : 0;
+
   // Falls back to any stored guest name if the token turned out to be
   // invalid/expired, mirroring what signalingClient's own constructor does
   // when there's no token at all. Guarded by the ref above (not just the
@@ -181,6 +241,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       account: resolvedAccount,
       connections: resolvedAccount ? connections : null,
       loading,
+      points: resolvedAccount ? resolvedAccount.points ?? 0 : guestPoints,
       login,
       register,
       completeOAuthSignup,
@@ -192,6 +253,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       resolvedAccount,
       connections,
       loading,
+      guestPoints,
       login,
       register,
       completeOAuthSignup,

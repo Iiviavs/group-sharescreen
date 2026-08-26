@@ -9,6 +9,7 @@ import { getAccountToken } from "./accountApi";
 import { getTurnstileToken } from "./turnstile";
 import { getBrowserFingerprint } from "./fingerprint";
 import { currentAnnouncementDevice } from "./announcement";
+import { getStoredGuestToken, setStoredGuestToken } from "./guestToken";
 
 // `role: "moderator"` marks a moderator silently watching for moderation
 // (see server/signaling.ts's "admin-join") — present in the peer list so
@@ -175,12 +176,6 @@ type SignalListener = (from: string, data: Record<string, unknown>) => void;
 
 const WS_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || "ws://localhost:4000/ws";
 const NAME_STORAGE_KEY = "sharescreen:name";
-// A guest identity token (see server/signaling.ts's "register" handler) —
-// unlike the clientId below, this is meant to follow the guest around
-// everywhere (every tab, every reload) since it's what proves "this is
-// still the same guest" without ever being exposed to anyone else, so it's
-// kept in localStorage rather than sessionStorage.
-const GUEST_TOKEN_STORAGE_KEY = "sharescreen:guestToken";
 // Deliberately sessionStorage, not localStorage: this id is echoed to every
 // peer in whatever room it's used in (see peerSummary/room-state on the
 // server), so it must stay scoped to *this tab* rather than being shared
@@ -288,27 +283,6 @@ function setClientId(id: string) {
   }
 }
 
-// The guest identity token handed back by "registered" (see
-// server/signaling.ts) the first time a connection shows up without one —
-// null once logged into an account (accountApi's own token takes over) or
-// before this browser has ever registered as a guest at all.
-function getStoredGuestToken(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.localStorage.getItem(GUEST_TOKEN_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function setStoredGuestToken(token: string) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(GUEST_TOKEN_STORAGE_KEY, token);
-  } catch {
-    // ignored - localStorage may be unavailable (private mode, quota, etc.)
-  }
-}
 
 class SignalingClient {
   private ws: WebSocket | null = null;

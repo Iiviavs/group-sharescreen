@@ -572,7 +572,7 @@ export function WatchRoom({ handle }: { handle: string }) {
   // its limits, especially on iOS).
   useBackgroundKeepAlive(Boolean(state.room));
   const hasStoredName = useHasStoredName();
-  const { loading: resolvingAccount, account } = useAuth();
+  const { loading: resolvingAccount, account, points } = useAuth();
   const { openPopup } = useNtPopups();
   const validHandle = HANDLE_RE.test(handle);
   // Name and access code, for a private room whose handle carries one — null
@@ -1927,13 +1927,15 @@ export function WatchRoom({ handle }: { handle: string }) {
               </Popover>
             </div>
 
-            {/* Name + cosmetic score, DB-edited only for now (see
-                accountApi.ts's Account.points) — hidden for a guest, who has
-                no account to hold either. Kept deliberately muted (no fill
-                color) so it reads as a status readout, not another button.
-                Links to this account's own public profile — see
-                app/user/[id]. */}
-            {account && (
+            {/* Name + points. Both kinds of identity have a total worth
+                showing now that guests earn them too (see AuthContext's
+                `points`); the only real difference is that an account has a
+                public profile to link to and a guest has nowhere to go, so
+                the guest version is the same chip minus the link. Kept
+                deliberately muted (no fill color) either way so it reads as
+                a status readout, not another button. Shown only once there
+                *is* an identity — a name is what mints the guest one. */}
+            {account ? (
               <Tooltip content="Ver seu perfil" placement="bottom">
                 <Link
                   href={`/user/${account.id}`}
@@ -1946,10 +1948,28 @@ export function WatchRoom({ handle }: { handle: string }) {
                   <span className="hidden h-3 w-px bg-zinc-300 dark:bg-zinc-700 sm:inline-block" />
                   <span className="flex items-center gap-1 tabular-nums">
                     <BsCoin className="h-3.5 w-3.5 shrink-0" />
-                    {account.points ?? 0}
+                    {points}
                   </span>
                 </Link>
               </Tooltip>
+            ) : (
+              state.name && (
+                <Tooltip
+                  content="Seus pontos de convidado ficam salvos só neste navegador. Limpar os dados do site, ou entrar de outro navegador, começa do zero — crie uma conta para não perdê-los."
+                  placement="bottom"
+                >
+                  <div className="flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+                    <span className="hidden max-w-[8rem] truncate text-zinc-700 dark:text-zinc-300 sm:inline">
+                      {state.name}
+                    </span>
+                    <span className="hidden h-3 w-px bg-zinc-300 dark:bg-zinc-700 sm:inline-block" />
+                    <span className="flex items-center gap-1 tabular-nums">
+                      <BsCoin className="h-3.5 w-3.5 shrink-0" />
+                      {points}
+                    </span>
+                  </div>
+                </Tooltip>
+              )
             )}
             <Tooltip content={<SupportersTooltipContent />} placement="bottom" interactive>
               <a

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/AuthContext";
+import { useGuestToken } from "@/lib/guestToken";
 import {
   claimPartnerClickReward,
   claimPartnerVideoReward,
@@ -91,7 +92,7 @@ export type PartnerRewardPopupData = {
 // protect, and someone who wants to rewatch a bit should be able to. None of
 // this is airtight against someone determined enough at the console —
 // nothing client-side can be — so the real gate is server-side: the claim
-// only ever pays out once per account per ad (see server/signaling.ts's POST
+// only ever pays out once per identity per ad (see server/signaling.ts's POST
 // /partner/:id/claim-reward), regardless of what this component believes
 // happened.
 export function PartnerRewardModal({
@@ -117,6 +118,12 @@ export function PartnerRewardModal({
   data: PartnerRewardPopupData;
 }) {
   const { account, refresh } = useAuth();
+  // Guests earn points too (see lib/partner.ts) — their guest token is the
+  // identity the API credits, so having one is exactly as good as having an
+  // account here. The only case left with nowhere to put a reward is a
+  // visitor who hasn't chosen a name yet, which is what mints that token.
+  const guestToken = useGuestToken();
+  const canClaim = Boolean(account) || Boolean(guestToken);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   // The furthest point genuinely reached via real playback — not React
   // state, since it has to be read/written synchronously from inside media
@@ -147,18 +154,18 @@ export function PartnerRewardModal({
   // claim, rather than relying on the server's 409 every time.
   const [alreadyClaimed] = useState(() => hasClaimedPartnerRewardLocally(partnerId));
   const [claimError, setClaimError] = useState<string | null>(null);
-  // Whether a claim has already been attempted without an account (see
-  // handleClaim) — the "you need an account" notice below is this *and* still
-  // being signed out, so signing in elsewhere in the app (the guest banner
-  // behind this popup, another tab) clears it without anything having to
-  // watch for that. It used to sit under the buttons from the moment the
+  // Whether a claim has already been attempted with no identity at all (see
+  // handleClaim) — the notice below is this *and* still having none, so
+  // getting one elsewhere in the app (choosing a name behind this popup,
+  // signing in from another tab) clears it without anything having to watch
+  // for that. It used to sit under the buttons from the moment the
   // popup opened, which told a guest they couldn't have something before
   // they'd even watched the thing that earns it — an ad that opens by
   // explaining what you don't get. Now the video plays for everyone, and the
   // notice appears at the one moment it answers something they did.
   const [claimAttemptedSignedOut, setClaimAttemptedSignedOut] = useState(false);
   // Click-to-earn, entirely separate from the watch-to-earn state above: its
-  // own one-per-account claim on the server, its own local flag, and no
+  // own one-per-identity claim on the server, its own local flag, and no
   // dependency on the video having been watched. Read once at mount for the
   // same reason alreadyClaimed is.
   const [clickRewardClaimed, setClickRewardClaimed] = useState(() =>
@@ -332,9 +339,8 @@ export function PartnerRewardModal({
   async function handleClaim() {
     if (!unlocked || claiming || claimed || alreadyClaimed) return;
     // Checked here rather than by disabling the button: the button has to
-    // stay clickable for a guest, because the click is what surfaces the
-    // notice below.
-    if (!account) {
+    // stay clickable, because the click is what surfaces the notice below.
+    if (!canClaim) {
       setClaimAttemptedSignedOut(true);
       trackEvent("partner_reward_claim_needs_login", { partnerId });
       return;
@@ -347,8 +353,9 @@ export function PartnerRewardModal({
       setClaimed(true);
       trackEvent("partner_reward_claimed", { partnerId });
       onClaimed?.();
-      // Re-resolves /auth/me so the new total shows up wherever the account
-      // is displayed (e.g. WatchRoom's header) without a reload.
+      // Re-resolves whichever identity is here (see AuthContext's refresh) so
+      // the new total shows up wherever it's displayed (e.g. WatchRoom's
+      // header) without a reload.
       await refresh();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Falha ao resgatar a recompensa.";
@@ -661,9 +668,9 @@ export function PartnerRewardModal({
             </span>
           </button>
         </div>
-        {claimAttemptedSignedOut && !account && !claimed && !alreadyClaimed && (
+        {claimAttemptedSignedOut && !canClaim && !claimed && !alreadyClaimed && (
           <p className="text-center text-xs text-amber-600 dark:text-amber-400">
-            Crie uma conta ou entre em uma para poder resgatar os pontos.
+            Escolha um nome para entrar antes de resgatar os pontos.
           </p>
         )}
         {clickRewardError && (

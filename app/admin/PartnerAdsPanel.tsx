@@ -725,7 +725,7 @@ export function PartnerAdsPanel() {
                   } gap-2 rounded-lg border border-current px-3 py-1.5 text-xs font-semibold opacity-90`}
                 >
                   <span className="flex min-w-0 items-center gap-1.5">
-                    Receber
+                    Resgatar
                     <BsCoin className="h-3.5 w-3.5 shrink-0" />
                     {rewardPointsInput.trim()}
                   </span>

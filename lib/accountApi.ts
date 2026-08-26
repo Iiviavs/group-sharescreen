@@ -8,13 +8,16 @@ export type Account = {
   username: string;
   displayName: string;
   flags: string[];
-  // Shown in the Watch room header (see WatchRoom's top bar). No in-app way
-  // to earn it yet — only ever changed by hand directly in the database.
-  // Absent on a response from an older API that predates this field; every
-  // reader treats that the same as 0.
+  // Shown in the Watch room header (see WatchRoom's top bar). Earned by
+  // claiming a partner ad's reward (see lib/partner.ts), and otherwise
+  // changed by hand directly in the database. Absent on a response from an
+  // older API that predates this field; every reader treats that the same
+  // as 0. Read through AuthContext's `points` rather than here, so a guest —
+  // who earns the same rewards without an account to hold them, see
+  // lib/guestPoints.ts — is shown the same way.
   points?: number;
   // Public profile page content (see app/user/[id]/page.tsx and lib/
-  // userProfile.ts) — same "DB-edited only for now" story as points.
+  // userProfile.ts) — DB-edited only, unlike points above.
   bio?: string | null;
   bannerUrl?: string | null;
   // Cumulative seconds, tracked automatically by the signaling server —

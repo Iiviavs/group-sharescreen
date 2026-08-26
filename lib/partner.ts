@@ -56,19 +56,24 @@ export function clickRewardAppliesTo(
 // ---------------------------------------------------------------------------
 
 import { getAccountToken } from "./accountApi";
+import { getStoredGuestToken } from "./guestToken";
 import { getSignalingHttpBase } from "./roomsApi";
 
-// Claims a partner ad's reward for the signed-in account — the server is the
-// only real gate (one claim per account per ad, per kind, see
-// claimPersistedPartnerReward), but a signed-out visitor is rejected here
-// before ever hitting it, since there is no account for the server to credit.
+// Claims a partner ad's reward for whoever is here — an account when there's
+// one, otherwise this browser's guest identity, whose points the API holds
+// under the guest token itself (see lib/guestPoints.ts). The server is the
+// only real gate (one claim per identity per ad, per kind, see
+// claimPersistedPartnerReward), but a visitor with neither token is rejected
+// here before ever hitting it, since there'd be nobody for the server to
+// credit. In practice that's only reachable before a name has been chosen:
+// registering one is what mints the guest token.
 async function claimPartnerReward(
   partnerId: string,
   endpoint: "claim-reward" | "claim-click-reward",
-  signedOutMessage: string
+  anonymousMessage: string
 ): Promise<{ points: number | null }> {
-  const token = getAccountToken();
-  if (!token) throw new Error(signedOutMessage);
+  const token = getAccountToken() ?? getStoredGuestToken();
+  if (!token) throw new Error(anonymousMessage);
   const res = await fetch(
     `${getSignalingHttpBase()}/partner/${encodeURIComponent(partnerId)}/${endpoint}`,
     { method: "POST", headers: { Authorization: `Bearer ${token}` } }
@@ -86,7 +91,7 @@ export function claimPartnerVideoReward(partnerId: string): Promise<{ points: nu
   return claimPartnerReward(
     partnerId,
     "claim-reward",
-    "Crie uma conta ou entre em uma para resgatar pontos assistindo."
+    "Escolha um nome para entrar antes de resgatar pontos assistindo."
   );
 }
 
@@ -96,7 +101,7 @@ export function claimPartnerClickReward(partnerId: string): Promise<{ points: nu
   return claimPartnerReward(
     partnerId,
     "claim-click-reward",
-    "Crie uma conta ou entre em uma para resgatar pontos clicando."
+    "Escolha um nome para entrar antes de resgatar pontos clicando."
   );
 }
 

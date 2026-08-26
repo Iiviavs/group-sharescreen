@@ -194,9 +194,11 @@ export function PartnerCard() {
     queueMicrotask(() => bumpRewardState((n) => n + 1));
   }, []);
   // What to say under the CTA after a click-reward attempt on this card —
-  // null while there's nothing to report. A guest sees the "you need an
-  // account" line only here, after clicking: the button never withholds the
-  // click itself, it just can't pay a visitor there's nobody to pay.
+  // null while there's nothing to report. Guests earn these too now (their
+  // guest token is the identity credited, see lib/partner.ts); what still
+  // lands here is a repeat claim, or a visitor who hasn't chosen a name yet
+  // and so has no identity to pay at all. Either way the button never
+  // withholds the click itself.
   const [clickRewardError, setClickRewardError] = useState<string | null>(null);
   // Success is reported inside the button instead (see CLICK_REWARD_CLAIMED_MS
   // and the CTA below) — a line of text under it would push the rest of the
@@ -218,8 +220,9 @@ export function PartnerCard() {
   // the house ad) starts collapsed again without anything having to reset it.
   const [expandedDescription, setExpandedDescription] = useState<string | null>(null);
   // Only for the points total in the app's own header — the claim itself is
-  // server-side.
-  const { refresh: refreshAccount } = useAuth();
+  // server-side. Re-resolves whichever identity is here, account or guest
+  // (see AuthContext's refresh).
+  const { refresh: refreshIdentity } = useAuth();
   // Below lg, this starts collapsed to just a slim title bar — full-size,
   // it was eating a big enough chunk of a phone's height (image, multi-line
   // description, two buttons) to fight the room's own video/chat for space.
@@ -515,9 +518,9 @@ export function PartnerCard() {
         setClickRewardError(null);
         setClickRewardJustClaimed(true);
         trackEvent("partner_click_reward_claimed", { partnerId: id });
-        // Re-resolves /auth/me so the header's total updates without a
-        // reload, same as the video reward does.
-        void refreshAccount();
+        // Re-resolves the current identity so the header's total updates
+        // without a reload, same as the video reward does.
+        void refreshIdentity();
       })
       .catch((err: unknown) => {
         setClickRewardError(err instanceof Error ? err.message : "Falha ao resgatar os pontos.");
