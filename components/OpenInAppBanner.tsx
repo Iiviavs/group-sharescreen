@@ -73,7 +73,7 @@ export function OpenInAppBanner({ handle }: { handle: string }) {
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-black/10 bg-zinc-100 px-3 py-2 text-sm dark:border-white/10 dark:bg-zinc-900 sm:px-4">
       <MdOutlineDesktopWindows className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" />
       <span className="text-zinc-700 dark:text-zinc-300">
-        Tem o aplicativo do GoLive? Abra esta sala nele.
+        Não ouça eco (ouvir sua própria voz na transmissão do amigo) utilizando o app oficial do Go Live!
       </span>
       <span className="ml-auto flex items-center gap-2">
         <DownloadAppButton source="room-banner" />
